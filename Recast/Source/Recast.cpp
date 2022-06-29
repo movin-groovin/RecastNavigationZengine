@@ -348,8 +348,12 @@ void rcMarkWalkableTriangles(rcContext* ctx, const float walkableSlopeAngle,
 		const int* tri = &tris[i*3];
 		calcTriNormal(&verts[tri[0]*3], &verts[tri[1]*3], &verts[tri[2]*3], norm);
 		// Check if the face is walkable.
-		if (norm[1] > walkableThr)
-			areas[i] = RC_WALKABLE_AREA;
+		if (rcAbs(norm[1]) > walkableThr) {
+			if (!areas[i])
+				areas[i] = RC_WALKABLE_AREA;
+		} else {
+            areas[i] = RC_NULL_AREA;
+		}
 	}
 }
 
@@ -403,6 +407,7 @@ int rcGetHeightFieldSpanCount(rcContext* ctx, rcHeightfield& hf)
 	return spanCount;
 }
 
+#ifndef ZENGINE_NAVMESH
 /// @par
 ///
 /// This is just the beginning of the process of fully building a compact heightfield.
@@ -415,6 +420,143 @@ int rcGetHeightFieldSpanCount(rcContext* ctx, rcHeightfield& hf)
 bool rcBuildCompactHeightfield(rcContext* ctx, const int walkableHeight, const int walkableClimb,
 							   rcHeightfield& hf, rcCompactHeightfield& chf)
 {
+	rcAssert(ctx);
+
+	rcScopedTimer timer(ctx, RC_TIMER_BUILD_COMPACTHEIGHTFIELD);
+
+	const int w = hf.width;
+	const int h = hf.height;
+	const int spanCount = rcGetHeightFieldSpanCount(ctx, hf);
+
+	// Fill in header.
+	chf.width = w;
+	chf.height = h;
+	chf.spanCount = spanCount;
+	chf.walkableHeight = walkableHeight;
+	chf.walkableClimb = walkableClimb;
+	chf.maxRegions = 0;
+	rcVcopy(chf.bmin, hf.bmin);
+	rcVcopy(chf.bmax, hf.bmax);
+	chf.bmax[1] += walkableHeight*hf.ch;
+	chf.cs = hf.cs;
+	chf.ch = hf.ch;
+	chf.cells = (rcCompactCell*)rcAlloc(sizeof(rcCompactCell)*w*h, RC_ALLOC_PERM);
+	if (!chf.cells)
+	{
+		ctx->log(RC_LOG_ERROR, "rcBuildCompactHeightfield: Out of memory 'chf.cells' (%d)", w*h);
+		return false;
+	}
+	memset(chf.cells, 0, sizeof(rcCompactCell)*w*h);
+	chf.spans = (rcCompactSpan*)rcAlloc(sizeof(rcCompactSpan)*spanCount, RC_ALLOC_PERM);
+	if (!chf.spans)
+	{
+		ctx->log(RC_LOG_ERROR, "rcBuildCompactHeightfield: Out of memory 'chf.spans' (%d)", spanCount);
+		return false;
+	}
+	memset(chf.spans, 0, sizeof(rcCompactSpan)*spanCount);
+	chf.areas = (unsigned char*)rcAlloc(sizeof(unsigned char)*spanCount, RC_ALLOC_PERM);
+	if (!chf.areas)
+	{
+		ctx->log(RC_LOG_ERROR, "rcBuildCompactHeightfield: Out of memory 'chf.areas' (%d)", spanCount);
+		return false;
+	}
+	memset(chf.areas, RC_NULL_AREA, sizeof(unsigned char)*spanCount);
+
+	const int MAX_HEIGHT = 0xffff;
+
+	// Fill in cells and spans.
+	int idx = 0;
+	for (int y = 0; y < h; ++y)
+	{
+		for (int x = 0; x < w; ++x)
+		{
+			const rcSpan* s = hf.spans[x + y*w];
+			// If there are no spans at this cell, just leave the data to index=0, count=0.
+			if (!s) continue;
+			rcCompactCell& c = chf.cells[x+y*w];
+			c.index = idx;
+			c.count = 0;
+			while (s)
+			{
+				if (s->area != RC_NULL_AREA)
+				{
+					const int bot = (int)s->smax;
+					const int top = s->next ? (int)s->next->smin : MAX_HEIGHT;
+					chf.spans[idx].y = (unsigned short)rcClamp(bot, 0, 0xffff);
+					chf.spans[idx].h = (unsigned char)rcClamp(top - bot, 0, 0xff);
+					chf.areas[idx] = s->area;
+					idx++;
+					c.count++;
+				}
+				s = s->next;
+			}
+		}
+	}
+
+	// Find neighbour connections.
+	const int MAX_LAYERS = RC_NOT_CONNECTED-1;
+	int tooHighNeighbour = 0;
+	for (int y = 0; y < h; ++y)
+	{
+		for (int x = 0; x < w; ++x)
+		{
+			const rcCompactCell& c = chf.cells[x+y*w];
+			for (int i = (int)c.index, ni = (int)(c.index+c.count); i < ni; ++i)
+			{
+				rcCompactSpan& s = chf.spans[i];
+
+				for (int dir = 0; dir < 4; ++dir)
+				{
+					rcSetCon(s, dir, RC_NOT_CONNECTED);
+					const int nx = x + rcGetDirOffsetX(dir);
+					const int ny = y + rcGetDirOffsetY(dir);
+					// First check that the neighbour cell is in bounds.
+					if (nx < 0 || ny < 0 || nx >= w || ny >= h)
+						continue;
+
+					// Iterate over all neighbour spans and check if any of the is
+					// accessible from current cell.
+					const rcCompactCell& nc = chf.cells[nx+ny*w];
+					for (int k = (int)nc.index, nk = (int)(nc.index+nc.count); k < nk; ++k)
+					{
+						const rcCompactSpan& ns = chf.spans[k];
+						const int bot = rcMax(s.y, ns.y);
+						const int top = rcMin(s.y+s.h, ns.y+ns.h);
+
+						// Check that the gap between the spans is walkable,
+						// and that the climb height between the gaps is not too high.
+						if ((top - bot) >= walkableHeight && rcAbs((int)ns.y - (int)s.y) <= walkableClimb)
+						{
+							// Mark direction as walkable.
+							const int lidx = k - (int)nc.index;
+							if (lidx < 0 || lidx > MAX_LAYERS)
+							{
+								tooHighNeighbour = rcMax(tooHighNeighbour, lidx);
+								continue;
+							}
+							rcSetCon(s, dir, lidx);
+							break;
+						}
+					}
+
+				}
+			}
+		}
+	}
+
+	if (tooHighNeighbour > MAX_LAYERS)
+	{
+		ctx->log(RC_LOG_ERROR, "rcBuildCompactHeightfield: Heightfield has too many layers %d (max: %d)",
+				 tooHighNeighbour, MAX_LAYERS);
+	}
+
+	return true;
+}
+#else
+bool rcBuildCompactHeightfield_FirstVersion(
+	rcContext* ctx, const int walkableHeight, const int walkableClimb, rcHeightfield& hf,
+	rcCompactHeightfield& chf, int liquidWalk, int liquidFord, int liquidSwim
+) {
 	rcAssert(ctx);
 	
 	rcScopedTimer timer(ctx, RC_TIMER_BUILD_COMPACTHEIGHTFIELD);
@@ -465,7 +607,8 @@ bool rcBuildCompactHeightfield(rcContext* ctx, const int walkableHeight, const i
 	{
 		for (int x = 0; x < w; ++x)
 		{
-			const rcSpan* s = hf.spans[x + y*w];
+            const rcSpan* s = hf.spans[x + y*w];
+            const rcSpan* sPrev = nullptr;
 			// If there are no spans at this cell, just leave the data to index=0, count=0.
 			if (!s) continue;
 			rcCompactCell& c = chf.cells[x+y*w];
@@ -476,13 +619,20 @@ bool rcBuildCompactHeightfield(rcContext* ctx, const int walkableHeight, const i
 				if (s->area != RC_NULL_AREA)
 				{
 					const int bot = (int)s->smax;
-					const int top = s->next ? (int)s->next->smin : MAX_HEIGHT;
+                    const int top = s->next ? (int)s->next->smin : MAX_HEIGHT;
 					chf.spans[idx].y = (unsigned short)rcClamp(bot, 0, 0xffff);
 					chf.spans[idx].h = (unsigned char)rcClamp(top - bot, 0, 0xff);
-					chf.areas[idx] = s->area;
+                    chf.areas[idx] = s->area;
+                    if (s->area < PolyAreaFlags::GROUND) {
+                        const int sMin = s->smin;
+                        const int spMax = sPrev ? sPrev->smax : 0;
+                        chf.spans[idx].hPrev =
+                            (unsigned char)rcClamp(sMin - spMax, 0, 0xff);
+                    }
 					idx++;
 					c.count++;
-				}
+                }
+                sPrev = s;
 				s = s->next;
 			}
 		}
@@ -499,29 +649,64 @@ bool rcBuildCompactHeightfield(rcContext* ctx, const int walkableHeight, const i
 			for (int i = (int)c.index, ni = (int)(c.index+c.count); i < ni; ++i)
 			{
 				rcCompactSpan& s = chf.spans[i];
-				
+
+				//static const unsigned char LIQUID_WALK = 2; //liquidWalk
+				//static const unsigned char LIQUID_FORD = 5; //liquidFord
+                //static const unsigned char LIQUID_SWIM = walkableHeight - 1; //liquidSwim
+                if (chf.areas[i] < PolyAreaFlags::GROUND) {
+                    if (i != (int)c.index && chf.areas[i - 1] >= PolyAreaFlags::GROUND) {
+						if (s.hPrev < liquidWalk) {
+                            chf.areas[i] = PolyAreaFlags::WATER_SHALLOW;
+						} else if (s.hPrev < liquidFord) {
+                            chf.areas[i] = PolyAreaFlags::WATER_SHALLOW;
+						} else if (s.hPrev < liquidSwim) {
+                            chf.areas[i] = PolyAreaFlags::WATER_MIDDLE;
+                        } else {
+                            chf.areas[i] = PolyAreaFlags::WATER_DEEP;
+                        }
+                    } else if (i == (int)c.index) {
+						if (s.hPrev >= liquidSwim) {
+                            chf.areas[i] = PolyAreaFlags::WATER_DEEP;
+                        } else {
+                            chf.areas[i] = RC_NULL_AREA;
+                        }
+                    }
+                }
+
 				for (int dir = 0; dir < 4; ++dir)
 				{
 					rcSetCon(s, dir, RC_NOT_CONNECTED);
+                    if (chf.areas[i] == RC_NULL_AREA)
+                        continue;
 					const int nx = x + rcGetDirOffsetX(dir);
 					const int ny = y + rcGetDirOffsetY(dir);
 					// First check that the neighbour cell is in bounds.
 					if (nx < 0 || ny < 0 || nx >= w || ny >= h)
 						continue;
-						
+
 					// Iterate over all neighbour spans and check if any of the is
 					// accessible from current cell.
 					const rcCompactCell& nc = chf.cells[nx+ny*w];
 					for (int k = (int)nc.index, nk = (int)(nc.index+nc.count); k < nk; ++k)
 					{
 						const rcCompactSpan& ns = chf.spans[k];
+                        if (chf.areas[k] == RC_NULL_AREA) {
+                            continue;
+                        }
 						const int bot = rcMax(s.y, ns.y);
-						const int top = rcMin(s.y+s.h, ns.y+ns.h);
+                        const int top = rcMin(s.y+s.h, ns.y+ns.h);
 
 						// Check that the gap between the spans is walkable,
 						// and that the climb height between the gaps is not too high.
-						if ((top - bot) >= walkableHeight && rcAbs((int)ns.y - (int)s.y) <= walkableClimb)
-						{
+                        int hWalkable = walkableHeight;
+                        if (
+                            chf.areas[i] >= PolyAreaFlags::GROUND &&
+                            i + 1 != ni && chf.areas[i + 1] < PolyAreaFlags::GROUND
+                        ) {
+							hWalkable = liquidFord;
+                        }
+                        if ((top - bot) >= hWalkable && rcAbs((int)ns.y - (int)s.y) <= walkableClimb)
+                        {
 							// Mark direction as walkable.
 							const int lidx = k - (int)nc.index;
 							if (lidx < 0 || lidx > MAX_LAYERS)
@@ -533,7 +718,6 @@ bool rcBuildCompactHeightfield(rcContext* ctx, const int walkableHeight, const i
 							break;
 						}
 					}
-					
 				}
 			}
 		}
@@ -547,6 +731,7 @@ bool rcBuildCompactHeightfield(rcContext* ctx, const int walkableHeight, const i
 	
 	return true;
 }
+#endif // ZENGINE_NAVMESH
 
 /*
 static int getHeightfieldMemoryUsage(const rcHeightfield& hf)

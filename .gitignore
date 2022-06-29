@@ -12,12 +12,16 @@
 ## Linux exes have no extension
 RecastDemo/Bin/RecastDemo
 RecastDemo/Bin/Tests
+NavMeshEditor/Bin/NavMeshEditor
+NavMeshEditor/Bin/Tests
 
 # Build directory
 RecastDemo/Build
+NavMeshEditor/Build
 
 # Ignore meshes
 RecastDemo/Bin/Meshes/*
+NavMeshEditor/Bin/Meshes/*
 
 ## Logs and databases #
 *.log
@@ -40,6 +44,7 @@ Thumbs.db
 
 ## SDL contrib
 RecastDemo/Contrib/SDL/*
+NavMeshEditor/Contrib/SDL/*
 
 ## Generated doc files
 Docs/html

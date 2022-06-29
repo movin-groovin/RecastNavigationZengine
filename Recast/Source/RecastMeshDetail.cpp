@@ -667,7 +667,10 @@ static bool buildPolyDetail(rcContext* ctx, const float* in, const int nin,
 	// seamless height values across the ply boundaries.
 	if (sampleDist > 0)
 	{
-		for (int i = 0, j = nin-1; i < nin; j=i++)
+#ifdef ZENGINE_NAVMESH
+		const float hLimit = chf.bmax[1] - chf.bmin[1];
+#endif // ZENGINE_NAVMESH
+		for (int i = 0, j = nin - 1; i < nin; j = i++)
 		{
 			const float* vj = &in[j*3];
 			const float* vi = &in[i*3];
@@ -707,7 +710,14 @@ static bool buildPolyDetail(rcContext* ctx, const float* in, const int nin,
 				pos[0] = vj[0] + dx*u;
 				pos[1] = vj[1] + dy*u;
 				pos[2] = vj[2] + dz*u;
-				pos[1] = getHeight(pos[0],pos[1],pos[2], cs, ics, chf.ch, heightSearchRadius, hp)*chf.ch;
+#ifdef ZENGINE_NAVMESH
+				// TODO fix h limit crutch
+				float h = getHeight(
+					pos[0], pos[1], pos[2], cs, ics, chf.ch, heightSearchRadius, hp
+				) * chf.ch;
+				if (h <= hLimit)
+					pos[1] = h;
+#endif // ZENGINE_NAVMESH
 			}
 			// Simplify samples.
 			int idx[MAX_VERTS_PER_EDGE] = {0,nn};
@@ -804,6 +814,9 @@ static bool buildPolyDetail(rcContext* ctx, const float* in, const int nin,
 		int z0 = (int)floorf(bmin[2]/sampleDist);
 		int z1 = (int)ceilf(bmax[2]/sampleDist);
 		samples.clear();
+#ifdef ZENGINE_NAVMESH
+		const unsigned short hLimit = static_cast<unsigned short>((chf.bmax[1] - chf.bmin[1]) / chf.ch);
+#endif // ZENGINE_NAVMESH
 		for (int z = z0; z < z1; ++z)
 		{
 			for (int x = x0; x < x1; ++x)
@@ -815,7 +828,14 @@ static bool buildPolyDetail(rcContext* ctx, const float* in, const int nin,
 				// Make sure the samples are not too close to the edges.
 				if (distToPoly(nin,in,pt) > -sampleDist/2) continue;
 				samples.push(x);
-				samples.push(getHeight(pt[0], pt[1], pt[2], cs, ics, chf.ch, heightSearchRadius, hp));
+#ifdef ZENGINE_NAVMESH
+				// TODO fix h limit crutch
+				unsigned short h =
+					getHeight(pt[0], pt[1], pt[2], cs, ics, chf.ch, heightSearchRadius, hp);
+				if (h > hLimit)
+					h = static_cast<unsigned short>(pt[1] / chf.ch);
+				samples.push(h);
+#endif // ZENGINE_NAVMESH
 				samples.push(z);
 				samples.push(0); // Not added
 			}
@@ -1130,7 +1150,11 @@ static void getHeightData(rcContext* ctx, const rcCompactHeightfield& chf,
 			
 			const int ai = (int)chf.cells[ax + ay*chf.width].index + rcGetCon(cs, dir);
 			const rcCompactSpan& as = chf.spans[ai];
-			
+#ifdef ZENGINE_NAVMESH
+			if (chf.areas[ai] == RC_NULL_AREA) {
+				continue;
+			}
+#endif // ZENGINE_NAVMESH
 			hp.data[hx + hy*hp.width] = as.y;
 			
 			push3(queue, ax, ay, ai);

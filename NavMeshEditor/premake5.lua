@@ -19,10 +19,11 @@ solution "recastnavigation"
 	exceptionhandling "Off"
 	rtti "Off"
 	flags { "FatalCompileWarnings" }
+	defines { "ZENGINE_NAVMESH" }
 
 	-- debug configs
 	configuration "Debug*"
-		defines { "DEBUG" }
+		defines { "DEBUG" } 
 		targetdir ( todir .. "/lib/Debug" )
  
  	-- release configs
@@ -49,6 +50,17 @@ solution "recastnavigation"
 	filter "platforms:Win64"
 		architecture "x64"
 
+project "Common"
+	language "C++"
+	kind "StaticLib"
+	includedirs { 
+		"../Common/Include"
+	}
+	files { 
+		"../Common/Include/*.h", 
+		"../Common/Source/*.cpp" 
+	}
+
 project "DebugUtils"
 	language "C++"
 	kind "StaticLib"
@@ -56,22 +68,30 @@ project "DebugUtils"
 		"../DebugUtils/Include",
 		"../Detour/Include",
 		"../DetourTileCache/Include",
-		"../Recast/Include"
+		"../Recast/Include",
+		"../Common/Include"
 	}
 	files { 
 		"../DebugUtils/Include/*.h",
 		"../DebugUtils/Source/*.cpp"
+	}
+	links { 
+		"Common"
 	}
 
 project "Detour"
 	language "C++"
 	kind "StaticLib"
 	includedirs { 
-		"../Detour/Include" 
+		"../Detour/Include",
+		"../Common/Include"
 	}
 	files { 
 		"../Detour/Include/*.h", 
 		"../Detour/Source/*.cpp" 
+	}
+	links { 
+		"Common"
 	}
 	-- linux library cflags and libs
 	configuration { "linux", "gmake" }
@@ -109,31 +129,37 @@ project "Recast"
 	language "C++"
 	kind "StaticLib"
 	includedirs { 
-		"../Recast/Include" 
+		"../Recast/Include",
+		"../Common/Include"
 	}
 	files { 
 		"../Recast/Include/*.h",
-		"../Recast/Source/*.cpp" 
+		"../Recast/Source/*.cpp"
+	}
+	links { 
+		"Common"
 	}
 
-project "RecastDemo"
+project "NavMeshEditor"
 	language "C++"
+	defines { "USAGE_SSE_1_0", "CPP_EXCEPTIONS_ON" }
 	kind "WindowedApp"
 	includedirs { 
-		"../RecastDemo/Include",
-		"../RecastDemo/Contrib",
-		"../RecastDemo/Contrib/fastlz",
+		"../NavMeshEditor/Include",
+		"../NavMeshEditor/Contrib",
+		"../NavMeshEditor/Contrib/fastlz",
 		"../DebugUtils/Include",
 		"../Detour/Include",
 		"../DetourCrowd/Include",
 		"../DetourTileCache/Include",
-		"../Recast/Include"
+		"../Recast/Include",
+		"../Common/Include"
 	}
 	files	{ 
-		"../RecastDemo/Include/*.h",
-		"../RecastDemo/Source/*.cpp",
-		"../RecastDemo/Contrib/fastlz/*.h",
-		"../RecastDemo/Contrib/fastlz/*.c"
+		"../NavMeshEditor/Include/*.h",
+		"../NavMeshEditor/Source/*.cpp",
+		"../NavMeshEditor/Contrib/fastlz/*.h",
+		"../NavMeshEditor/Contrib/fastlz/*.c"
 	}
 
 	-- project dependencies
@@ -142,10 +168,11 @@ project "RecastDemo"
 		"Detour",
 		"DetourCrowd",
 		"DetourTileCache",
-		"Recast"
+		"Recast",
+		"Common"
 	}
 
-	-- distribute executable in RecastDemo/Bin directory
+	-- distribute executable in NavMeshEditor/Bin directory
 	targetdir "Bin"
 
 	-- linux library cflags and libs
@@ -166,9 +193,11 @@ project "RecastDemo"
 
 	-- windows library cflags and libs
 	configuration { "windows" }
-		includedirs { "../RecastDemo/Contrib/SDL/include" }
-		libdirs { "../RecastDemo/Contrib/SDL/lib/%{cfg.architecture:gsub('x86_64', 'x64')}" }
-		debugdir "../RecastDemo/Bin/"
+		includedirs { "../NavMeshEditor/Contrib/SDL/include" }
+		libdirs { "../NavMeshEditor/Contrib/SDL/lib/%{cfg.architecture:gsub('x86_64', 'x64')}" }
+		debugdir "../NavMeshEditor/Bin/"
+		buildoptions { "/EHsc" }
+		linkoptions { "/STACK:4200000" }
 		links { 
 			"glu32",
 			"opengl32",
@@ -204,6 +233,7 @@ project "Tests"
 		"../DetourCrowd/Include",
 		"../DetourTileCache/Include",
 		"../Recast/Include",
+		"../Common/Include",
 		"../Recast/Source",
 		"../Tests/Recast",
 		"../Tests",
@@ -225,6 +255,7 @@ project "Tests"
 		"DetourCrowd",
 		"DetourTileCache",
 		"Recast",
+		"Common"
 	}
 
 	-- distribute executable in RecastDemo/Bin directory

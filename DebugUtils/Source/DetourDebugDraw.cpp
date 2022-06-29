@@ -14,7 +14,7 @@
 // 2. Altered source versions must be plainly marked as such, and must not be
 //    misrepresented as being the original software.
 // 3. This notice may not be removed or altered from any source distribution.
-//
+//#include "imgui.h"#include "imgui.h"
 
 #include "DebugDraw.h"
 #include "DetourDebugDraw.h"
@@ -22,104 +22,107 @@
 #include "DetourCommon.h"
 #include "DetourNode.h"
 
+#include <tuple>
+#include <cassert>
+
 
 static float distancePtLine2d(const float* pt, const float* p, const float* q)
 {
-	float pqx = q[0] - p[0];
-	float pqz = q[2] - p[2];
-	float dx = pt[0] - p[0];
-	float dz = pt[2] - p[2];
-	float d = pqx*pqx + pqz*pqz;
-	float t = pqx*dx + pqz*dz;
-	if (d != 0) t /= d;
-	dx = p[0] + t*pqx - pt[0];
-	dz = p[2] + t*pqz - pt[2];
-	return dx*dx + dz*dz;
+    float pqx = q[0] - p[0];
+    float pqz = q[2] - p[2];
+    float dx = pt[0] - p[0];
+    float dz = pt[2] - p[2];
+    float d = pqx*pqx + pqz*pqz;
+    float t = pqx*dx + pqz*dz;
+    if (d != 0) t /= d;
+    dx = p[0] + t*pqx - pt[0];
+    dz = p[2] + t*pqz - pt[2];
+    return dx*dx + dz*dz;
 }
 
 static void drawPolyBoundaries(duDebugDraw* dd, const dtMeshTile* tile,
-							   const unsigned int col, const float linew,
-							   bool inner)
+                               const unsigned int col, const float linew,
+                               bool inner)
 {
-	static const float thr = 0.01f*0.01f;
+    static const float thr = 0.01f*0.01f;
 
-	dd->begin(DU_DRAW_LINES, linew);
+    dd->begin(DU_DRAW_LINES, linew);
 
-	for (int i = 0; i < tile->header->polyCount; ++i)
-	{
-		const dtPoly* p = &tile->polys[i];
+    for (int i = 0; i < tile->header->polyCount; ++i)
+    {
+        const dtPoly* p = &tile->polys[i];
 		
-		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION) continue;
+        if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION) continue;
 		
-		const dtPolyDetail* pd = &tile->detailMeshes[i];
-		
-		for (int j = 0, nj = (int)p->vertCount; j < nj; ++j)
-		{
-			unsigned int c = col;
-			if (inner)
-			{
-				if (p->neis[j] == 0) continue;
-				if (p->neis[j] & DT_EXT_LINK)
-				{
-					bool con = false;
-					for (unsigned int k = p->firstLink; k != DT_NULL_LINK; k = tile->links[k].next)
-					{
-						if (tile->links[k].edge == j)
-						{
-							con = true;
-							break;
-						}
-					}
-					if (con)
-						c = duRGBA(255,255,255,48);
-					else
-						c = duRGBA(0,0,0,48);
-				}
-				else
-					c = duRGBA(0,48,64,32);
-			}
-			else
-			{
-				if (p->neis[j] != 0) continue;
-			}
+        const dtPolyDetail* pd = &tile->detailMeshes[i];
+        for (int j = 0, nj = (int)p->vertCount; j < nj; ++j)
+        {
+            unsigned int c = col;
+            if (inner)
+            {
+                if (p->neis[j] == 0) continue;
+                if (p->neis[j] & DT_EXT_LINK)
+                {
+                    bool con = false;
+                    for (unsigned int k = p->firstLink; k != DT_NULL_LINK; k = tile->links[k].next)
+                    {
+                        if (tile->links[k].edge == j)
+                        {
+                            con = true;
+                            break;
+                        }
+                    }
+                    if (con)
+                        c = duRGBA(255,255,255,48);
+                    else
+                        c = duRGBA(0,0,0,48);
+                }
+                else
+                    c = duRGBA(0,48,64,32);
+            }
+            else
+            {
+                if (p->neis[j] != 0) continue;
+            }
 			
-			const float* v0 = &tile->verts[p->verts[j]*3];
-			const float* v1 = &tile->verts[p->verts[(j+1) % nj]*3];
+            const float* v0 = &tile->verts[p->verts[j]*3];
+            const float* v1 = &tile->verts[p->verts[(j+1) % nj]*3];
 			
-			// Draw detail mesh edges which align with the actual poly edge.
-			// This is really slow.
-			for (int k = 0; k < pd->triCount; ++k)
-			{
-				const unsigned char* t = &tile->detailTris[(pd->triBase+k)*4];
-				const float* tv[3];
-				for (int m = 0; m < 3; ++m)
-				{
-					if (t[m] < p->vertCount)
-						tv[m] = &tile->verts[p->verts[t[m]]*3];
-					else
-						tv[m] = &tile->detailVerts[(pd->vertBase+(t[m]-p->vertCount))*3];
-				}
-				for (int m = 0, n = 2; m < 3; n=m++)
-				{
-					if ((dtGetDetailTriEdgeFlags(t[3], n) & DT_DETAIL_EDGE_BOUNDARY) == 0)
-						continue;
+            // Draw detail mesh edges which align with the actual poly edge.
+            // This is really slow.
+            for (int k = 0; k < pd->triCount; ++k)
+            {
+                const unsigned char* t = &tile->detailTris[(pd->triBase+k)*4];
+                const float* tv[3];
+                for (int m = 0; m < 3; ++m)
+                {
+                    if (t[m] < p->vertCount)
+                        tv[m] = &tile->verts[p->verts[t[m]]*3];
+                    else
+                        tv[m] = &tile->detailVerts[(pd->vertBase+(t[m]-p->vertCount))*3];
+                }
+                for (int m = 0, n = 2; m < 3; n=m++)
+                {
+                    if ((dtGetDetailTriEdgeFlags(t[3], n) & DT_DETAIL_EDGE_BOUNDARY) == 0)
+                        continue;
 
-					if (distancePtLine2d(tv[n],v0,v1) < thr &&
-						distancePtLine2d(tv[m],v0,v1) < thr)
-					{
-						dd->vertex(tv[n], c);
-						dd->vertex(tv[m], c);
-					}
-				}
-			}
-		}
-	}
-	dd->end();
+                    if (distancePtLine2d(tv[n],v0,v1) < thr &&
+                        distancePtLine2d(tv[m],v0,v1) < thr)
+                    {
+                        dd->vertex(tv[n], c);
+                        dd->vertex(tv[m], c);
+                    }
+                }
+            }
+        }
+    }
+    dd->end();
 }
 
-static void drawMeshTile(duDebugDraw* dd, const dtNavMesh& mesh, const dtNavMeshQuery* query,
-						 const dtMeshTile* tile, unsigned char flags)
-{
+static void drawMeshTile(
+    duDebugDraw* dd, const dtNavMesh& mesh, const dtNavMeshQuery* query,
+    const dtMeshTile* tile, unsigned char flags
+) {
 	dtPolyRef base = mesh.getPolyRefBase(tile);
 
 	int tileNum = mesh.decodePolyIdTile(base);
@@ -161,77 +164,75 @@ static void drawMeshTile(duDebugDraw* dd, const dtNavMesh& mesh, const dtNavMesh
 	}
 	dd->end();
 	
-	// Draw inter poly boundaries
-	drawPolyBoundaries(dd, tile, duRGBA(0,48,64,32), 1.5f, true);
+    // Draw inter poly boundaries
+    drawPolyBoundaries(dd, tile, duRGBA(0,48,64,32), 1.5f, true);
+    // Draw outer poly boundaries
+    drawPolyBoundaries(dd, tile, duRGBA(0,48,64,220), 2.5f, false);
+
+    if (flags & DU_DRAWNAVMESH_OFFMESHCONS)
+    {
+        dd->begin(DU_DRAW_LINES, 2.0f);
+        for (int i = 0; i < tile->header->polyCount; ++i)
+        {
+            const dtPoly* p = &tile->polys[i];
+            if (p->getType() != DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip regular polys.
+                continue;
+			
+            unsigned int col, col2;
+            if (query && query->isInClosedList(base | (dtPolyRef)i))
+                col = duRGBA(255,196,0,220);
+            else
+                col = duDarkenCol(duTransCol(dd->areaToCol(p->getArea()), 220));
+
+            const dtOffMeshConnection* con = &tile->offMeshCons[i - tile->header->offMeshBase];
+            const float* va = &tile->verts[p->verts[0]*3];
+            const float* vb = &tile->verts[p->verts[1]*3];
+
+            // Check to see if start and end end-points have links.
+            bool startSet = false;
+            bool endSet = false;
+            for (unsigned int k = p->firstLink; k != DT_NULL_LINK; k = tile->links[k].next)
+            {
+                if (tile->links[k].edge == 0)
+                    startSet = true;
+                if (tile->links[k].edge == 1)
+                    endSet = true;
+            }
+			
+            // End points and their on-mesh locations.
+            dd->vertex(va[0],va[1],va[2], col);
+            dd->vertex(con->pos[0],con->pos[1],con->pos[2], col);
+            col2 = startSet ? col : duRGBA(220,32,16,196);
+            duAppendCircle(dd, con->pos[0],con->pos[1]+0.1f,con->pos[2], con->rad, col2);
+
+            dd->vertex(vb[0],vb[1],vb[2], col);
+            dd->vertex(con->pos[3],con->pos[4],con->pos[5], col);
+            col2 = endSet ? col : duRGBA(220,32,16,196);
+            duAppendCircle(dd, con->pos[3],con->pos[4]+0.1f,con->pos[5], con->rad, col2);
+			
+            // End point vertices.
+            dd->vertex(con->pos[0],con->pos[1],con->pos[2], duRGBA(0,48,64,196));
+            dd->vertex(con->pos[0],con->pos[1]+0.2f,con->pos[2], duRGBA(0,48,64,196));
+			
+            dd->vertex(con->pos[3],con->pos[4],con->pos[5], duRGBA(0,48,64,196));
+            dd->vertex(con->pos[3],con->pos[4]+0.2f,con->pos[5], duRGBA(0,48,64,196));
+			
+            // Connection arc.
+            duAppendArc(dd, con->pos[0],con->pos[1],con->pos[2], con->pos[3],con->pos[4],con->pos[5], 0.25f,
+                        (con->flags & 1) ? 0.6f : 0, 0.6f, col);
+        }
+        dd->end();
+    }
 	
-	// Draw outer poly boundaries
-	drawPolyBoundaries(dd, tile, duRGBA(0,48,64,220), 2.5f, false);
-
-	if (flags & DU_DRAWNAVMESH_OFFMESHCONS)
-	{
-		dd->begin(DU_DRAW_LINES, 2.0f);
-		for (int i = 0; i < tile->header->polyCount; ++i)
-		{
-			const dtPoly* p = &tile->polys[i];
-			if (p->getType() != DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip regular polys.
-				continue;
-			
-			unsigned int col, col2;
-			if (query && query->isInClosedList(base | (dtPolyRef)i))
-				col = duRGBA(255,196,0,220);
-			else
-				col = duDarkenCol(duTransCol(dd->areaToCol(p->getArea()), 220));
-
-			const dtOffMeshConnection* con = &tile->offMeshCons[i - tile->header->offMeshBase];
-			const float* va = &tile->verts[p->verts[0]*3];
-			const float* vb = &tile->verts[p->verts[1]*3];
-
-			// Check to see if start and end end-points have links.
-			bool startSet = false;
-			bool endSet = false;
-			for (unsigned int k = p->firstLink; k != DT_NULL_LINK; k = tile->links[k].next)
-			{
-				if (tile->links[k].edge == 0)
-					startSet = true;
-				if (tile->links[k].edge == 1)
-					endSet = true;
-			}
-			
-			// End points and their on-mesh locations.
-			dd->vertex(va[0],va[1],va[2], col);
-			dd->vertex(con->pos[0],con->pos[1],con->pos[2], col);
-			col2 = startSet ? col : duRGBA(220,32,16,196);
-			duAppendCircle(dd, con->pos[0],con->pos[1]+0.1f,con->pos[2], con->rad, col2);
-
-			dd->vertex(vb[0],vb[1],vb[2], col);
-			dd->vertex(con->pos[3],con->pos[4],con->pos[5], col);
-			col2 = endSet ? col : duRGBA(220,32,16,196);
-			duAppendCircle(dd, con->pos[3],con->pos[4]+0.1f,con->pos[5], con->rad, col2);
-			
-			// End point vertices.
-			dd->vertex(con->pos[0],con->pos[1],con->pos[2], duRGBA(0,48,64,196));
-			dd->vertex(con->pos[0],con->pos[1]+0.2f,con->pos[2], duRGBA(0,48,64,196));
-			
-			dd->vertex(con->pos[3],con->pos[4],con->pos[5], duRGBA(0,48,64,196));
-			dd->vertex(con->pos[3],con->pos[4]+0.2f,con->pos[5], duRGBA(0,48,64,196));
-			
-			// Connection arc.
-			duAppendArc(dd, con->pos[0],con->pos[1],con->pos[2], con->pos[3],con->pos[4],con->pos[5], 0.25f,
-						(con->flags & 1) ? 0.6f : 0, 0.6f, col);
-		}
-		dd->end();
-	}
-	
-	const unsigned int vcol = duRGBA(0,0,0,196);
-	dd->begin(DU_DRAW_POINTS, 3.0f);
-	for (int i = 0; i < tile->header->vertCount; ++i)
-	{
-		const float* v = &tile->verts[i*3];
-		dd->vertex(v[0], v[1], v[2], vcol);
-	}
-	dd->end();
-
-	dd->depthMask(true);
+    const unsigned int vcol = duRGBA(0,0,0,196);
+    dd->begin(DU_DRAW_POINTS, 3.0f);
+    for (int i = 0; i < tile->header->vertCount; ++i)
+    {
+        const float* v = &tile->verts[i*3];
+        dd->vertex(v[0], v[1], v[2], vcol);
+    }
+    dd->end();
+    dd->depthMask(true);
 }
 
 void duDebugDrawNavMesh(duDebugDraw* dd, const dtNavMesh& mesh, unsigned char flags)
@@ -246,8 +247,49 @@ void duDebugDrawNavMesh(duDebugDraw* dd, const dtNavMesh& mesh, unsigned char fl
 	}
 }
 
-void duDebugDrawNavMeshWithClosedList(struct duDebugDraw* dd, const dtNavMesh& mesh, const dtNavMeshQuery& query, unsigned char flags)
-{
+void duDebugDrawNavMeshWithClosedListFast(
+    struct duDebugDraw* dd, struct duDebugDraw* collector, const dtNavMesh& mesh,
+    const dtNavMeshQuery& query, unsigned char flags, bool changed
+) {
+    static int vertices_number_tris = -1;
+    static int vertices_number_lines = -1;
+    static int vertices_number_points = -1;
+    if (!dd || !collector) return;
+    if (dd->is_vbo_navmesh_inited() && !changed) {
+        assert(vertices_number_tris != -1);
+        assert(vertices_number_lines != -1);
+        assert(vertices_number_points != -1);
+        dd->draw_vbo_navmesh(
+            vertices_number_tris, vertices_number_lines, vertices_number_points);
+        return;
+    }
+    if (changed)
+        dd->reset_vbo();
+
+    const dtNavMeshQuery* q = (flags & DU_DRAWNAVMESH_CLOSEDLIST) ? &query : 0;
+    for (int i = 0; i < mesh.getMaxTiles(); ++i)
+    {
+        const dtMeshTile* tile = mesh.getTile(i);
+        if (!tile->header) continue;
+        drawMeshTile(collector, mesh, q, tile, flags);
+    }
+
+    duDebugDraw::EntryRet ret = collector->fetch_collected_data();
+    assert(
+        ret.m_textures_tris.empty() &&
+        ret.m_textures_lines.empty() &&
+        ret.m_textures_points.empty()
+    );
+    dd->gen_vbo_navmesh(ret);
+    vertices_number_tris = ret.m_vertices_tris.size() / 3;
+    vertices_number_lines = ret.m_vertices_lines.size() / 2;
+    vertices_number_points = ret.m_vertices_lines.size() / 1;
+}
+
+void duDebugDrawNavMeshWithClosedList(
+    struct duDebugDraw* dd, const dtNavMesh& mesh, const dtNavMeshQuery& query,
+    unsigned char flags
+) {
 	if (!dd) return;
 
 	const dtNavMeshQuery* q = (flags & DU_DRAWNAVMESH_CLOSEDLIST) ? &query : 0;
@@ -436,6 +478,23 @@ void duDebugDrawNavMeshPolysWithFlags(struct duDebugDraw* dd, const dtNavMesh& m
 	}
 }
 
+void duDebugDrawNavMeshPolyPonts(duDebugDraw* dd, const dtNavMesh& mesh, dtPolyRef ref)
+{
+    const dtMeshTile* tile{};
+    const dtPoly* poly{};
+    if (dtStatusFailed(mesh.getTileAndPolyByRef(ref, &tile, &poly)))
+        return;
+
+    const int nv = poly->vertCount;
+    dd->begin(DU_DRAW_LINES, 2.0f);
+    for (int j = 0; j < nv; ++j)
+    {
+        const float* v = &tile->verts[poly->verts[j] * 3];
+        duAppendCircle(dd, v[0], v[1], v[2], 1.f, duRGBA(255,0,0,255));
+    }
+    dd->end();
+}
+
 void duDebugDrawNavMeshPoly(duDebugDraw* dd, const dtNavMesh& mesh, dtPolyRef ref, const unsigned int col)
 {
 	if (!dd) return;
@@ -456,7 +515,7 @@ void duDebugDrawNavMeshPoly(duDebugDraw* dd, const dtNavMesh& mesh, dtPolyRef re
 
 		dd->begin(DU_DRAW_LINES, 2.0f);
 
-		// Connection arc.
+        // Connection arc.
 		duAppendArc(dd, con->pos[0],con->pos[1],con->pos[2], con->pos[3],con->pos[4],con->pos[5], 0.25f,
 					(con->flags & 1) ? 0.6f : 0.0f, 0.6f, c);
 		
@@ -464,7 +523,7 @@ void duDebugDrawNavMeshPoly(duDebugDraw* dd, const dtNavMesh& mesh, dtPolyRef re
 	}
 	else
 	{
-		const dtPolyDetail* pd = &tile->detailMeshes[ip];
+        const dtPolyDetail* pd = &tile->detailMeshes[ip];
 
 		dd->begin(DU_DRAW_TRIS);
 		for (int i = 0; i < pd->triCount; ++i)

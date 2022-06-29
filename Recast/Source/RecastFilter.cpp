@@ -193,9 +193,28 @@ void rcFilterWalkableLowHeightSpans(rcContext* ctx, int walkableHeight, rcHeight
 			for (rcSpan* s = solid.spans[x + y*w]; s; s = s->next)
 			{
 				const int bot = (int)(s->smax);
+#ifdef ZENGINE_NAVMESH
+				if (s->next) {
+					const int top = s->next->smin;
+					if (
+                        s->area >= PolyAreaFlags::GROUND &&
+                        s->next->area < PolyAreaFlags::GROUND
+					) {
+						;
+					}
+					else if ((top - bot) <= walkableHeight) {
+						s->area = RC_NULL_AREA;
+					}
+				}
+				else {
+					if ((MAX_HEIGHT - bot) <= walkableHeight)
+						s->area = RC_NULL_AREA;
+				}
+#else
 				const int top = s->next ? (int)(s->next->smin) : MAX_HEIGHT;
 				if ((top - bot) <= walkableHeight)
 					s->area = RC_NULL_AREA;
+#endif // ZENGINE_NAVMESH
 			}
 		}
 	}

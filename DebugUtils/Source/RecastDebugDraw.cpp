@@ -18,9 +18,16 @@
 
 #define _USE_MATH_DEFINES
 #include <math.h>
+#include <cstring>
+#include <cstdio>
+#include <cassert>
+#include <vector>
 #include "DebugDraw.h"
 #include "RecastDebugDraw.h"
 #include "Recast.h"
+#ifdef ZENGINE_NAVMESH
+#include "Common.h"
+#endif // ZENGINE_NAVMESH
 
 void duDebugDrawTriMesh(duDebugDraw* dd, const float* verts, int /*nverts*/,
 						const int* tris, const float* normals, int ntris,
@@ -77,11 +84,117 @@ void duDebugDrawTriMesh(duDebugDraw* dd, const float* verts, int /*nverts*/,
 	dd->texture(false);
 }
 
+void duDebugDrawTriMeshSlopeFast(
+    duDebugDraw* dd,
+    const float* verts,
+    int /*nverts*/,
+    const int* tris,
+	const uint8_t* flags,
+    const float* normals,
+    int ntris,
+    const float walkableSlopeAngle,
+    const float texScale,
+	const float* /*cameraPos*/,
+    bool showNonTriPolys,
+    bool highlightLiquidPolys
+) {
+    if (!dd) return;
+    if (!verts) return;
+    if (!tris) return;
+    if (!normals) return;
+
+    if (dd->is_vbo_mesh_inited())
+    {
+        dd->draw_vbo_mesh(ntris * 3);
+        return;
+    }
+
+    const float walkableThr = cosf(walkableSlopeAngle/180.0f*DU_PI);
+    const unsigned int unwalkable = duRGBA(192,128,0,255);
+
+    std::vector<float> vertices(ntris * 3 * 3);
+    std::vector<float> textures_coords(ntris * 3 * 2);
+    std::vector<unsigned int> colors(ntris * 3 * 1);
+    for (int i = 0, j = 0; i < ntris*3; i += 3, ++j)
+    {
+        const float* norm = &normals[i];
+        unsigned int color;
+        unsigned char a = (unsigned char)(220*(2+norm[0]+norm[1])/4);
+        const uint8_t clearFlag =
+            PolyAreaFlags::clearInhabitedFlag(PolyAreaFlags::clearIsTriFlag(flags[j]));
+		if (showNonTriPolys && !(flags[j] >> PolyAreaFlags::IS_TRI_POS)) {
+            color = duRGBA(0xff, 0, 0, 255);
+        }
+        else {
+            if (highlightLiquidPolys) {
+                if (clearFlag < PolyAreaFlags::LAVA) {
+                    color = duRGBA(0x41, 0x66, 0xF5, 255);
+                }
+                else if (clearFlag == PolyAreaFlags::LAVA) {
+                    color = duRGBA(0xff, 0x7f, 0x00, 255);
+                }
+                else if (clearFlag == PolyAreaFlags::DOOR || clearFlag == PolyAreaFlags::LADDER) {
+                    color = duRGBA(0xff, 0x7f, 0x00, 255);
+                }
+                else if (norm[1] < walkableThr) {
+                    color = duLerpCol(duRGBA(a, a, a, 255), unwalkable, 64);
+                }
+                else {
+                    color = duRGBA(a, a, a, 255);
+                }
+            }
+            else {
+                if (norm[1] < walkableThr) {
+                    color = duLerpCol(duRGBA(a, a, a, 255), unwalkable, 64);
+                }
+                else {
+                    color = duRGBA(a, a, a, 255);
+                }
+            }
+		}
+
+        const float* va = &verts[tris[i+0]*3];
+        const float* vb = &verts[tris[i+1]*3];
+        const float* vc = &verts[tris[i+2]*3];
+
+        int ax = 0, ay = 0;
+        if (rcAbs(norm[1]) > rcAbs(norm[ax]))
+            ax = 1;
+        if (rcAbs(norm[2]) > rcAbs(norm[ax]))
+            ax = 2;
+        ax = (1<<ax)&3; // +1 mod 3
+        ay = (1<<ax)&3; // +1 mod 3
+
+        float uva[2];
+        float uvb[2];
+        float uvc[2];
+        uva[0] = va[ax]*texScale;
+        uva[1] = va[ay]*texScale;
+        uvb[0] = vb[ax]*texScale;
+        uvb[1] = vb[ay]*texScale;
+        uvc[0] = vc[ax]*texScale;
+        uvc[1] = vc[ay]*texScale;
+
+        std::memcpy(&vertices[i * 3 + 0 * 3], va, sizeof(float) * 3);
+        std::memcpy(&vertices[i * 3 + 1 * 3], vb, sizeof(float) * 3);
+        std::memcpy(&vertices[i * 3 + 2 * 3], vc, sizeof(float) * 3);
+        std::memcpy(&textures_coords[i * 2 + 0 * 2], uva, sizeof(float) * 2);
+        std::memcpy(&textures_coords[i * 2 + 1 * 2], uvb, sizeof(float) * 2);
+        std::memcpy(&textures_coords[i * 2 + 2 * 2], uvc, sizeof(float) * 2);
+        colors[i * 1 + 0 * 1] = color;
+        colors[i * 1 + 1 * 1] = color;
+        colors[i * 1 + 2 * 1] = color;
+    }
+
+    dd->gen_vbo_mesh(vertices, textures_coords, colors);
+}
+
 void duDebugDrawTriMeshSlope(duDebugDraw* dd, const float* verts, int /*nverts*/,
 							 const int* tris, const float* normals, int ntris,
-							 const float walkableSlopeAngle, const float texScale)
+                             const float walkableSlopeAngle, const float texScale,
+                             const float* /*cameraPos*/)
 {
-	if (!dd) return;
+    if (!dd) return;
 	if (!verts) return;
 	if (!tris) return;
 	if (!normals) return;
@@ -92,14 +205,36 @@ void duDebugDrawTriMeshSlope(duDebugDraw* dd, const float* verts, int /*nverts*/
 	float uvb[2];
 	float uvc[2];
 	
-	dd->texture(true);
+    dd->texture(true);
 
 	const unsigned int unwalkable = duRGBA(192,128,0,255);
 	
-	dd->begin(DU_DRAW_TRIS);
+//    static const float LOD_K = 150.f;
+    dd->begin(DU_DRAW_TRIS);
 	for (int i = 0; i < ntris*3; i += 3)
 	{
-		const float* norm = &normals[i];
+        const float* va = &verts[tris[i+0]*3];
+        const float* vb = &verts[tris[i+1]*3];
+        const float* vc = &verts[tris[i+2]*3];
+//        if (cameraPos) {
+//            float resAB = abs(va[0] - vb[0]) + abs(va[1] - vb[1]) + abs(va[2] - vb[2]);
+//            float resBC = abs(vb[0] - vc[0]) + abs(vb[1] - vc[1]) + abs(vb[2] - vc[2]);
+//            float resCA = abs(vc[0] - va[0]) + abs(vc[1] - va[1]) + abs(vc[2] - va[2]);
+//            float camSumA = abs(va[0] - cameraPos[0]) +
+//                                abs(va[1] - cameraPos[1]) + abs(va[2] - cameraPos[2]);
+//            float camSumB = abs(vb[0] - cameraPos[0]) +
+//                                abs(vb[1] - cameraPos[1]) + abs(vb[2] - cameraPos[2]);
+//            float camSumC = abs(vc[0] - cameraPos[0]) +
+//                                abs(vc[1] - cameraPos[1]) + abs(vc[2] - cameraPos[2]);
+//            if (
+//                (resAB * LOD_K < camSumA) &&
+//                (resBC * LOD_K < camSumB) &&
+//                (resCA * LOD_K < camSumC)
+//            )
+//                continue;
+//        }
+
+        const float* norm = &normals[i];
 		unsigned int color;
 		unsigned char a = (unsigned char)(220*(2+norm[0]+norm[1])/4);
 		if (norm[1] < walkableThr)
@@ -107,9 +242,9 @@ void duDebugDrawTriMeshSlope(duDebugDraw* dd, const float* verts, int /*nverts*/
 		else
 			color = duRGBA(a,a,a,255);
 		
-		const float* va = &verts[tris[i+0]*3];
-		const float* vb = &verts[tris[i+1]*3];
-		const float* vc = &verts[tris[i+2]*3];
+//		const float* va = &verts[tris[i+0]*3];
+//		const float* vb = &verts[tris[i+1]*3];
+//		const float* vc = &verts[tris[i+2]*3];
 		
 		int ax = 0, ay = 0;
 		if (rcAbs(norm[1]) > rcAbs(norm[ax]))
@@ -132,7 +267,7 @@ void duDebugDrawTriMeshSlope(duDebugDraw* dd, const float* verts, int /*nverts*/
 	}
 	dd->end();
 
-	dd->texture(false);
+    dd->texture(false);
 }
 
 void duDebugDrawHeightfieldSolid(duDebugDraw* dd, const rcHeightfield& hf)
@@ -142,15 +277,15 @@ void duDebugDrawHeightfieldSolid(duDebugDraw* dd, const rcHeightfield& hf)
 	const float* orig = hf.bmin;
 	const float cs = hf.cs;
 	const float ch = hf.ch;
-	
+
 	const int w = hf.width;
 	const int h = hf.height;
-		
+
 	unsigned int fcol[6];
 	duCalcBoxColors(fcol, duRGBA(255,255,255,255), duRGBA(255,255,255,255));
-	
+
 	dd->begin(DU_DRAW_QUADS);
-	
+
 	for (int y = 0; y < h; ++y)
 	{
 		for (int x = 0; x < w; ++x)
@@ -175,15 +310,15 @@ void duDebugDrawHeightfieldWalkable(duDebugDraw* dd, const rcHeightfield& hf)
 	const float* orig = hf.bmin;
 	const float cs = hf.cs;
 	const float ch = hf.ch;
-	
+
 	const int w = hf.width;
 	const int h = hf.height;
-	
+
 	unsigned int fcol[6];
 	duCalcBoxColors(fcol, duRGBA(255,255,255,255), duRGBA(217,217,217,255));
 
 	dd->begin(DU_DRAW_QUADS);
-	
+
 	for (int y = 0; y < h; ++y)
 	{
 		for (int x = 0; x < w; ++x)
@@ -199,17 +334,101 @@ void duDebugDrawHeightfieldWalkable(duDebugDraw* dd, const rcHeightfield& hf)
 					fcol[0] = duRGBA(64,64,64,255);
 				else
 					fcol[0] = duMultCol(dd->areaToCol(s->area), 200);
-				
-				duAppendBox(dd, fx, orig[1]+s->smin*ch, fz, fx+cs, orig[1] + s->smax*ch, fz+cs, fcol);
+				duAppendBox(
+					dd, fx, orig[1]+s->smin*ch, fz, fx+cs, orig[1] + s->smax*ch, fz+cs, fcol
+				);
 				s = s->next;
 			}
 		}
 	}
+
+	dd->end();
+}
+
+void duDebugDrawHeightfieldWalkableBboxes(duDebugDraw* dd, const rcHeightfield& hf)
+{
+	if (!dd) return;
+
+	const float* orig = hf.bmin;
+	const float cs = hf.cs;
+	const float ch = hf.ch;
 	
+	const int w = hf.width;
+	const int h = hf.height;
+		
+	unsigned int fcol[6];
+	duCalcBoxColors(fcol, duRGBA(255,255,255,255), duRGBA(255,255,255,255));
+	
+	dd->begin(DU_DRAW_QUADS);
+
+	for (int y = 0; y < h; ++y)
+	{
+		for (int x = 0; x < w; ++x)
+		{
+			float fx = orig[0] + x*cs;
+			float fz = orig[2] + y*cs;
+			const rcSpan* s = hf.spans[x + y*w];
+			while (s)
+			{
+				unsigned int color;
+				if (s->area == RC_NULL_AREA) {
+					color = duRGBA(255,0,0,255);
+				}
+				else {
+					color = duRGBA(0,0,255,255);
+				}
+				float fy = orig[1] + s->smin*ch;
+				float fyMax = orig[1] + s->smax*ch;
+				duDebugDrawBoxWire(dd, fx, fy, fz, fx+cs, fyMax, fz+cs, color, 1.0f);
+				s = s->next;
+			}
+		}
+	}
 	dd->end();
 }
 
 void duDebugDrawCompactHeightfieldSolid(duDebugDraw* dd, const rcCompactHeightfield& chf)
+{
+	if (!dd) return;
+
+	const float cs = chf.cs;
+	const float ch = chf.ch;
+
+	dd->begin(DU_DRAW_QUADS);
+
+	for (int y = 0; y < chf.height; ++y)
+	{
+		for (int x = 0; x < chf.width; ++x)
+		{
+			const float fx = chf.bmin[0] + x*cs;
+			const float fz = chf.bmin[2] + y*cs;
+			const rcCompactCell& c = chf.cells[x+y*chf.width];
+
+			for (unsigned i = c.index, ni = c.index+c.count; i < ni; ++i)
+			{
+				const rcCompactSpan& s = chf.spans[i];
+
+				const unsigned char area = chf.areas[i];
+				unsigned int color;
+				if (area == RC_WALKABLE_AREA)
+					color = duRGBA(0,192,255,64);
+				else if (area == RC_NULL_AREA)
+					color = duRGBA(0,0,0,64);
+				else
+					color = dd->areaToCol(area);
+
+				const float fy = chf.bmin[1] + (s.y+1)*ch;
+				dd->vertex(fx, fy, fz, color);
+				dd->vertex(fx, fy, fz+cs, color);
+				dd->vertex(fx+cs, fy, fz+cs, color);
+				dd->vertex(fx+cs, fy, fz, color);
+			}
+		}
+	}
+	dd->end();
+}
+
+void duDebugDrawCompactHeightfieldSolidBboxes(duDebugDraw* dd, const rcCompactHeightfield& chf)
 {
 	if (!dd) return;
 
@@ -232,18 +451,15 @@ void duDebugDrawCompactHeightfieldSolid(duDebugDraw* dd, const rcCompactHeightfi
 
 				const unsigned char area = chf.areas[i];
 				unsigned int color;
-				if (area == RC_WALKABLE_AREA)
-					color = duRGBA(0,192,255,64);
-				else if (area == RC_NULL_AREA)
-					color = duRGBA(0,0,0,64);
-				else
-					color = dd->areaToCol(area);
-				
-				const float fy = chf.bmin[1] + (s.y+1)*ch;
-				dd->vertex(fx, fy, fz, color);
-				dd->vertex(fx, fy, fz+cs, color);
-				dd->vertex(fx+cs, fy, fz+cs, color);
-				dd->vertex(fx+cs, fy, fz, color);
+				if (area == RC_NULL_AREA) {
+					color = duRGBA(255,0,0,255);
+				}
+				else {
+					color = duRGBA(0,0,255,255);
+				}
+				float fy = chf.bmin[1] + s.y * ch;
+				float fyMax = fy + rcMin((int)s.h, chf.walkableHeight + 1) * ch;
+				duDebugDrawBoxWire(dd, fx, fy, fz, fx+cs, fyMax, fz+cs, color, 1.0f);
 			}
 		}
 	}

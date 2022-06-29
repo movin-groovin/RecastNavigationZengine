@@ -184,6 +184,34 @@ static void walkContour(int x, int y, int i,
 	}
 }
 
+#ifdef ZENGINE_NAVMESH
+static float distancePtSeg3D(
+	const int x, const int y, const int z,
+	const int px, const int py, const int pz,
+	const int qx, const int qy, const int qz
+) {
+	float pqx = (float)(qx - px);
+	float pqy = (float)(qy - py);
+	float pqz = (float)(qz - pz);
+	float dx = (float)(x - px);
+	float dy = (float)(y - py);
+	float dz = (float)(z - pz);
+	float d = pqx * pqx + pqy * pqy + pqz * pqz;
+	float t = pqx * dx + pqy * dy + pqz * dz;
+	if (d > 0)
+		t /= d;
+	if (t < 0)
+		t = 0;
+	else if (t > 1)
+		t = 1;
+
+	dx = px + t * pqx - x;
+	dy = py + t * pqy - y;
+	dz = pz + t * pqz - z;
+
+	return dx * dx + dy * dy + dz * dz;
+}
+#else
 static float distancePtSeg(const int x, const int z,
 						   const int px, const int pz,
 						   const int qx, const int qz)
@@ -206,6 +234,7 @@ static float distancePtSeg(const int x, const int z,
 	
 	return dx*dx + dz*dz;
 }
+#endif // ZENGINE_NAVMESH
 
 static void simplifyContour(rcIntArray& points, rcIntArray& simplified,
 							const float maxError, const int maxEdgeLen, const int buildFlags)
@@ -292,10 +321,16 @@ static void simplifyContour(rcIntArray& points, rcIntArray& simplified,
 		int ii = (i+1) % (simplified.size()/4);
 		
 		int ax = simplified[i*4+0];
+#ifdef ZENGINE_NAVMESH
+		int ay = simplified[i * 4 + 1];
+#endif // ZENGINE_NAVMESH
 		int az = simplified[i*4+2];
 		int ai = simplified[i*4+3];
 
 		int bx = simplified[ii*4+0];
+#ifdef ZENGINE_NAVMESH
+		int by = simplified[ii * 4 + 1];
+#endif // ZENGINE_NAVMESH
 		int bz = simplified[ii*4+2];
 		int bi = simplified[ii*4+3];
 
@@ -319,6 +354,9 @@ static void simplifyContour(rcIntArray& points, rcIntArray& simplified,
 			ci = (bi+cinc) % pn;
 			endi = ai;
 			rcSwap(ax, bx);
+#ifdef ZENGINE_NAVMESH
+			rcSwap(ay, by);
+#endif // ZENGINE_NAVMESH
 			rcSwap(az, bz);
 		}
 		
@@ -328,7 +366,13 @@ static void simplifyContour(rcIntArray& points, rcIntArray& simplified,
 		{
 			while (ci != endi)
 			{
-				float d = distancePtSeg(points[ci*4+0], points[ci*4+2], ax, az, bx, bz);
+#ifdef ZENGINE_NAVMESH
+				float d = distancePtSeg3D(
+					points[ci * 4 + 0], points[ci * 4 + 1], points[ci * 4 + 2], ax, ay, az, bx, by, bz
+				);
+#else
+				float d = distancePtSeg(points[ci * 4 + 0], points[ci * 4 + 2], ax, az, bx, bz);
+#endif // ZENGINE_NAVMESH
 				if (d > maxd)
 				{
 					maxd = d;

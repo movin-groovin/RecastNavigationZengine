@@ -19,6 +19,12 @@
 #ifndef RECAST_H
 #define RECAST_H
 
+#include <cstdint>
+
+#ifdef ZENGINE_NAVMESH
+#include "Common.h"
+#endif // ZENGINE_NAVMESH
+
 /// The value of PI used by Recast.
 static const float RC_PI = 3.14159265f;
 
@@ -326,6 +332,7 @@ struct rcCompactSpan
 	unsigned short reg;			///< The id of the region the span belongs to. (Or zero if not in a region.)
 	unsigned int con : 24;		///< Packed neighbor connection data.
 	unsigned int h : 8;			///< The height of the span.  (Measured from #y.)
+    unsigned char hPrev;
 };
 
 /// A compact, static heightfield representing unobstructed space.
@@ -578,6 +585,7 @@ static const int RC_CONTOUR_REG_MASK = 0xffff;
 /// @see rcPolyMesh::polys
 static const unsigned short RC_MESH_NULL_IDX = 0xffff;
 
+#ifndef ZENGINE_NAVMESH
 /// Represents the null area.
 /// When a data element is given this value it is considered to no longer be 
 /// assigned to a usable area.  (E.g. It is unwalkable.)
@@ -587,6 +595,7 @@ static const unsigned char RC_NULL_AREA = 0;
 /// This is also the maximum allowed area id, and the only non-null area id 
 /// recognized by some steps in the build process. 
 static const unsigned char RC_WALKABLE_AREA = 63;
+#endif // ZENGINE_NAVMESH
 
 /// The value returned by #rcGetCon if the specified direction is not connected
 /// to another span. (Has no neighbor.)
@@ -953,6 +962,10 @@ int rcGetHeightFieldSpanCount(rcContext* ctx, rcHeightfield& hf);
 ///  @returns True if the operation completed successfully.
 bool rcBuildCompactHeightfield(rcContext* ctx, const int walkableHeight, const int walkableClimb,
 							   rcHeightfield& hf, rcCompactHeightfield& chf);
+bool rcBuildCompactHeightfield_FirstVersion(
+	rcContext* ctx, const int walkableHeight, const int walkableClimb, rcHeightfield& hf,
+	rcCompactHeightfield& chf, int liquidWalk, int liquidFord, int liquidSwim
+);
 
 /// Erodes the walkable area within the heightfield by the specified radius. 
 ///  @ingroup recast
@@ -961,6 +974,13 @@ bool rcBuildCompactHeightfield(rcContext* ctx, const int walkableHeight, const i
 ///  @param[in,out]	chf		The populated compact heightfield to erode.
 ///  @returns True if the operation completed successfully.
 bool rcErodeWalkableArea(rcContext* ctx, int radius, rcCompactHeightfield& chf);
+bool rcErodeWalkableArea_FirstVersion(rcContext* ctx, int radius, rcCompactHeightfield& chf);
+bool rcErodeWalkableArea_SecondVersion(
+	rcContext* ctx, int radius,
+	rcCompactHeightfield& chf,
+	const rcHeightfield* solid,
+	bool erodeBorderSpans
+);
 
 /// Applies a median filter to walkable area types (based on area id), removing noise.
 ///  @ingroup recast
