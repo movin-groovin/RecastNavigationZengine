@@ -84,8 +84,9 @@ void duDebugDrawTriMesh(duDebugDraw* dd, const float* verts, int /*nverts*/,
 	dd->texture(false);
 }
 
+#ifdef ZENGINE_NAVMESH
 void duDebugDrawTriMeshSlopeFast(
-    duDebugDraw* dd,
+	duDebugDraw* dd,
     const float* verts,
     int /*nverts*/,
     const int* tris,
@@ -98,24 +99,18 @@ void duDebugDrawTriMeshSlopeFast(
     bool showNonTriPolys,
     bool highlightLiquidPolys
 ) {
-    if (!dd) return;
-    if (!verts) return;
-    if (!tris) return;
-    if (!normals) return;
+	if (!dd) return;
+	if (!verts) return;
+	if (!tris) return;
+	if (!normals) return;
 
-    if (dd->is_vbo_mesh_inited())
-    {
-        dd->draw_vbo_mesh(ntris * 3);
-        return;
-    }
+	dd->depthMask(false);
+	dd->begin(DU_DRAW_TRIS);
 
     const float walkableThr = cosf(walkableSlopeAngle/180.0f*DU_PI);
     const unsigned int unwalkable = duRGBA(192,128,0,255);
-
-    std::vector<float> vertices(ntris * 3 * 3);
-    std::vector<float> textures_coords(ntris * 3 * 2);
-    std::vector<unsigned int> colors(ntris * 3 * 1);
-    for (int i = 0, j = 0; i < ntris*3; i += 3, ++j)
+	int i = 0, j = 0;
+    for (; i < ntris * 3; i += 3, ++j)
     {
         const float* norm = &normals[i];
         unsigned int color;
@@ -175,19 +170,15 @@ void duDebugDrawTriMeshSlopeFast(
         uvc[0] = vc[ax]*texScale;
         uvc[1] = vc[ay]*texScale;
 
-        std::memcpy(&vertices[i * 3 + 0 * 3], va, sizeof(float) * 3);
-        std::memcpy(&vertices[i * 3 + 1 * 3], vb, sizeof(float) * 3);
-        std::memcpy(&vertices[i * 3 + 2 * 3], vc, sizeof(float) * 3);
-        std::memcpy(&textures_coords[i * 2 + 0 * 2], uva, sizeof(float) * 2);
-        std::memcpy(&textures_coords[i * 2 + 1 * 2], uvb, sizeof(float) * 2);
-        std::memcpy(&textures_coords[i * 2 + 2 * 2], uvc, sizeof(float) * 2);
-        colors[i * 1 + 0 * 1] = color;
-        colors[i * 1 + 1 * 1] = color;
-        colors[i * 1 + 2 * 1] = color;
+		dd->vertex(va, color, uva);
+		dd->vertex(vb, color, uvb);
+		dd->vertex(vc, color, uvc);
     }
 
-    dd->gen_vbo_mesh(vertices, textures_coords, colors);
+	dd->depthMask(true);
+	dd->end();
 }
+#endif // ZENGINE_NAVMESH
 
 void duDebugDrawTriMeshSlope(duDebugDraw* dd, const float* verts, int /*nverts*/,
 							 const int* tris, const float* normals, int ntris,

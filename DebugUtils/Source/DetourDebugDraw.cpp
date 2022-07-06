@@ -247,44 +247,23 @@ void duDebugDrawNavMesh(duDebugDraw* dd, const dtNavMesh& mesh, unsigned char fl
 	}
 }
 
+#ifdef ZENGINE_NAVMESH
 void duDebugDrawNavMeshWithClosedListFast(
-    struct duDebugDraw* dd, struct duDebugDraw* collector, const dtNavMesh& mesh,
-    const dtNavMeshQuery& query, unsigned char flags, bool changed
+	duDebugDraw* dd,
+	const dtNavMesh& mesh,
+	const dtNavMeshQuery& query,
+	unsigned char flags
 ) {
-    static int vertices_number_tris = -1;
-    static int vertices_number_lines = -1;
-    static int vertices_number_points = -1;
-    if (!dd || !collector) return;
-    if (dd->is_vbo_navmesh_inited() && !changed) {
-        assert(vertices_number_tris != -1);
-        assert(vertices_number_lines != -1);
-        assert(vertices_number_points != -1);
-        dd->draw_vbo_navmesh(
-            vertices_number_tris, vertices_number_lines, vertices_number_points);
-        return;
-    }
-    if (changed)
-        dd->reset_vbo();
-
+    if (!dd) return;
     const dtNavMeshQuery* q = (flags & DU_DRAWNAVMESH_CLOSEDLIST) ? &query : 0;
     for (int i = 0; i < mesh.getMaxTiles(); ++i)
     {
         const dtMeshTile* tile = mesh.getTile(i);
         if (!tile->header) continue;
-        drawMeshTile(collector, mesh, q, tile, flags);
+        drawMeshTile(dd, mesh, q, tile, flags);
     }
-
-    duDebugDraw::EntryRet ret = collector->fetch_collected_data();
-    assert(
-        ret.m_textures_tris.empty() &&
-        ret.m_textures_lines.empty() &&
-        ret.m_textures_points.empty()
-    );
-    dd->gen_vbo_navmesh(ret);
-    vertices_number_tris = ret.m_vertices_tris.size() / 3;
-    vertices_number_lines = ret.m_vertices_lines.size() / 2;
-    vertices_number_points = ret.m_vertices_lines.size() / 1;
 }
+#endif // ZENGINE_NAVMESH
 
 void duDebugDrawNavMeshWithClosedList(
     struct duDebugDraw* dd, const dtNavMesh& mesh, const dtNavMeshQuery& query,

@@ -31,6 +31,9 @@
 #include <cassert>
 #include <utility>
 #include <mutex>
+#include <memory>
+
+#include "SDL_opengl.h"
 
 bool initOpenglMethods();
 
@@ -39,20 +42,25 @@ bool initOpenglMethods();
 /// Recast build context.
 class BuildContext : public rcContext
 {
+private:
+	static const int MAX_MESSAGES = 256 * 1024;
+	static const int TEXT_POOL_SIZE = 32 * 1024 * 1024;
+
+private:
 	TimeVal m_startTime[RC_MAX_TIMERS];
 	TimeVal m_accTime[RC_MAX_TIMERS];
 
-	static const int MAX_MESSAGES = 16 * 1024;//1000;
-	const char* m_messages[MAX_MESSAGES];
+	std::unique_ptr<const char*[]> m_messages;
+	int m_messageSize;
 	int m_messageCount;
-	static const int TEXT_POOL_SIZE = 1024 * 1024;//8000;
-	char m_textPool[TEXT_POOL_SIZE];
+	std::unique_ptr<char[]> m_textPool;
 	int m_textPoolSize;
+	int m_textPoolCount;
 
 	std::mutex m_synch;
 	
 public:
-	BuildContext();
+	BuildContext(int messageSize = MAX_MESSAGES, int textPoolSize = TEXT_POOL_SIZE);
 	
 	/// Dumps the log to stdout.
 	void dumpLog(int startMsg, const char* format, ...);
@@ -76,89 +84,140 @@ protected:
 /// OpenGL debug draw implementation.
 class DebugDrawGL : public duDebugDraw
 {
-private:
-    unsigned int m_vbo_id_mesh = -1;
-    unsigned int m_vbo_id_navmesh_tris = -1;
-    unsigned int m_vbo_id_navmesh_lines = -1;
-    unsigned int m_vbo_id_navmesh_points = -1;
-
 public:
 	virtual void depthMask(bool state);
 	virtual void texture(bool state);
-	virtual void begin(duDebugDrawPrimitives prim, float size = 1.0f);
+	virtual void begin(duDebugDrawPrimitives prim, float size);
 	virtual void vertex(const float* pos, unsigned int color);
 	virtual void vertex(const float x, const float y, const float z, unsigned int color);
 	virtual void vertex(const float* pos, unsigned int color, const float* uv);
 	virtual void vertex(const float x, const float y, const float z, unsigned int color, const float u, const float v);
 	virtual void end();
-
-    virtual void draw_vbo_mesh(int vertices_number);
-    virtual void draw_vbo_navmesh(int ver_num_tris, int ver_num_lines, int ver_num_points);
-    virtual void gen_vbo_mesh(
-        const std::vector<float>& vertices,
-        const std::vector<float>& textures,
-        const std::vector<unsigned int>& colors
-    );
-    virtual void gen_vbo_navmesh(const EntryRet& dat);
-    virtual bool is_vbo_mesh_inited() const;
-    virtual bool is_vbo_navmesh_inited() const;
-    virtual void reset_vbo();
-
-    virtual EntryRet fetch_collected_data() {assert(1 != 1); return {};}
-
-private:
-    unsigned int gen_vbo(
-        const std::vector<float>& vertices,
-        const std::vector<float>& textures,
-        const std::vector<unsigned int>& colors
-    );
 };
 
-// rendering data collector
-class DataCollector : public duDebugDraw
+#ifdef ZENGINE_NAVMESH
+struct VboDataEntry final
+{
+	static const std::size_t MEM_ADD = 2 * 1024 * 1024;
+	std::size_t size = 0;
+	std::size_t dataSize = 0;
+	// per entry: 3 floats of vertex, 2 floats of texture, 1 uint of color
+	std::unique_ptr<float[]> vertices;
+	std::unique_ptr<float[]> textures;
+	std::unique_ptr<unsigned int[]> colors;
+
+	void adjustSize(bool resTextures)
+	{
+		if (size == dataSize) {
+			dataSize += MEM_ADD;
+			std::unique_ptr<float[]> tmpVertices = std::make_unique<float[]>(dataSize * 3);
+			std::unique_ptr<unsigned int[]> tmpColors = std::make_unique<unsigned int[]>(dataSize);
+			std::memcpy(tmpVertices.get(), vertices.get(), 3 * sizeof(float) * size);
+			std::memcpy(tmpColors.get(), colors.get(), sizeof(unsigned int) * size);
+			vertices = std::move(tmpVertices);
+			colors = std::move(tmpColors);
+			if (resTextures) {
+				std::unique_ptr<float[]> tmpTextures = std::make_unique<float[]>(dataSize * 2);
+				std::memcpy(tmpTextures.get(), textures.get(), 2 * sizeof(float) * size);
+				textures = std::move(tmpTextures);
+			}
+		}
+	}
+	void reset() { size = 0; }
+};
+
+class RenderingDataCollector: public duDebugDraw
 {
 private:
-    duDebugDrawPrimitives m_curr_prim = DU_DRAW_NOT_INITED;
-    EntryRet m_ret;
+    duDebugDrawPrimitives m_currPrim = DU_DRAW_NOT_INITED;
     unsigned int(*funcAreatToCol)(unsigned int);
-
+	VboDataEntry m_quads;
+	VboDataEntry m_tris;
+	VboDataEntry m_trisWithTextures;
+	VboDataEntry m_lines;
+	VboDataEntry m_points;
 private:
-    std::tuple<std::vector<float>*, std::vector<float>*, std::vector<unsigned int>*>
-    get_data();
+	VboDataEntry* getData(bool hasTextures = false);
 
 public:
-    DataCollector(unsigned int(*func)(unsigned int)) { funcAreatToCol = func; }
-    virtual EntryRet fetch_collected_data() { return std::move(m_ret); }
+	explicit RenderingDataCollector(unsigned int(*func)(unsigned int)) { funcAreatToCol = func; }
+    
+	const VboDataEntry& getQuads() const { return m_quads; }
+	const VboDataEntry& getTris() const { return m_tris; }
+	const VboDataEntry& getTrisWithTextures() const { return m_trisWithTextures; }
+	const VboDataEntry& getLines() const { return m_lines; }
+	const VboDataEntry& getPoints() const { return m_points; }
 
-    virtual void depthMask(bool) {}
-    virtual void texture(bool) {}
-    virtual void begin(duDebugDrawPrimitives prim, float = 1.0f) {m_curr_prim = prim;}
-    virtual void vertex(const float* pos, unsigned int color);
-    virtual void vertex(const float x, const float y, const float z, unsigned int color);
-    virtual void vertex(const float* pos, unsigned int color, const float* uv);
-    virtual void vertex(
-        const float x, const float y, const float z,
-        unsigned int color, const float u, const float v
-    );
-    virtual void end() {m_curr_prim = DU_DRAW_NOT_INITED;}
+	void depthMask(bool v) override;
+	void texture(bool v) override;
+	void begin(duDebugDrawPrimitives prim, float) override;
+    void vertex(const float* pos, unsigned int color) override;
+    void vertex(const float x, const float y, const float z, unsigned int color) override;
+    void vertex(const float* pos, unsigned int color, const float* uv) override;
+    void vertex(
+        const float x,
+		const float y,
+		const float z,
+        unsigned int color,
+		const float u,
+		const float v
+    ) override;
+	void end() override;
+	unsigned int areaToCol(unsigned int area) override;
 
-    virtual void draw_vbo_mesh(int) {assert(1 != 1);}
-    virtual void draw_vbo_navmesh(int, int, int) {assert(1 != 1);}
-    virtual void gen_vbo_mesh(
-        const std::vector<float>&,
-        const std::vector<float>&,
-        const std::vector<unsigned int>&
-    ) {assert(1 != 1);}
-    virtual void gen_vbo_navmesh(const EntryRet&) {assert(1 != 1);}
-    virtual bool is_vbo_mesh_inited() const {assert(1 != 1); return {};}
-    virtual bool is_vbo_navmesh_inited() const {assert(1 != 1); return {};}
-    virtual void reset_vbo() {assert(1 != 1);}
-
-    virtual unsigned int areaToCol(unsigned int area)
-    {
-        return funcAreatToCol(area);
-    }
+	void reset();
 };
+
+class VboDebugDraw: public duDebugDraw
+{
+private:
+	RenderingDataCollector m_collector;
+	mutable unsigned int m_vboIdQuads = 0;
+	mutable unsigned int m_vboIdTris = 0;
+	mutable unsigned int m_vboIdTrisWithTextures = 0;
+	mutable unsigned int m_vboIdLines = 0;
+	mutable unsigned int m_vboIdPoints = 0;
+	mutable bool m_reseted = true;
+
+public:
+	explicit VboDebugDraw(unsigned int(*func)(unsigned int)): m_collector(func) {}
+
+	void depthMask(bool v) override;
+	void texture(bool v) override;
+	void begin(duDebugDrawPrimitives prim, float v) override;
+	void vertex(const float* pos, unsigned int color) override;
+	void vertex(const float x, const float y, const float z, unsigned int color) override;
+	void vertex(const float* pos, unsigned int color, const float* uv) override;
+	void vertex(
+		const float x,
+		const float y,
+		const float z,
+		unsigned int color,
+		const float u,
+		const float v
+	) override;
+	void end() override;
+	unsigned int areaToCol(unsigned int area) override;
+
+	void draw() const;
+	void generate() const;
+	void reset();
+	operator bool() const;
+
+private:
+	static GLuint genVbo(
+		std::size_t size,
+		const std::unique_ptr<float[]>& vertices,
+		const std::unique_ptr<float[]>& textures,
+		const std::unique_ptr<unsigned int[]>& colors
+	);
+	static void drawVbo(
+		int primitive, unsigned int vboId, std::size_t vertsNum, bool withTextures
+	);
+	static void freeVbo(unsigned int vboId);
+	static void checkGlError(std::size_t nLine);
+};
+#endif // ZENGINE_NAVMESH
 
 /// stdio file implementation.
 class FileIO : public duFileIO

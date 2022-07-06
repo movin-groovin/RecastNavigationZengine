@@ -500,7 +500,7 @@ int main(int /*argc*/, char** /*argv*/)
 	}
 
 	// Use OpenGL render driver.
-	SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
+	(SDL_HINT_RENDER_DRIVER, "opengl");
 
 	// Enable depth buffer.
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
@@ -621,7 +621,7 @@ int main(int /*argc*/, char** /*argv*/)
 		if (processHitTest && geom && sample)
 		{
 			float hitTime;
-			bool hit = geom->raycastMesh(rayStart, rayEnd, hitTime);
+			bool hit = geom->raycastMesh(rayStart, rayEnd, hitTime, true);
 			
 			if (hit)
 			{

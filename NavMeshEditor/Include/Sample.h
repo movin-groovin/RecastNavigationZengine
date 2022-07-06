@@ -199,8 +199,14 @@ protected:
 	BuildContext* m_ctx;
 
 	SampleDebugDraw m_dd;
-    DataCollector m_collector;
-	
+	VboDebugDraw m_ddVboMesh;
+	VboDebugDraw m_ddVboNvm;
+	VboDebugDraw m_ddVboNvmMisc;
+	VboDebugDraw m_ddVboNvmTile;
+
+protected:
+	void resetDrawers();
+	void resetNavMeshDrawers();
 	dtNavMesh* loadAll(const char* path);
 	dtNavMesh* loadAll(FILE* fp);
 	void saveAll(const char* path, const dtNavMesh* mesh);

@@ -203,7 +203,7 @@ bool InputGeom::loadFromDir(
 	char markedMesh[STR_SIZE];
 	char navMesh[STR_SIZE];
 
-	int strLen = std::strlen(filepath);
+	int strLen = static_cast<int>(std::strlen(filepath));
 	std::strcpy(staticMesh, filepath);
 	staticMesh[strLen] = SEP;
 	std::strcpy(vobsMesh, filepath);
@@ -303,14 +303,18 @@ bool InputGeom::obbCollDetect(const OBBExt* be) const
 }
 
 bool InputGeom::raycastMesh(
-    const float* src, const float* dst, float& tmin
+    const float* src, const float* dst, float& tmin, bool nearestHit
 ) const {
 #ifdef PRINT_TRI_VS_SEG_LATENCY_TOTAL
     static uint64_t callCnt = 0;
     static uint64_t nsCnt = 0;
     auto tp1 = std::chrono::steady_clock::now();
 #endif
-	bool ret = m_space.segTriCollisionFirstHit(src, dst, tmin);
+	bool ret;
+	if (nearestHit)
+		ret = m_space.segTriCollisionNearestHit(src, dst, tmin);
+	else
+		ret = m_space.segTriCollisionFirstHit(src, dst, tmin);
 #ifdef PRINT_TRI_VS_SEG_LATENCY_TOTAL
     auto tp2 = std::chrono::steady_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
@@ -1200,7 +1204,7 @@ int Grid2dBvh::constructVobs(rcMeshLoaderObjExt* mesh)
 		return ERROR_NO_MEMORY;
 	}
 #ifdef PRINT_STRUCTURE_STAT
-    m_bytesForData += m_moverNameToVob.getMemSize();
+    m_bytesForData += static_cast<int>(m_moverNameToVob.getMemSize());
 #endif
 	m_vobsNum = mesh->getVobsCnt();
 	if (!m_vobsNum) {
@@ -2043,7 +2047,7 @@ int Grid2dBvh::constructOffmeshesOnLadders()
 			high[2] += vert[2];
 		}
 		low[0] *= 0.25f;
-		low[1] *= 0.25f;
+		low[1] = low[1] * 0.25f + 10.f;
 		low[2] *= 0.25f;
 		high[0] *= 0.25f;
 		high[1] *= 0.25f;

@@ -23,8 +23,10 @@
 
 void duDebugDrawTriMesh(struct duDebugDraw* dd, const float* verts, int nverts, const int* tris, const float* normals, int ntris, const unsigned char* flags, const float texScale);
 void duDebugDrawTriMeshSlope(struct duDebugDraw* dd, const float* verts, int nverts, const int* tris, const float* normals, int ntris, const float walkableSlopeAngle, const float texScale, const float* cameraPos = nullptr);
+
+#ifdef ZENGINE_NAVMESH
 void duDebugDrawTriMeshSlopeFast(
-    duDebugDraw* dd,
+	struct duDebugDraw* dd,
     const float* verts,
     int /*nverts*/,
     const int* tris,
@@ -37,6 +39,7 @@ void duDebugDrawTriMeshSlopeFast(
     bool showNonTriPolys,
     bool highlightLiquidPolys
 );
+#endif // ZENGINE_NAVMESH
 
 void duDebugDrawHeightfieldSolid(struct duDebugDraw* dd, const struct rcHeightfield& hf);
 void duDebugDrawHeightfieldWalkable(struct duDebugDraw* dd, const struct rcHeightfield& hf);

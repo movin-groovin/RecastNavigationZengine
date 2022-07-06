@@ -38,19 +38,6 @@ enum duDebugDrawPrimitives
 struct duDebugDraw
 {
 public:
-    struct EntryRet {
-        std::vector<float> m_vertices_tris;
-        std::vector<float> m_textures_tris;
-        std::vector<unsigned int> m_colors_tris;
-        std::vector<float> m_vertices_lines;
-        std::vector<float> m_textures_lines;
-        std::vector<unsigned int> m_colors_lines;
-        std::vector<float> m_vertices_points;
-        std::vector<float> m_textures_points;
-        std::vector<unsigned int> m_colors_points;
-    };
-
-public:
     virtual ~duDebugDraw() = 0;
 	
 	virtual void depthMask(bool state) = 0;
@@ -87,20 +74,6 @@ public:
 
 	/// Compute a color for given area.
 	virtual unsigned int areaToCol(unsigned int area);
-
-    virtual void draw_vbo_mesh(int vertices_number) = 0;
-    virtual void draw_vbo_navmesh(
-        int ver_num_tris, int ver_num_lines, int ver_num_points) = 0;
-    virtual void gen_vbo_mesh(
-        const std::vector<float>& vertices,
-        const std::vector<float>& textures,
-        const std::vector<unsigned int>& colors
-    ) = 0;
-    virtual void gen_vbo_navmesh(const EntryRet& dat) = 0;
-    virtual bool is_vbo_mesh_inited() const = 0;
-    virtual bool is_vbo_navmesh_inited() const = 0;
-    virtual void reset_vbo() = 0;
-    virtual EntryRet fetch_collected_data() = 0;
 };
 
 inline unsigned int duRGBA(int r, int g, int b, int a)

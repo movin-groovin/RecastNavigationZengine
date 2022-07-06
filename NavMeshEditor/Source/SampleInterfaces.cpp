@@ -10,7 +10,8 @@
 #include "DetourDebugDraw.h"
 #include "PerfTimer.h"
 #include "SDL.h"
-#include "SDL_opengl.h"
+#include <stdexcept>
+#include <sstream>
 
 #ifdef WIN32
 	#define snprintf _snprintf
@@ -28,6 +29,9 @@ static PFNGLDELETEBUFFERSPROC glDeleteBuffersPtr;
 bool initOpenglMethods()
 {
 #ifdef WIN32
+	auto fptrToStr = [] (const void* p) {
+		return p ? "inited" : "not inited";
+	};
 	if (!wglGetCurrentContext())
 	{
 		std::printf("Can't initialise opengl ptr methods. Opengl subsystem is not initialised");
@@ -43,8 +47,9 @@ bool initOpenglMethods()
 	)) {
 		std::printf(
 			"Can't initialise opengl ptr methods. One of methods is not initialised, "
-			"glBindBufferPtr: %d, glGenBuffersPtr: %d, glBufferDataPtr: %d, glBufferSubDataPtr: %d, glDeleteBuffersPtr: %d",
-			(int)glBindBufferPtr, (int)glGenBuffersPtr, (int)glBufferDataPtr, (int)glBufferSubDataPtr, (int)glDeleteBuffersPtr
+			"glBindBufferPtr: %s, glGenBuffersPtr: %s, glBufferDataPtr: %s, glBufferSubDataPtr: %s, glDeleteBuffersPtr: %s",
+			fptrToStr(glBindBufferPtr), fptrToStr(glGenBuffersPtr), fptrToStr(glBufferDataPtr), fptrToStr(glBufferSubDataPtr),
+			fptrToStr(glDeleteBuffersPtr)
 		);
 		return false;
 	}
@@ -59,12 +64,15 @@ bool initOpenglMethods()
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-BuildContext::BuildContext() :
+BuildContext::BuildContext(int messageSize, int textPoolSize) :
+	m_messages(std::make_unique<const char* []>(messageSize)),
+	m_messageSize(messageSize),
 	m_messageCount(0),
-	m_textPoolSize(0)
+	m_textPool(std::make_unique<char[]>(textPoolSize)),
+	m_textPoolSize(textPoolSize),
+	m_textPoolCount(0)
 {
-	memset(m_messages, 0, sizeof(char*) * MAX_MESSAGES);
-
+	memset(m_messages.get(), 0, sizeof(char*) * m_messageSize);
 	resetTimers();
 }
 
@@ -72,7 +80,7 @@ BuildContext::BuildContext() :
 void BuildContext::doResetLog()
 {
 	m_messageCount = 0;
-	m_textPoolSize = 0;
+	m_textPoolCount = 0;
 }
 
 void BuildContext::doLog(const rcLogCategory category, const char* msg, const int len)
@@ -82,8 +90,8 @@ void BuildContext::doLog(const rcLogCategory category, const char* msg, const in
 		return;
 
 	std::lock_guard<std::mutex> lock(m_synch);
-	char* dst = &m_textPool[m_textPoolSize];
-	int n = TEXT_POOL_SIZE - m_textPoolSize;
+	char* dst = &m_textPool[m_textPoolCount];
+	int n = m_textPoolSize - m_textPoolCount;
 	if (n < 2)
 		return;
 	char* cat = dst;
@@ -95,7 +103,7 @@ void BuildContext::doLog(const rcLogCategory category, const char* msg, const in
 	const int count = rcMin(len+1, maxtext);
 	memcpy(text, msg, count);
 	text[count-1] = '\0';
-	m_textPoolSize += 1 + count;
+	m_textPoolCount += 1 + count;
 	m_messages[m_messageCount++] = dst;
 }
 
@@ -274,71 +282,344 @@ void DebugDrawGL::begin(duDebugDrawPrimitives prim, float size)
 	};
 }
 
-std::tuple<std::vector<float>*, std::vector<float>*, std::vector<unsigned int>*>
-DataCollector::get_data()
+#ifdef ZENGINE_NAVMESH
+VboDataEntry* RenderingDataCollector::getData(bool hasTextures)
 {
-    assert(m_curr_prim != DU_DRAW_NOT_INITED && m_curr_prim != DU_DRAW_QUADS);
-    if (m_curr_prim == DU_DRAW_POINTS) {
-        return std::make_tuple(
-            &m_ret.m_vertices_points,
-            &m_ret.m_textures_points,
-            &m_ret.m_colors_points
-        );
-    }
-    if (m_curr_prim == DU_DRAW_LINES) {
-        return std::make_tuple(
-            &m_ret.m_vertices_lines,
-            &m_ret.m_textures_lines,
-            &m_ret.m_colors_lines
-        );
-    }
-    if (m_curr_prim == DU_DRAW_TRIS) {
-        return std::make_tuple(
-            &m_ret.m_vertices_tris,
-            &m_ret.m_textures_tris,
-            &m_ret.m_colors_tris
-        );
-    }
-    return std::make_tuple(nullptr, nullptr, nullptr);
+    assert(m_currPrim != DU_DRAW_NOT_INITED);
+
+	if (m_currPrim == DU_DRAW_QUADS) {
+		return &m_quads;
+	}
+	if (m_currPrim == DU_DRAW_TRIS) {
+		if (hasTextures)
+			return &m_trisWithTextures;
+		return &m_tris;
+	}
+	if (m_currPrim == DU_DRAW_LINES) {
+		return &m_lines;
+	}
+	if (m_currPrim == DU_DRAW_POINTS) {
+		return &m_points;
+	}
+
+	return nullptr;
 }
 
-void DataCollector::vertex(const float* pos, unsigned int color)
+void RenderingDataCollector::depthMask(bool v)
 {
-    std::vector<float>* vertices{};
-    //std::vector<float>* textures{};
-    std::vector<unsigned int>* colors{};
-    std::tie(vertices, std::ignore, colors) = get_data();
-    vertices->push_back(pos[0]);
-    vertices->push_back(pos[1]);
-    vertices->push_back(pos[2]);
-    colors->push_back(color);
+	//glDepthMask(v ? GL_TRUE : GL_FALSE);
 }
 
-void DataCollector::vertex(const float x, const float y, const float z, unsigned int color)
+void RenderingDataCollector::texture(bool v)
 {
-    std::vector<float>* vertices{};
-    //std::vector<float>* textures{};
-    std::vector<unsigned int>* colors{};
-    std::tie(vertices, std::ignore, colors) = get_data();
-    vertices->push_back(x);
-    vertices->push_back(y);
-    vertices->push_back(z);
-    colors->push_back(color);
+	//if (v)
+	//{
+	//	glEnable(GL_TEXTURE_2D);
+	//	g_tex.bind();
+	//}
+	//else
+	//{
+	//	glDisable(GL_TEXTURE_2D);
+	//}
 }
 
-void DataCollector::vertex(const float* pos, unsigned int color, const float* uv)
+void RenderingDataCollector::begin(duDebugDrawPrimitives prim, float)
 {
-    std::vector<float>* vertices{};
-    std::vector<float>* textures{};
-    std::vector<unsigned int>* colors{};
-    std::tie(vertices, textures, colors) = get_data();
-    vertices->push_back(pos[0]);
-    vertices->push_back(pos[1]);
-    vertices->push_back(pos[2]);
-    textures->push_back(uv[0]);
-    textures->push_back(uv[1]);
-    colors->push_back(color);
+	m_currPrim = prim;
 }
+
+void RenderingDataCollector::vertex(const float* pos, unsigned int color)
+{
+	VboDataEntry& ret = *getData();
+	ret.adjustSize(false);
+    ret.vertices[ret.size * 3] = pos[0];
+	ret.vertices[ret.size * 3 + 1] = pos[1];
+	ret.vertices[ret.size * 3 + 2] = pos[2];
+	ret.colors[ret.size] = color;
+	++ret.size;
+}
+
+void RenderingDataCollector::vertex(const float x, const float y, const float z, unsigned int color)
+{
+	VboDataEntry& ret = *getData();
+	ret.adjustSize(false);
+	ret.vertices[ret.size * 3] = x;
+	ret.vertices[ret.size * 3 + 1] = y;
+	ret.vertices[ret.size * 3 + 2] = z;
+	ret.colors[ret.size] = color;
+	++ret.size;
+}
+
+void RenderingDataCollector::vertex(const float* pos, unsigned int color, const float* uv)
+{
+	assert(m_currPrim == DU_DRAW_TRIS);
+	VboDataEntry& ret = *getData(true);
+	ret.adjustSize(true);
+	ret.vertices[ret.size * 3] = pos[0];
+	ret.vertices[ret.size * 3 + 1] = pos[1];
+	ret.vertices[ret.size * 3 + 2] = pos[2];
+	ret.textures[ret.size * 2] = uv[0];
+	ret.textures[ret.size * 2 + 1] = uv[1];
+	ret.colors[ret.size] = color;
+	++ret.size;
+}
+
+void RenderingDataCollector::vertex(
+	const float x,
+	const float y,
+	const float z,
+	unsigned int color,
+	const float u,
+	const float v
+) {
+	assert(m_currPrim == DU_DRAW_TRIS);
+	VboDataEntry& ret = *getData(true);
+	ret.adjustSize(true);
+	ret.vertices[ret.size * 3] = x;
+	ret.vertices[ret.size * 3 + 1] = y;
+	ret.vertices[ret.size * 3 + 2] = z;
+	ret.textures[ret.size * 2] = u;
+	ret.textures[ret.size * 2 + 1] = v;
+	ret.colors[ret.size] = color;
+	++ret.size;
+}
+
+void RenderingDataCollector::reset()
+{
+	m_quads.reset();
+	m_tris.reset();
+	m_trisWithTextures.reset();
+	m_lines.reset();
+	m_points.reset();
+}
+
+void RenderingDataCollector::end()
+{
+	m_currPrim = DU_DRAW_NOT_INITED;
+}
+
+unsigned int RenderingDataCollector::areaToCol(unsigned int area)
+{
+	return funcAreatToCol(area);
+}
+
+void VboDebugDraw::depthMask(bool v)
+{
+	m_collector.depthMask(v);
+}
+
+void VboDebugDraw::texture(bool v)
+{
+	m_collector.texture(v);
+}
+
+void VboDebugDraw::begin(duDebugDrawPrimitives prim, float v)
+{
+	m_collector.begin(prim, v);
+}
+
+void VboDebugDraw::vertex(const float* pos, unsigned int color)
+{
+	m_collector.vertex(pos, color);
+}
+
+void VboDebugDraw::vertex(const float x, const float y, const float z, unsigned int color)
+{
+	m_collector.vertex(x, y, z, color);
+}
+
+void VboDebugDraw::vertex(const float* pos, unsigned int color, const float* uv)
+{
+	m_collector.vertex(pos, color, uv);
+}
+
+void VboDebugDraw::vertex(
+	const float x,
+	const float y,
+	const float z,
+	unsigned int color,
+	const float u,
+	const float v
+) {
+	m_collector.vertex(x, y, z, color, u, v);
+}
+
+void VboDebugDraw::end()
+{
+	m_collector.end();
+}
+
+unsigned int VboDebugDraw::areaToCol(unsigned int area)
+{
+	return m_collector.areaToCol(area);
+}
+
+void VboDebugDraw::drawVbo(int primitive, unsigned int vboId, std::size_t vertsNum, bool withTextures)
+{
+	if (!vboId)
+		return;
+	
+	if (withTextures) {
+		glEnable(GL_TEXTURE_2D);
+		g_tex.bind();
+	}
+
+	glBindBufferPtr(GL_ARRAY_BUFFER, vboId);
+	checkGlError(__LINE__);
+	glEnableClientState(GL_VERTEX_ARRAY);
+	checkGlError(__LINE__);
+	if (withTextures)
+	{
+		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+		checkGlError(__LINE__);
+	}
+	glEnableClientState(GL_COLOR_ARRAY);
+	checkGlError(__LINE__);
+
+	glVertexPointer(3, GL_FLOAT, /*3 * sizeof(float)*/0, 0);
+	checkGlError(__LINE__);
+	if (withTextures) {
+		glTexCoordPointer(2, GL_FLOAT, /*2 * sizeof(float)*/0,
+			(void*)((char*)nullptr + vertsNum * 3 * sizeof(float)));
+		checkGlError(__LINE__);
+		glColorPointer(4, GL_UNSIGNED_BYTE, 0,
+			(void*)((char*)nullptr + vertsNum * (3 * sizeof(float) + 2 * sizeof(float))));
+		checkGlError(__LINE__);
+	}
+	else {
+		glColorPointer(4, GL_UNSIGNED_BYTE, /*sizeof(unsigned int)*/0,
+			(void*)((char*)nullptr + vertsNum * 3 * sizeof(float)));
+		checkGlError(__LINE__);
+	}
+	glDrawArrays(primitive, 0, static_cast<int>(vertsNum));
+	checkGlError(__LINE__);
+
+	glDisableClientState(GL_COLOR_ARRAY);
+	checkGlError(__LINE__);
+	if (withTextures)
+	{
+		glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+		checkGlError(__LINE__);
+	}
+	glDisableClientState(GL_VERTEX_ARRAY);
+	checkGlError(__LINE__);
+
+	//glLineWidth(1.0f);
+	//glPointSize(1.0f);
+	if (withTextures)
+		glDisable(GL_TEXTURE_2D);
+	glBindBufferPtr(GL_ARRAY_BUFFER, 0);
+}
+
+GLuint VboDebugDraw::genVbo(
+	std::size_t size,
+	const std::unique_ptr<float[]>& vertices,
+	const std::unique_ptr<float[]>& textures,
+	const std::unique_ptr<unsigned int[]>& colors
+) {
+	if (!size)
+		return 0;
+	
+	std::size_t verticesSize = size * 3 * sizeof(float);
+	std::size_t texturesSize = textures ? size * 2 * sizeof(float) : 0;
+	std::size_t colorsSize = size * sizeof(unsigned int);
+	GLuint VBOID;
+	glGenBuffersPtr(1, &VBOID);
+	checkGlError(__LINE__);
+	glBindBufferPtr(GL_ARRAY_BUFFER, VBOID);
+	checkGlError(__LINE__);
+	glBufferDataPtr(
+		GL_ARRAY_BUFFER, verticesSize + texturesSize + colorsSize, 0, GL_STATIC_DRAW);
+	checkGlError(__LINE__);
+	glBufferSubDataPtr(GL_ARRAY_BUFFER, 0, verticesSize, vertices.get());
+	checkGlError(__LINE__);
+	if (texturesSize)
+	{
+		glBufferSubDataPtr(
+			GL_ARRAY_BUFFER, verticesSize, texturesSize, textures.get()
+		);
+		checkGlError(__LINE__);
+	}
+	glBufferSubDataPtr(
+		GL_ARRAY_BUFFER, verticesSize + texturesSize, colorsSize, colors.get());
+	checkGlError(__LINE__);
+	glBindBufferPtr(GL_ARRAY_BUFFER, 0);
+	return VBOID;
+}
+
+void VboDebugDraw::freeVbo(unsigned int vboId)
+{
+	glDeleteBuffersPtr(1, &vboId);
+}
+
+void VboDebugDraw::checkGlError(std::size_t nLine)
+{
+	GLenum err;
+	if ((err = glGetError()) != GL_NO_ERROR) {
+		std::ostringstream oss;
+		oss << "Opengl err code: " << err << ", code line: " << nLine;
+		throw std::runtime_error(oss.str());
+	}
+}
+
+void VboDebugDraw::draw() const
+{
+	if (m_reseted)
+		generate();
+	const VboDataEntry& quads = m_collector.getQuads();
+	drawVbo(GL_QUADS, m_vboIdQuads, quads.size, false);
+	const VboDataEntry& tris = m_collector.getTris();
+	drawVbo(GL_TRIANGLES, m_vboIdTris, tris.size, false);
+	const VboDataEntry& trisTexts = m_collector.getTrisWithTextures();
+	drawVbo(GL_TRIANGLES, m_vboIdTrisWithTextures, trisTexts.size, true);
+	const VboDataEntry& lines = m_collector.getLines();
+	drawVbo(GL_LINES, m_vboIdLines, lines.size, false);
+	const VboDataEntry& points = m_collector.getPoints();
+	drawVbo(GL_POINTS, m_vboIdPoints, points.size, false);
+}
+
+void VboDebugDraw::generate() const
+{
+	const VboDataEntry& quads = m_collector.getQuads();
+	m_vboIdQuads = genVbo(quads.size, quads.vertices, quads.textures, quads.colors);
+	const VboDataEntry& tris = m_collector.getTris();
+	m_vboIdTris = genVbo(tris.size, tris.vertices, tris.textures, tris.colors);
+	const VboDataEntry& trisTexts = m_collector.getTrisWithTextures();
+	m_vboIdTrisWithTextures =
+		genVbo(trisTexts.size, trisTexts.vertices, trisTexts.textures, trisTexts.colors);
+	const VboDataEntry& lines = m_collector.getLines();
+	m_vboIdLines = genVbo(lines.size, lines.vertices, lines.textures, lines.colors);
+	const VboDataEntry& points = m_collector.getPoints();
+	m_vboIdPoints = genVbo(points.size, points.vertices, points.textures, points.colors);
+	m_reseted = false;
+}
+
+void VboDebugDraw::reset()
+{
+	m_collector.reset();
+	if (m_vboIdQuads)
+		freeVbo(m_vboIdQuads);
+	if (m_vboIdTris)
+		freeVbo(m_vboIdTris);
+	if (m_vboIdTrisWithTextures)
+		freeVbo(m_vboIdTrisWithTextures);
+	if (m_vboIdLines)
+		freeVbo(m_vboIdLines);
+	if (m_vboIdPoints)
+		freeVbo(m_vboIdPoints);
+	m_vboIdQuads = 0;
+	m_vboIdTris = 0;
+	m_vboIdTrisWithTextures = 0;
+	m_vboIdLines = 0;
+	m_vboIdPoints = 0;
+	m_reseted = true;
+}
+
+VboDebugDraw::operator bool() const
+{
+	return !m_reseted;
+}
+#endif // ZENGINE_NAVMESH
 
 void DebugDrawGL::vertex(const float* pos, unsigned int color)
 {
@@ -357,152 +638,6 @@ void DebugDrawGL::vertex(const float* pos, unsigned int color, const float* uv)
 	glColor4ubv((GLubyte*)&color);
 	glTexCoord2fv(uv);
 	glVertex3fv(pos);
-}
-
-void DebugDrawGL::draw_vbo_mesh(int vertices_number)
-{
-    glEnable(GL_TEXTURE_2D);
-    g_tex.bind();
-
-    glBindBufferPtr(GL_ARRAY_BUFFER, m_vbo_id_mesh);
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-    glEnableClientState(GL_COLOR_ARRAY);
-
-    glVertexPointer(3, GL_FLOAT, 0, 0);
-    glTexCoordPointer(2, GL_FLOAT, 0,
-        (void*)((char*)nullptr + vertices_number * 3 * 4));
-    glColorPointer(4, GL_UNSIGNED_BYTE, 0,
-        (void*)((char*)nullptr + vertices_number * (3 * 4 + 2 * 4)));
-    glDrawArrays(GL_TRIANGLES, 0, vertices_number);
-
-    glDisableClientState(GL_COLOR_ARRAY);
-    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-    glDisableClientState(GL_VERTEX_ARRAY);
-
-    glLineWidth(1.0f);
-    glPointSize(1.0f);
-    glDisable(GL_TEXTURE_2D);
-    glBindBufferPtr(GL_ARRAY_BUFFER, 0);
-}
-
-void DebugDrawGL::draw_vbo_navmesh(int ver_num_tris, int ver_num_lines, int ver_num_points)
-{
-    glDepthMask(GL_FALSE);
-
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glEnableClientState(GL_COLOR_ARRAY);
-
-    glBindBufferPtr(GL_ARRAY_BUFFER, m_vbo_id_navmesh_tris);
-    glVertexPointer(3, GL_FLOAT, 0, 0);
-    glColorPointer(4, GL_UNSIGNED_BYTE, 0,
-        (void*)((char*)nullptr + ver_num_tris * (3 * 4)));
-    glDrawArrays(GL_TRIANGLES, 0, ver_num_tris);
-    //
-    //glLineWidth(2.0);
-    glBindBufferPtr(GL_ARRAY_BUFFER, m_vbo_id_navmesh_lines);
-    glVertexPointer(3, GL_FLOAT, 0, 0);
-    glColorPointer(4, GL_UNSIGNED_BYTE, 0,
-        (void*)((char*)nullptr + ver_num_lines * (2 * 4)));
-    glDrawArrays(GL_LINES, 0, ver_num_lines);
-    //
-    //glPointSize(2.0);
-    glBindBufferPtr(GL_ARRAY_BUFFER, m_vbo_id_navmesh_points);
-    glVertexPointer(3, GL_FLOAT, 0, 0);
-    glColorPointer(4, GL_UNSIGNED_BYTE, 0,
-        (void*)((char*)nullptr + ver_num_points * (1 * 4)));
-    glDrawArrays(GL_POINTS, 0, ver_num_points);
-
-    glDisableClientState(GL_COLOR_ARRAY);
-    glDisableClientState(GL_VERTEX_ARRAY);
-
-    glDepthMask(GL_TRUE);
-    glBindBufferPtr(GL_ARRAY_BUFFER, 0);
-}
-
-unsigned int DebugDrawGL::gen_vbo(
-    const std::vector<float>& vertices,
-    const std::vector<float>& textures,
-    const std::vector<unsigned int>& colors
-) {
-    //Generate the VBO
-    assert(vertices.size() / 3 == colors.size() / 1);
-    assert(textures.empty() || vertices.size() / 3 == textures.size() / 2);
-
-    size_t verticesSize = vertices.size() * sizeof(float);
-    size_t texturesSize = textures.size() * sizeof(float);
-    size_t colorsSize = colors.size() * sizeof(unsigned int);
-    GLuint VBOID;
-	glGenBuffersPtr(1, &VBOID);
-	glBindBufferPtr(GL_ARRAY_BUFFER, VBOID);
-	glBufferDataPtr(
-        GL_ARRAY_BUFFER, verticesSize + texturesSize + colorsSize, 0, GL_STATIC_DRAW);
-	glBufferSubDataPtr(GL_ARRAY_BUFFER, 0, verticesSize, vertices.data());
-    if (!textures.empty())
-		glBufferSubDataPtr(
-            GL_ARRAY_BUFFER, verticesSize, texturesSize, textures.data()
-        );
-    glBufferSubDataPtr(
-        GL_ARRAY_BUFFER, verticesSize + texturesSize, colorsSize, colors.data());
-	glBindBufferPtr(GL_ARRAY_BUFFER, 0);
-    return VBOID;
-}
-
-void DebugDrawGL::gen_vbo_mesh(
-    const std::vector<float>& vertices,
-    const std::vector<float>& textures,
-    const std::vector<unsigned int>& colors
-) {
-    m_vbo_id_mesh = gen_vbo(vertices, textures, colors);
-}
-
-void DebugDrawGL::gen_vbo_navmesh(const EntryRet &dat) {
-    m_vbo_id_navmesh_tris =
-        gen_vbo(dat.m_vertices_tris, dat.m_textures_tris, dat.m_colors_tris);
-    m_vbo_id_navmesh_lines =
-        gen_vbo(dat.m_vertices_lines, dat.m_textures_lines, dat.m_colors_lines);
-    m_vbo_id_navmesh_points =
-        gen_vbo(dat.m_vertices_points, dat.m_textures_points, dat.m_colors_points);
-}
-
-bool DebugDrawGL::is_vbo_mesh_inited() const
-{
-    return m_vbo_id_mesh != static_cast<unsigned int>(-1);
-}
-
-bool DebugDrawGL::is_vbo_navmesh_inited() const
-{
-    return m_vbo_id_navmesh_tris != static_cast<unsigned int>(-1) &&
-           m_vbo_id_navmesh_lines != static_cast<unsigned int>(-1) &&
-           m_vbo_id_navmesh_points != static_cast<unsigned int>(-1);
-}
-
-void DebugDrawGL::reset_vbo()
-{
-    glDeleteBuffersPtr(1, &m_vbo_id_mesh);
-    glDeleteBuffersPtr(1, &m_vbo_id_navmesh_tris);
-    glDeleteBuffersPtr(1, &m_vbo_id_navmesh_lines);
-    glDeleteBuffersPtr(1, &m_vbo_id_navmesh_points);
-    m_vbo_id_mesh = -1;
-    m_vbo_id_navmesh_tris = -1;
-    m_vbo_id_navmesh_lines = -1;
-    m_vbo_id_navmesh_points = -1;
-}
-
-void DataCollector::vertex(
-    const float x, const float y, const float z, unsigned int color,
-    const float u, const float v
-) {
-    std::vector<float>* vertices{};
-    std::vector<float>* textures{};
-    std::vector<unsigned int>* colors{};
-    std::tie(vertices, textures, colors) = get_data();
-    vertices->push_back(x);
-    vertices->push_back(y);
-    vertices->push_back(z);
-    textures->push_back(u);
-    textures->push_back(v);
-    colors->push_back(color);
 }
 
 void DebugDrawGL::vertex(const float x, const float y, const float z, unsigned int color, const float u, const float v)

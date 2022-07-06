@@ -179,6 +179,7 @@ Sample_TileMesh::Sample_TileMesh() :
     m_drawMode(DRAWMODE_NAVMESH),
     m_showNonTriPolys(false),
     m_highlightLiquidPolys(false),
+	m_displayRefIdsInPath(false),
 	m_continueMeshGenWhileTileError(true),
     m_maxTiles(0),
     m_maxPolysPerTile(0),
@@ -187,7 +188,7 @@ Sample_TileMesh::Sample_TileMesh() :
     m_tileBuildTime(0),
     m_tileMemUsage(0),
     m_tileTriCount(0),
-	m_changed(),
+	m_navmeshUpdated(),
 	m_asyncNavMeshGeneration(false),
 	m_interruptAsyncBuilding(false),
 	m_asyncBuildingProgress(0),
@@ -197,7 +198,7 @@ Sample_TileMesh::Sample_TileMesh() :
     memset(m_lastBuiltTileBmin, 0, sizeof(m_lastBuiltTileBmin));
     memset(m_lastBuiltTileBmax, 0, sizeof(m_lastBuiltTileBmax));
 	m_asyncBuildData.reset( new ThreadContext[ static_cast<int>(m_threadsMax) ] );
-    setTool(new NavMeshTileTool(m_changed));
+    setTool(new NavMeshTileTool(m_navmeshUpdated));
 }
 
 Sample_TileMesh::~Sample_TileMesh()
@@ -278,6 +279,7 @@ void Sample_TileMesh::handleSettings()
         dtFreeNavMesh(m_navMesh);
 		m_navMesh = loadAll(m_geom->getNavMeshName());
 		m_navQuery->init(m_navMesh, NAVMESH_QUERY_MAX_NODES);
+		resetNavMeshDrawers();
     }
 
     imguiUnindent();
@@ -297,14 +299,14 @@ void Sample_TileMesh::handleTools()
 {
     int type = !m_tool ? TOOL_NONE : m_tool->type();
 
-    //if (imguiCheck("Test Navmesh", type == TOOL_NAVMESH_TESTER))
-    //{
-    //    NavMeshTesterTool* tool = new NavMeshTesterTool(getInputGeom(), &m_nvttArgs);
-    //    setTool(tool);
-    //}
+    if (imguiCheck("Test Navmesh", type == TOOL_NAVMESH_TESTER, false))
+    {
+        //NavMeshTesterTool* tool = new NavMeshTesterTool(getInputGeom(), &m_nvttArgs);
+        //setTool(tool);
+    }
     if (imguiCheck("Create Tiles", type == TOOL_TILE_EDIT))
     {
-        setTool(new NavMeshTileTool(m_changed));
+        setTool(new NavMeshTileTool(m_navmeshUpdated));
     }
     if (imguiCheck("Create Convex Volumes", type == TOOL_CONVEX_VOLUME))
     {
@@ -315,34 +317,39 @@ void Sample_TileMesh::handleTools()
 
     imguiIndent();
 
-    if (m_tool)
-        m_tool->handleMenu();
+	if (m_tool) {
+		m_tool->handleMenu();
+	}
+	if (m_navmeshUpdated) {
+		resetNavMeshDrawers();
+		m_navmeshUpdated = false;
+	}
 
     imguiUnindent();
 }
 
 void Sample_TileMesh::handleDebugMode()
 {
-    // Check which modes are valid.
-    bool valid[MAX_DRAWMODE];
-    for (int i = 0; i < MAX_DRAWMODE; ++i)
-        valid[i] = false;
+	// Check which modes are valid.
+	bool valid[MAX_DRAWMODE];
+	for (int i = 0; i < MAX_DRAWMODE; ++i)
+		valid[i] = false;
 
-    if (m_geom)
-    {
+	if (m_geom)
+	{
 		const ThreadContext& dat = m_asyncBuildData[0];
 		valid[DRAWMODE_NAVMESH] = m_navMesh != 0;
-        valid[DRAWMODE_NAVMESH_TRANS] = m_navMesh != 0;
-        valid[DRAWMODE_NAVMESH_BVTREE] = m_navMesh != 0;
-        valid[DRAWMODE_NAVMESH_NODES] = m_navQuery != 0;
-        valid[DRAWMODE_NAVMESH_PORTALS] = m_navMesh != 0;
-        valid[DRAWMODE_NAVMESH_INVIS] = m_navMesh != 0;
-        valid[DRAWMODE_MESH] = true;
+		valid[DRAWMODE_NAVMESH_TRANS] = m_navMesh != 0;
+		valid[DRAWMODE_NAVMESH_BVTREE] = m_navMesh != 0;
+		valid[DRAWMODE_NAVMESH_NODES] = m_navQuery != 0;
+		valid[DRAWMODE_NAVMESH_PORTALS] = m_navMesh != 0;
+		valid[DRAWMODE_NAVMESH_INVIS] = m_navMesh != 0;
+		valid[DRAWMODE_MESH] = true;
 		valid[DRAWMODE_VOXELS] = dat.solid != 0;
-        valid[DRAWMODE_VOXELS_WALKABLE] = dat.solid != 0;
-        valid[DRAWMODE_VOXELS_WALKABLE_BBOXES] = dat.solid != 0;
+		valid[DRAWMODE_VOXELS_WALKABLE] = dat.solid != 0;
+		valid[DRAWMODE_VOXELS_WALKABLE_BBOXES] = dat.solid != 0;
 		valid[DRAWMODE_COMPACT] = dat.chf != 0;
-        valid[DRAWMODE_COMPACT_BBOXES] = dat.chf != 0;
+		valid[DRAWMODE_COMPACT_BBOXES] = dat.chf != 0;
 		valid[DRAWMODE_COMPACT_DISTANCE] = dat.chf != 0;
 		valid[DRAWMODE_COMPACT_REGIONS] = dat.chf != 0;
 		valid[DRAWMODE_REGION_CONNECTIONS] = dat.cset != 0;
@@ -351,77 +358,178 @@ void Sample_TileMesh::handleDebugMode()
 		valid[DRAWMODE_CONTOURS] = dat.cset != 0;
 		valid[DRAWMODE_POLYMESH] = dat.pmesh != 0;
 		valid[DRAWMODE_POLYMESH_DETAIL] = dat.dmesh != 0;
-        valid[DRAWMODE_SHOW_PATH_REFIDS] = m_navQuery != 0;
-    }
+	}
 
-    int unavail = 0;
-    for (int i = 0; i < MAX_DRAWMODE; ++i)
-        if (!valid[i]) unavail++;
+	int unavail = 0;
+	for (int i = 0; i < MAX_DRAWMODE; ++i)
+		if (!valid[i]) unavail++;
 
-    if (unavail == MAX_DRAWMODE)
-        return;
+	if (unavail == MAX_DRAWMODE)
+		return;
 
-    imguiLabel("Draw");
-    if (imguiCheck("Highlight nontri polys", m_showNonTriPolys)) {
-        m_showNonTriPolys = !m_showNonTriPolys;
-        m_dd.reset_vbo();
-    }
-    if (imguiCheck("Highlight liquid polys", m_highlightLiquidPolys)) {
-        m_highlightLiquidPolys = !m_highlightLiquidPolys;
-        m_dd.reset_vbo();
-    }
-    if (imguiCheck("Input Mesh", m_drawMode == DRAWMODE_MESH, valid[DRAWMODE_MESH]))
-        m_drawMode = DRAWMODE_MESH;
-    if (imguiCheck("Display path ref ids", m_drawMode == DRAWMODE_SHOW_PATH_REFIDS, valid[DRAWMODE_SHOW_PATH_REFIDS]))
-    {
-        m_drawMode = DRAWMODE_SHOW_PATH_REFIDS;
-    }
-    if (imguiCheck("Navmesh", m_drawMode == DRAWMODE_NAVMESH, valid[DRAWMODE_NAVMESH]))
-        m_drawMode = DRAWMODE_NAVMESH;
-    if (imguiCheck("Navmesh Invis", m_drawMode == DRAWMODE_NAVMESH_INVIS, valid[DRAWMODE_NAVMESH_INVIS]))
-        m_drawMode = DRAWMODE_NAVMESH_INVIS;
-    if (imguiCheck("Navmesh Trans", m_drawMode == DRAWMODE_NAVMESH_TRANS, valid[DRAWMODE_NAVMESH_TRANS]))
-        m_drawMode = DRAWMODE_NAVMESH_TRANS;
-    if (imguiCheck("Navmesh BVTree", m_drawMode == DRAWMODE_NAVMESH_BVTREE, valid[DRAWMODE_NAVMESH_BVTREE]))
-        m_drawMode = DRAWMODE_NAVMESH_BVTREE;
-    if (imguiCheck("Navmesh Nodes", m_drawMode == DRAWMODE_NAVMESH_NODES, valid[DRAWMODE_NAVMESH_NODES]))
-        m_drawMode = DRAWMODE_NAVMESH_NODES;
-    if (imguiCheck("Navmesh Portals", m_drawMode == DRAWMODE_NAVMESH_PORTALS, valid[DRAWMODE_NAVMESH_PORTALS]))
-        m_drawMode = DRAWMODE_NAVMESH_PORTALS;
-    if (imguiCheck("Voxels", m_drawMode == DRAWMODE_VOXELS, valid[DRAWMODE_VOXELS]))
-        m_drawMode = DRAWMODE_VOXELS;
+	// mesh
+	imguiLabel("Draw");
+	if (imguiCheck("Highlight nontri polys", m_showNonTriPolys))
+	{
+		m_showNonTriPolys = !m_showNonTriPolys;
+		m_ddVboMesh.reset();
+	}
+	if (imguiCheck("Highlight liquid polys", m_highlightLiquidPolys))
+	{
+		m_highlightLiquidPolys = !m_highlightLiquidPolys;
+		m_ddVboMesh.reset();
+	}
+	// TODO replace to NavMeshTesterTool
+	//if (imguiCheck("Display path ref ids", m_displayRefIdsInPath, m_navMesh))
+	//{
+	//	m_displayRefIdsInPath = !m_displayRefIdsInPath;
+	//	if (m_displayRefIdsInPath) {
+	//		m_nvttArgs["display_path_refids"] = "1";
+	//	}
+	//	else {
+	//		m_nvttArgs["display_path_refids"] = "0";
+	//	}
+	//}
+
+	// navmesh
+	if (imguiCheck("Input Mesh", m_drawMode == DRAWMODE_MESH, valid[DRAWMODE_MESH]))
+	{
+		m_drawMode = DRAWMODE_MESH;
+	}
+	if (imguiCheck("Navmesh", m_drawMode == DRAWMODE_NAVMESH, valid[DRAWMODE_NAVMESH]))
+	{
+		if (m_drawMode != DRAWMODE_NAVMESH)
+		{
+			m_ddVboNvm.reset();
+			m_ddVboNvmTile.reset();
+		}
+		m_drawMode = DRAWMODE_NAVMESH;
+	}
+	if (imguiCheck("Navmesh Invis", m_drawMode == DRAWMODE_NAVMESH_INVIS, valid[DRAWMODE_NAVMESH_INVIS]))
+	{
+		if (m_drawMode != DRAWMODE_NAVMESH_INVIS)
+		{
+			m_ddVboNvmMisc.reset();
+			m_ddVboNvmTile.reset();
+		}
+		m_drawMode = DRAWMODE_NAVMESH_INVIS;
+	}
+	if (imguiCheck("Navmesh Trans", m_drawMode == DRAWMODE_NAVMESH_TRANS, valid[DRAWMODE_NAVMESH_TRANS]))
+	{
+		if (m_drawMode != DRAWMODE_NAVMESH_TRANS)
+		{
+			m_ddVboNvmMisc.reset();
+			m_ddVboNvmTile.reset();
+		}
+		m_drawMode = DRAWMODE_NAVMESH_TRANS;
+	}
+	if (imguiCheck("Navmesh BVTree", m_drawMode == DRAWMODE_NAVMESH_BVTREE, valid[DRAWMODE_NAVMESH_BVTREE]))
+	{
+		if (m_drawMode != DRAWMODE_NAVMESH_BVTREE)
+		{
+			m_ddVboNvmMisc.reset();
+			m_ddVboNvmTile.reset();
+		}
+		m_drawMode = DRAWMODE_NAVMESH_BVTREE;
+	}
+	if (imguiCheck("Navmesh Nodes", m_drawMode == DRAWMODE_NAVMESH_NODES, valid[DRAWMODE_NAVMESH_NODES]))
+	{
+		if (m_drawMode != DRAWMODE_NAVMESH_NODES)
+		{
+			m_ddVboNvmMisc.reset();
+			m_ddVboNvmTile.reset();
+		}
+		m_drawMode = DRAWMODE_NAVMESH_NODES;
+	}
+	if (imguiCheck("Navmesh Portals", m_drawMode == DRAWMODE_NAVMESH_PORTALS, valid[DRAWMODE_NAVMESH_PORTALS]))
+	{
+		if (m_drawMode != DRAWMODE_NAVMESH_PORTALS)
+		{
+			m_ddVboNvmMisc.reset();
+			m_ddVboNvmTile.reset();
+		}
+		m_drawMode = DRAWMODE_NAVMESH_PORTALS;
+	}
+
+	// tile mesh
+	if (imguiCheck("Voxels", m_drawMode == DRAWMODE_VOXELS, valid[DRAWMODE_VOXELS]))
+	{
+		if (m_drawMode != DRAWMODE_VOXELS)
+			m_ddVboNvmTile.reset();
+		m_drawMode = DRAWMODE_VOXELS;
+	}
     if (imguiCheck("Walkable Voxels", m_drawMode == DRAWMODE_VOXELS_WALKABLE, valid[DRAWMODE_VOXELS_WALKABLE]))
     {
-        m_drawMode = DRAWMODE_VOXELS_WALKABLE;
+		if (m_drawMode != DRAWMODE_VOXELS_WALKABLE)
+			m_ddVboNvmTile.reset();
+		m_drawMode = DRAWMODE_VOXELS_WALKABLE;
     }
     if (imguiCheck("Walkable Voxels Bboxes", m_drawMode == DRAWMODE_VOXELS_WALKABLE_BBOXES, valid[DRAWMODE_VOXELS_WALKABLE_BBOXES]))
     {
-        m_drawMode = DRAWMODE_VOXELS_WALKABLE_BBOXES;
+		if (m_drawMode != DRAWMODE_VOXELS_WALKABLE_BBOXES)
+			m_ddVboNvmTile.reset();
+		m_drawMode = DRAWMODE_VOXELS_WALKABLE_BBOXES;
     }
     if (imguiCheck("Compact", m_drawMode == DRAWMODE_COMPACT, valid[DRAWMODE_COMPACT]))
     {
-        m_drawMode = DRAWMODE_COMPACT;
+		if (m_drawMode != DRAWMODE_COMPACT)
+			m_ddVboNvmTile.reset();
+		m_drawMode = DRAWMODE_COMPACT;
     }
     if (imguiCheck("Compact Bboxes", m_drawMode == DRAWMODE_COMPACT_BBOXES, valid[DRAWMODE_COMPACT_BBOXES]))
     {
-        m_drawMode = DRAWMODE_COMPACT_BBOXES;
+		if (m_drawMode != DRAWMODE_COMPACT_BBOXES)
+			m_ddVboNvmTile.reset();
+		m_drawMode = DRAWMODE_COMPACT_BBOXES;
     }
-    if (imguiCheck("Compact Distance", m_drawMode == DRAWMODE_COMPACT_DISTANCE, valid[DRAWMODE_COMPACT_DISTANCE]))
-        m_drawMode = DRAWMODE_COMPACT_DISTANCE;
-    if (imguiCheck("Compact Regions", m_drawMode == DRAWMODE_COMPACT_REGIONS, valid[DRAWMODE_COMPACT_REGIONS]))
-        m_drawMode = DRAWMODE_COMPACT_REGIONS;
-    if (imguiCheck("Region Connections", m_drawMode == DRAWMODE_REGION_CONNECTIONS, valid[DRAWMODE_REGION_CONNECTIONS]))
-        m_drawMode = DRAWMODE_REGION_CONNECTIONS;
-    if (imguiCheck("Raw Contours", m_drawMode == DRAWMODE_RAW_CONTOURS, valid[DRAWMODE_RAW_CONTOURS]))
-        m_drawMode = DRAWMODE_RAW_CONTOURS;
-    if (imguiCheck("Both Contours", m_drawMode == DRAWMODE_BOTH_CONTOURS, valid[DRAWMODE_BOTH_CONTOURS]))
-        m_drawMode = DRAWMODE_BOTH_CONTOURS;
-    if (imguiCheck("Contours", m_drawMode == DRAWMODE_CONTOURS, valid[DRAWMODE_CONTOURS]))
-        m_drawMode = DRAWMODE_CONTOURS;
-    if (imguiCheck("Poly Mesh", m_drawMode == DRAWMODE_POLYMESH, valid[DRAWMODE_POLYMESH]))
-        m_drawMode = DRAWMODE_POLYMESH;
-    if (imguiCheck("Poly Mesh Detail", m_drawMode == DRAWMODE_POLYMESH_DETAIL, valid[DRAWMODE_POLYMESH_DETAIL]))
-        m_drawMode = DRAWMODE_POLYMESH_DETAIL;
+	if (imguiCheck("Compact Distance", m_drawMode == DRAWMODE_COMPACT_DISTANCE, valid[DRAWMODE_COMPACT_DISTANCE]))
+	{
+		if (m_drawMode != DRAWMODE_COMPACT_DISTANCE)
+			m_ddVboNvmTile.reset();
+		m_drawMode = DRAWMODE_COMPACT_DISTANCE;
+	}
+	if (imguiCheck("Compact Regions", m_drawMode == DRAWMODE_COMPACT_REGIONS, valid[DRAWMODE_COMPACT_REGIONS]))
+	{
+		if (m_drawMode != DRAWMODE_COMPACT_REGIONS)
+			m_ddVboNvmTile.reset();
+		m_drawMode = DRAWMODE_COMPACT_REGIONS;
+	}
+	if (imguiCheck("Region Connections", m_drawMode == DRAWMODE_REGION_CONNECTIONS, valid[DRAWMODE_REGION_CONNECTIONS]))
+	{
+		if (m_drawMode != DRAWMODE_REGION_CONNECTIONS)
+			m_ddVboNvmTile.reset();
+		m_drawMode = DRAWMODE_REGION_CONNECTIONS;
+	}
+	if (imguiCheck("Raw Contours", m_drawMode == DRAWMODE_RAW_CONTOURS, valid[DRAWMODE_RAW_CONTOURS]))
+	{
+		if (m_drawMode != DRAWMODE_RAW_CONTOURS)
+			m_ddVboNvmTile.reset();
+		m_drawMode = DRAWMODE_RAW_CONTOURS;
+	}
+	if (imguiCheck("Both Contours", m_drawMode == DRAWMODE_BOTH_CONTOURS, valid[DRAWMODE_BOTH_CONTOURS]))
+	{
+		if (m_drawMode != DRAWMODE_BOTH_CONTOURS)
+			m_ddVboNvmTile.reset();
+		m_drawMode = DRAWMODE_BOTH_CONTOURS;
+	}
+	if (imguiCheck("Contours", m_drawMode == DRAWMODE_CONTOURS, valid[DRAWMODE_CONTOURS]))
+	{
+		if (m_drawMode != DRAWMODE_CONTOURS)
+			m_ddVboNvmTile.reset();
+		m_drawMode = DRAWMODE_CONTOURS;
+	}
+	if (imguiCheck("Poly Mesh", m_drawMode == DRAWMODE_POLYMESH, valid[DRAWMODE_POLYMESH]))
+	{
+		if (m_drawMode != DRAWMODE_POLYMESH)
+			m_ddVboNvmTile.reset();
+		m_drawMode = DRAWMODE_POLYMESH;
+	}
+	if (imguiCheck("Poly Mesh Detail", m_drawMode == DRAWMODE_POLYMESH_DETAIL, valid[DRAWMODE_POLYMESH_DETAIL]))
+	{
+		if (m_drawMode != DRAWMODE_POLYMESH_DETAIL)
+			m_ddVboNvmTile.reset();
+		m_drawMode = DRAWMODE_POLYMESH_DETAIL;
+	}
 
     if (unavail)
     {
@@ -439,15 +547,18 @@ void Sample_TileMesh::handleRender(const float* cameraPos)
     // Draw mesh
     if (m_drawMode != DRAWMODE_NAVMESH_TRANS)
     {
-        // Draw mesh
 		const Grid2dBvh& space = m_geom->getSpace();
         const Grid2dBvh::TrianglesData& rndData = space.getRenderingData();
-        duDebugDrawTriMeshSlopeFast(
-            &m_dd, rndData.verts, rndData.vertsNumCurrent, rndData.tris,
-            rndData.triFlags, rndData.normals, rndData.trisNumCurrent,
-            m_agentMaxSlope, texScale, cameraPos, m_showNonTriPolys, m_highlightLiquidPolys
-        );
+		if (!m_ddVboMesh)
+		{
+			duDebugDrawTriMeshSlopeFast(
+				&m_ddVboMesh, rndData.verts, rndData.vertsNumCurrent, rndData.tris,
+				rndData.triFlags, rndData.normals, rndData.trisNumCurrent,
+				m_agentMaxSlope, texScale, cameraPos, m_showNonTriPolys, m_highlightLiquidPolys
+			);
+		}
         m_geom->drawOffMeshConnections(&m_dd);
+		m_ddVboMesh.draw();
     }
 
     glDepthMask(GL_FALSE);
@@ -456,7 +567,6 @@ void Sample_TileMesh::handleRender(const float* cameraPos)
     const float* bmin = m_geom->getNavMeshBoundsMin();
     const float* bmax = m_geom->getNavMeshBoundsMax();
     duDebugDrawBoxWire(&m_dd, bmin[0],bmin[1],bmin[2], bmax[0],bmax[1],bmax[2], duRGBA(255,255,255,128), 1.0f);
-
     // Tiling grid.
     int gw = 0, gh = 0;
     rcCalcGridSize(bmin, bmax, m_cellSize, &gw, &gh);
@@ -464,119 +574,160 @@ void Sample_TileMesh::handleRender(const float* cameraPos)
     const int th = (gh + (int)m_tileSize-1) / (int)m_tileSize;
     const float s = m_tileSize*m_cellSize;
     duDebugDrawGridXZ(&m_dd, bmin[0],bmin[1],bmin[2], tw,th, s, duRGBA(0,0,0,64), 1.0f);
-
-    // Draw active tile
     duDebugDrawBoxWire(
         &m_dd, m_lastBuiltTileBmin[0],m_lastBuiltTileBmin[1],m_lastBuiltTileBmin[2],
         m_lastBuiltTileBmax[0],m_lastBuiltTileBmax[1],m_lastBuiltTileBmax[2], m_tileCol,
         1.0f
     );
+
+	// Draw navmesh
     if (m_navMesh && m_navQuery &&
         (m_drawMode == DRAWMODE_NAVMESH ||
          m_drawMode == DRAWMODE_NAVMESH_TRANS ||
          m_drawMode == DRAWMODE_NAVMESH_BVTREE ||
          m_drawMode == DRAWMODE_NAVMESH_NODES ||
          m_drawMode == DRAWMODE_NAVMESH_PORTALS ||
-         m_drawMode == DRAWMODE_NAVMESH_INVIS ||
-         m_drawMode == DRAWMODE_SHOW_PATH_REFIDS))
-    {
-        if (m_drawMode != DRAWMODE_NAVMESH_INVIS) {
-            duDebugDrawNavMeshWithClosedListFast(
-                &m_dd, &m_collector, *m_navMesh, *m_navQuery, m_navMeshDrawFlags, m_changed
-            );
+         m_drawMode == DRAWMODE_NAVMESH_INVIS)
+	) {
+        if (m_drawMode != DRAWMODE_NAVMESH_INVIS)
+		{
+			if (!m_ddVboNvm)
+			{
+				duDebugDrawNavMeshWithClosedListFast(
+					&m_ddVboNvm, *m_navMesh, *m_navQuery, m_navMeshDrawFlags
+				);
+			}
+			m_ddVboNvm.draw();
         }
-        if (m_drawMode == DRAWMODE_SHOW_PATH_REFIDS) {
-            m_nvttArgs["display_path_refids"] = "1";
-        } else {
-            m_nvttArgs["display_path_refids"] = "0";
-        }
-        m_changed = false;
-//            duDebugDrawNavMeshWithClosedList(&m_dd, *m_navMesh, *m_navQuery, m_navMeshDrawFlags);
-        if (m_drawMode == DRAWMODE_NAVMESH_BVTREE)
-            duDebugDrawNavMeshBVTree(&m_dd, *m_navMesh);
-        if (m_drawMode == DRAWMODE_NAVMESH_PORTALS)
-            duDebugDrawNavMeshPortals(&m_dd, *m_navMesh);
-        if (m_drawMode == DRAWMODE_NAVMESH_NODES)
-            duDebugDrawNavMeshNodes(&m_dd, *m_navQuery);
-        duDebugDrawNavMeshPolysWithFlags(
-            &m_dd, *m_navMesh, SAMPLE_POLYFLAGS_DISABLED, duRGBA(0,0,0,128));
+		if (m_drawMode == DRAWMODE_NAVMESH_BVTREE)
+		{
+			if (!m_ddVboNvmMisc)
+				duDebugDrawNavMeshBVTree(&m_ddVboNvmMisc, *m_navMesh);
+			m_ddVboNvmMisc.draw();
+		}
+		if (m_drawMode == DRAWMODE_NAVMESH_PORTALS)
+		{
+			if (!m_ddVboNvmMisc)
+				duDebugDrawNavMeshPortals(&m_ddVboNvmMisc, *m_navMesh);
+			m_ddVboNvmMisc.draw();
+		}
+		if (m_drawMode == DRAWMODE_NAVMESH_NODES)
+		{
+			if (!m_ddVboNvmMisc)
+				duDebugDrawNavMeshNodes(&m_ddVboNvmMisc, *m_navQuery);
+			m_ddVboNvmMisc.draw();
+		}
+		//duDebugDrawNavMeshPolysWithFlags(&m_dd, *m_navMesh, SAMPLE_POLYFLAGS_DISABLED, duRGBA(0,0,0,128));
     }
 
     glDepthMask(GL_TRUE);
 
+	// Draw active tile
 	const ThreadContext& dat = m_asyncBuildData[0];
-    if (dat.chf && m_drawMode == DRAWMODE_COMPACT) {
-        duDebugDrawCompactHeightfieldSolid(&m_dd, *dat.chf);
+    if (dat.chf && m_drawMode == DRAWMODE_COMPACT)
+	{
+		if (!m_ddVboNvmTile)
+			duDebugDrawCompactHeightfieldSolid(&m_ddVboNvmTile, *dat.chf);
+		m_ddVboNvmTile.draw();
     }
-    if (dat.chf && m_drawMode == DRAWMODE_COMPACT_BBOXES) {
-        duDebugDrawCompactHeightfieldSolidBboxes(&m_dd, *dat.chf);
+    if (dat.chf && m_drawMode == DRAWMODE_COMPACT_BBOXES)
+	{
+		if (!m_ddVboNvmTile)
+			duDebugDrawCompactHeightfieldSolidBboxes(&m_ddVboNvmTile, *dat.chf);
+		m_ddVboNvmTile.draw();
     }
-
 	if (dat.chf && m_drawMode == DRAWMODE_COMPACT_DISTANCE)
-		duDebugDrawCompactHeightfieldDistance(&m_dd, *dat.chf);
+	{
+		if (!m_ddVboNvmTile)
+			duDebugDrawCompactHeightfieldDistance(&m_ddVboNvmTile, *dat.chf);
+		m_ddVboNvmTile.draw();
+	}
 	if (dat.chf && m_drawMode == DRAWMODE_COMPACT_REGIONS)
-		duDebugDrawCompactHeightfieldRegions(&m_dd, *dat.chf);
+	{
+		if (!m_ddVboNvmTile)
+			duDebugDrawCompactHeightfieldRegions(&m_ddVboNvmTile, *dat.chf);
+		m_ddVboNvmTile.draw();
+	}
 	if (dat.solid && m_drawMode == DRAWMODE_VOXELS)
     {
         glEnable(GL_FOG);
-        duDebugDrawHeightfieldSolid(&m_dd, *dat.solid);
+		if (!m_ddVboNvmTile)
+			duDebugDrawHeightfieldSolid(&m_ddVboNvmTile, *dat.solid);
+		m_ddVboNvmTile.draw();
         glDisable(GL_FOG);
     }
 	if (dat.solid && m_drawMode == DRAWMODE_VOXELS_WALKABLE)
     {
         glEnable(GL_FOG);
-		duDebugDrawHeightfieldWalkable(&m_dd, *dat.solid);
+		if (!m_ddVboNvmTile)
+			duDebugDrawHeightfieldWalkable(&m_ddVboNvmTile, *dat.solid);
+		m_ddVboNvmTile.draw();
         glDisable(GL_FOG);
     }
     if (dat.solid && m_drawMode == DRAWMODE_VOXELS_WALKABLE_BBOXES)
     {
         glEnable(GL_FOG);
-        duDebugDrawHeightfieldWalkableBboxes(&m_dd, *dat.solid);
+		if (!m_ddVboNvmTile)
+			duDebugDrawHeightfieldWalkableBboxes(&m_ddVboNvmTile, *dat.solid);
+		m_ddVboNvmTile.draw();
         glDisable(GL_FOG);
     }
-
 	if (dat.cset && m_drawMode == DRAWMODE_RAW_CONTOURS)
     {
         glDepthMask(GL_FALSE);
-		duDebugDrawRawContours(&m_dd, *dat.cset);
+		if (!m_ddVboNvmTile)
+			duDebugDrawRawContours(&m_ddVboNvmTile, *dat.cset);
+		m_ddVboNvmTile.draw();
         glDepthMask(GL_TRUE);
     }
-
 	if (dat.cset && m_drawMode == DRAWMODE_BOTH_CONTOURS)
     {
         glDepthMask(GL_FALSE);
-		duDebugDrawRawContours(&m_dd, *dat.cset, 0.5f);
-		duDebugDrawContours(&m_dd, *dat.cset);
+		if (!m_ddVboNvmTile)
+		{
+			duDebugDrawRawContours(&m_ddVboNvmTile, *dat.cset, 0.5f);
+			duDebugDrawContours(&m_ddVboNvmTile, *dat.cset);
+		}
+		m_ddVboNvmTile.draw();
         glDepthMask(GL_TRUE);
     }
 	if (dat.cset && m_drawMode == DRAWMODE_CONTOURS)
     {
         glDepthMask(GL_FALSE);
-		duDebugDrawContours(&m_dd, *dat.cset);
+		if (!m_ddVboNvmTile)
+			duDebugDrawContours(&m_ddVboNvmTile, *dat.cset);
+		m_ddVboNvmTile.draw();
         glDepthMask(GL_TRUE);
     }
 	if (dat.chf && dat.cset && m_drawMode == DRAWMODE_REGION_CONNECTIONS)
     {
-		duDebugDrawCompactHeightfieldRegions(&m_dd, *dat.chf);
-
-        glDepthMask(GL_FALSE);
-		duDebugDrawRegionConnections(&m_dd, *dat.cset);
-        glDepthMask(GL_TRUE);
+		if (!m_ddVboNvmTile)
+		{
+			duDebugDrawCompactHeightfieldRegions(&m_ddVboNvmTile, *dat.chf);
+			glDepthMask(GL_FALSE);
+			duDebugDrawRegionConnections(&m_ddVboNvmTile, *dat.cset);
+			glDepthMask(GL_TRUE);
+		}
+		m_ddVboNvmTile.draw();
     }
 	if (dat.pmesh && m_drawMode == DRAWMODE_POLYMESH)
     {
         glDepthMask(GL_FALSE);
-		duDebugDrawPolyMesh(&m_dd, *dat.pmesh);
+		if (!m_ddVboNvmTile)
+			duDebugDrawPolyMesh(&m_ddVboNvmTile, *dat.pmesh);
+		m_ddVboNvmTile.draw();
         glDepthMask(GL_TRUE);
     }
 	if (dat.dmesh && m_drawMode == DRAWMODE_POLYMESH_DETAIL)
     {
         glDepthMask(GL_FALSE);
-		duDebugDrawPolyMeshDetail(&m_dd, *dat.dmesh);
+		if (!m_ddVboNvmTile)
+			duDebugDrawPolyMeshDetail(&m_ddVboNvmTile, *dat.dmesh);
+		m_ddVboNvmTile.draw();
         glDepthMask(GL_TRUE);
     }
 
-    m_geom->drawConvexVolumes(&m_dd);
+	m_geom->drawConvexVolumes(&m_dd);
 
     if (m_tool)
         m_tool->handleRender();
@@ -759,7 +910,7 @@ void Sample_TileMesh::buildTile(const float* pos)
         if (dtStatusFailed(status))
             dtFree(data);
     }
-    m_changed = true;
+	resetNavMeshDrawers();
 
 	m_ctx->dumpLog(m_msgIdx, "Build Tile (%d,%d):", tx, ty);
 	m_msgIdx = m_ctx->getLogCount();
@@ -800,7 +951,7 @@ void Sample_TileMesh::removeTile(const float* pos)
 
     m_navMesh->removeTile(m_navMesh->getTileRefAt(tx,ty,0),0,0);
 
-    m_changed = true;
+	resetNavMeshDrawers();
 }
 
 void Sample_TileMesh::buildAllTiles()
@@ -882,7 +1033,7 @@ void Sample_TileMesh::buildAllTilesDo(
 		m_ctx->enableTimer(true);
 		m_ctx->stopTimer(RC_TIMER_TEMP);
 		m_totalBuildTimeMs = m_ctx->getAccumulatedTime(RC_TIMER_TEMP)/1000.0f;
-		m_changed = true;
+		resetNavMeshDrawers();
 		m_asyncNavMeshGeneration = false;
 		m_interruptAsyncBuilding = false;
 		m_msgIdx = m_ctx->getLogCount();
@@ -1023,7 +1174,7 @@ void Sample_TileMesh::removeAllTiles()
     for (int y = 0; y < th; ++y)
         for (int x = 0; x < tw; ++x)
             m_navMesh->removeTile(m_navMesh->getTileRefAt(x,y,0),0,0);
-    m_changed = true;
+	resetNavMeshDrawers();
 }
 
 int Sample_TileMesh::buildTileMesh(
@@ -1236,7 +1387,7 @@ int Sample_TileMesh::buildTileMesh(
     if (n) {
         std::sort(genCtx.markedAreaIds.data, genCtx.markedAreaIds.data + n);
         int* end = std::unique(genCtx.markedAreaIds.data, genCtx.markedAreaIds.data + n);
-        n = end - genCtx.markedAreaIds.data;
+        n = static_cast<int>(end - genCtx.markedAreaIds.data);
         for (int i = 0; i < n; ++i) {
             const rcMeshLoaderObjExt::MarkedEntry& area =
                 *space.getMarkedArea(genCtx.markedAreaIds.data[i]);

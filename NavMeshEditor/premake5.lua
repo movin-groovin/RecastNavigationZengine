@@ -19,7 +19,7 @@ solution "recastnavigation"
 	exceptionhandling "Off"
 	rtti "Off"
 	flags { "FatalCompileWarnings" }
-	defines { "ZENGINE_NAVMESH" }
+	defines { "ZENGINE_NAVMESH", "DT_POLYREF64" }
 
 	-- debug configs
 	configuration "Debug*"
@@ -142,6 +142,9 @@ project "Recast"
 
 project "NavMeshEditor"
 	language "C++"
+	-- Catch requires RTTI and exceptions
+	exceptionhandling "On"
+	rtti "On"
 	defines { "USAGE_SSE_1_0", "CPP_EXCEPTIONS_ON" }
 	kind "WindowedApp"
 	includedirs { 

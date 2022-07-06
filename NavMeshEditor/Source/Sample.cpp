@@ -84,7 +84,10 @@ Sample::Sample() :
 	m_erodeBorderSpans(false),
 	m_tool(0),
     m_ctx(0),
-    m_collector(&areaToColFunc)
+	m_ddVboMesh(&areaToColFunc),
+	m_ddVboNvm(&areaToColFunc),
+	m_ddVboNvmMisc(&areaToColFunc),
+	m_ddVboNvmTile(&areaToColFunc)
 {
 	resetCommonSettings();
 	m_navQuery = dtAllocNavMeshQuery();
@@ -172,7 +175,22 @@ void Sample::handleMeshChanged(InputGeom* geom)
 		m_detailSampleMaxError = buildSettings->detailSampleMaxError;
 		m_partitionType = buildSettings->partitionType;
 	}
-    m_dd.reset_vbo();
+	resetDrawers();
+}
+
+void Sample::resetDrawers()
+{
+	m_ddVboMesh.reset();
+	m_ddVboNvm.reset();
+	m_ddVboNvmMisc.reset();
+	m_ddVboNvmTile.reset();
+}
+
+void Sample::resetNavMeshDrawers()
+{
+	m_ddVboNvm.reset();
+	m_ddVboNvmMisc.reset();
+	m_ddVboNvmTile.reset();
 }
 
 void Sample::collectSettings(BuildSettings& settings)

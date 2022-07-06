@@ -35,10 +35,14 @@ void duDebugDrawNavMeshWithClosedList(
     struct duDebugDraw* dd, const dtNavMesh& mesh,
     const dtNavMeshQuery& query, unsigned char flags
 );
+#ifdef ZENGINE_NAVMESH
 void duDebugDrawNavMeshWithClosedListFast(
-    struct duDebugDraw* dd, duDebugDraw *collector, const dtNavMesh& mesh,
-    const dtNavMeshQuery& query, unsigned char flags, bool changed
+	struct duDebugDraw* dd,
+	const dtNavMesh& mesh,
+    const dtNavMeshQuery& query,
+	unsigned char flags
 );
+#endif // ZENGINE_NAVMESH
 void duDebugDrawNavMeshNodes(struct duDebugDraw* dd, const dtNavMeshQuery& query);
 void duDebugDrawNavMeshBVTree(struct duDebugDraw* dd, const dtNavMesh& mesh);
 void duDebugDrawNavMeshPortals(struct duDebugDraw* dd, const dtNavMesh& mesh);

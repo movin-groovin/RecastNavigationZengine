@@ -103,7 +103,7 @@ public:
 	}
 
 	bool put(key_type k, value_type v) {
-		size_t bid = m_hash(k, m_numBuckets);
+		size_t bid = m_hash(k, static_cast<int>(m_numBuckets));
 		for (size_t i = bid; i < m_numBuckets; ++i) {
 			Bucket& b = m_data[i];
 			if (b.v == INVALID) {
@@ -128,7 +128,7 @@ private:
 	size_t findPos(const char* k, size_t(&pos)[I]) const {
 		static_assert(I > 0, "Incorrect I");
 		size_t n = 0;
-		size_t bid = m_hash(k, m_numBuckets);
+		size_t bid = m_hash(k, static_cast<int>(m_numBuckets));
 		for (size_t i = bid; i < m_numBuckets; ++i) {
 			const Bucket& b = m_data[i];
 			if (b.v == INVALID)

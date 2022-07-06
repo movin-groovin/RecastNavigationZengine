@@ -198,7 +198,7 @@ struct ArrayBuffer
     T* data = nullptr;
 };
 
-class Grid2dBvh
+class alignas(__m128) Grid2dBvh
 {
 public:
 	enum {
@@ -315,9 +315,8 @@ private:
 		int idsNum = 0;
 		int* gridIds = nullptr;
 	};
-    struct BvhNode
+    struct alignas(__m128) BvhNode
     {
-        // TODO more precise mem alignment
         float min[3];
         float padding; // for sse
         float max[3];
@@ -544,7 +543,7 @@ private:
 #endif
 };
 
-class InputGeom
+class alignas(__m128) InputGeom
 {
 private:
 	static const int STR_SIZE = 1024;
@@ -579,7 +578,7 @@ public:
 	const BuildSettings* getBuildSettings() const { return m_hasBuildSettings ? &m_buildSettings : 0; }
 
 	// collisions
-    bool raycastMesh(const float* src, const float* dst, float& tmin) const;
+    bool raycastMesh(const float* src, const float* dst, float& tmin, bool nearestHit) const;
     bool obbCollDetect(const OBBExt* be) const;
 
 	// mesh extracting

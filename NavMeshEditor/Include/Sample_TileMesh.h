@@ -141,13 +141,13 @@ protected:
 		DRAWMODE_CONTOURS,
 		DRAWMODE_POLYMESH,
         DRAWMODE_POLYMESH_DETAIL,
-        DRAWMODE_SHOW_PATH_REFIDS,
 		MAX_DRAWMODE
 	};
 		
 	DrawMode m_drawMode;
     bool m_showNonTriPolys;
     bool m_highlightLiquidPolys;
+	bool m_displayRefIdsInPath;
     std::unordered_map<std::string, std::string> m_nvttArgs;
 	
 	bool m_continueMeshGenWhileTileError;
@@ -161,7 +161,7 @@ protected:
 	std::atomic_int m_tileBuildTime;
 	std::atomic_int m_tileMemUsage;
 	std::atomic_int m_tileTriCount;
-    bool m_changed;
+    bool m_navmeshUpdated;
 	std::atomic_bool m_asyncNavMeshGeneration;
 	std::atomic_bool m_interruptAsyncBuilding;
 	std::atomic_int m_asyncBuildingProgress;
