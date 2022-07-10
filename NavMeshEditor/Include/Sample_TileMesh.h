@@ -148,7 +148,6 @@ protected:
     bool m_showNonTriPolys;
     bool m_highlightLiquidPolys;
 	bool m_displayRefIdsInPath;
-    std::unordered_map<std::string, std::string> m_nvttArgs;
 	
 	bool m_continueMeshGenWhileTileError;
 	int m_maxTiles;

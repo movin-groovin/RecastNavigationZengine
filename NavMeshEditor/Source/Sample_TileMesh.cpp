@@ -299,10 +299,10 @@ void Sample_TileMesh::handleTools()
 {
     int type = !m_tool ? TOOL_NONE : m_tool->type();
 
-    if (imguiCheck("Test Navmesh", type == TOOL_NAVMESH_TESTER, false))
+    if (imguiCheck("Test Navmesh", type == TOOL_NAVMESH_TESTER))
     {
-        //NavMeshTesterTool* tool = new NavMeshTesterTool(getInputGeom(), &m_nvttArgs);
-        //setTool(tool);
+        NavMeshTesterTool* tool = new NavMeshTesterTool(getInputGeom());
+        setTool(tool);
     }
     if (imguiCheck("Create Tiles", type == TOOL_TILE_EDIT))
     {
@@ -379,17 +379,6 @@ void Sample_TileMesh::handleDebugMode()
 		m_highlightLiquidPolys = !m_highlightLiquidPolys;
 		m_ddVboMesh.reset();
 	}
-	// TODO replace to NavMeshTesterTool
-	//if (imguiCheck("Display path ref ids", m_displayRefIdsInPath, m_navMesh))
-	//{
-	//	m_displayRefIdsInPath = !m_displayRefIdsInPath;
-	//	if (m_displayRefIdsInPath) {
-	//		m_nvttArgs["display_path_refids"] = "1";
-	//	}
-	//	else {
-	//		m_nvttArgs["display_path_refids"] = "0";
-	//	}
-	//}
 
 	// navmesh
 	if (imguiCheck("Input Mesh", m_drawMode == DRAWMODE_MESH, valid[DRAWMODE_MESH]))
