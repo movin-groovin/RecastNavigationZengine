@@ -23,6 +23,7 @@
 #include "DetourNavMesh.h"
 #include "Recast.h"
 #include "InputGeom.h"
+#include "Common.h"
 
 #include <unordered_map>
 #include <string>
@@ -118,6 +119,8 @@ protected:
 	float m_totalBuildTimeMs;
 	std::unique_ptr<ThreadContext[]> m_asyncBuildData;
 	std::thread m_asyncBuild;
+	bool m_collected;
+	std::unique_ptr<NavmeshGenParams[]> m_navGenParams;
 	
 	enum DrawMode
 	{
@@ -164,7 +167,6 @@ protected:
 	std::atomic_bool m_asyncNavMeshGeneration;
 	std::atomic_bool m_interruptAsyncBuilding;
 	std::atomic_int m_asyncBuildingProgress;
-	int m_msgIdx;
 
 protected:
 	int buildTileMesh(
@@ -202,11 +204,13 @@ public:
 	void removeTile(const float* pos);
 	void buildAllTiles();
 	void removeAllTiles();
+	void printNavmeshInfo(const dtNavMesh* mesh) const;
 
 private:
 	bool initNavMesh();
 	void initAsyncBuildData();
 	void buildAllTilesDo(const float* bmin, const float* bmax, int tw, int th, float tcs);
+	void collectNavmeshGenParams(NavmeshGenParams& params) const;
 };
 
 

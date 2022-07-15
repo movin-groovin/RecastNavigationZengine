@@ -244,7 +244,6 @@ static bool intersectionSegmentVsPlane(
         n[0] *= -1.f;
         n[1] *= -1.f;
         n[2] *= -1.f;
-        //std::printf();
     }
     return intersectionSegmentVsPlane(n, d, A, B, P);
 }

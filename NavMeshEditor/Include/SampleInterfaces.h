@@ -42,7 +42,7 @@ bool initOpenglMethods();
 /// Recast build context.
 class BuildContext : public rcContext
 {
-private:
+protected:
 	static const int MAX_MESSAGES = 256 * 1024;
 	static const int TEXT_POOL_SIZE = 32 * 1024 * 1024;
 

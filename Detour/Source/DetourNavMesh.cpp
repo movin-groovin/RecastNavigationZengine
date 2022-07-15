@@ -1339,6 +1339,38 @@ dtTileRef dtNavMesh::getTileRef(const dtMeshTile* tile) const
 	return (dtTileRef)encodePolyId(tile->salt, it, 0);
 }
 
+#ifdef ZENGINE_NAVMESH
+int dtNavMesh::getTileIndex(const dtMeshTile* tile) const
+{
+	if (!tile) return -1;
+	return (int)(tile - m_tiles);
+}
+
+void dtNavMesh::collectInfo(
+	int& nTiles, int& nPolys, int& nConnectedEdges, int& nNonConnectedEdges
+) const {
+	nTiles = nPolys = nConnectedEdges = nNonConnectedEdges = 0;
+	for (int i = 0; i < getMaxTiles(); ++i)
+	{
+		const dtMeshTile* tile = getTile(i);
+		if (!tile || !tile->header || !tile->dataSize) continue;
+		
+		nPolys += tile->header->polyCount;
+		for (int j = 0; j < tile->header->polyCount; ++j)
+		{
+			const dtPoly* poly = tile->polys + j;
+			int connNum = 0;
+			for (unsigned int k = poly->firstLink; k != DT_NULL_LINK; k = tile->links[k].next) {
+				++connNum;
+			}
+			nConnectedEdges += connNum;
+			nNonConnectedEdges += (int)poly->vertCount - connNum;
+		}
+		++nTiles;
+	}
+}
+#endif // ZENGINE_NAVMESH
+
 /// @par
 ///
 /// Example use case:

@@ -40,6 +40,12 @@
 #include "DetourNavMesh.h"
 #include "Sample.h"
 
+void LoggerAdapter::doLogMessage(int category, const char* msg, int len)
+{
+	doLog((rcLogCategory)category, msg, len);
+}
+
+
 static bool intersectSegmentTriangle(
 	const float* sp, const float* sq, const float* a, const float* b, const float* c, float &t
 ) {
@@ -133,7 +139,8 @@ bool InputGeom::loadMesh(
 	const char* vobsMesh,
     const char* markedMesh,
     float offsetSize,
-    float bvhGridSize
+    float bvhGridSize,
+	bool shrinkBvhAabb
 ) {
 	if (m_meshExt)
 	{
@@ -168,7 +175,11 @@ bool InputGeom::loadMesh(
 #ifdef PRINT_STRUCTURE_STAT
     auto tp2 = std::chrono::steady_clock::now();
 #endif
-    if (m_space.load(ctx, m_meshExt, static_cast<int>(bvhGridSize)) != Grid2dBvh::SUCCESSFUL) {
+	int loadRet = m_space.load(
+		ctx, m_meshExt, static_cast<int>(bvhGridSize), shrinkBvhAabb
+	);
+	if (loadRet != Grid2dBvh::SUCCESSFUL)
+	{
         ctx->log(RC_LOG_ERROR, "loadMesh(dir): mesh bvh construction error");
 		return false;
 	}
@@ -191,7 +202,11 @@ bool InputGeom::loadMesh(
 }
 
 bool InputGeom::loadFromDir(
-    class rcContext* ctx, const char* filepath, float offsetSize, float bvhGridSize
+    class rcContext* ctx,
+	const char* filepath,
+	float offsetSize,
+	float bvhGridSize,
+	bool shrinkBvhAabb
 ) {
 #ifdef WIN32
 	static const char SEP = '\\';
@@ -227,7 +242,14 @@ bool InputGeom::loadFromDir(
 	std::strcpy(m_markedMeshName, markedMesh);
 	m_markedMeshName[STR_SIZE - 1] = '\0';
 
-    return loadMesh(ctx, navMesh, staticMesh, vobsMesh, markedMesh, offsetSize, bvhGridSize);
+    return loadMesh(
+		ctx, navMesh, staticMesh, vobsMesh, markedMesh, offsetSize, bvhGridSize, shrinkBvhAabb
+	);
+}
+
+bool InputGeom::saveBinaryMesh() const
+{
+	return m_space.saveBinaryMesh();
 }
 
 static bool isectSegAABB(const float* sp, const float* sq,
@@ -279,57 +301,68 @@ const Grid2dBvh::TrianglesData& InputGeom::extractOverlappingRectData(
 
 bool InputGeom::obbCollDetect(const OBBExt* be) const
 {
-#ifdef PRINT_TRI_VS_OBB_LATENCY
-    static uint64_t callCnt = 0;
+#ifdef PRINT_TOTAL_COLLISION_STAT
+	static uint64_t callCnt = 0;
     static uint64_t nsCnt = 0;
     auto tp1 = std::chrono::steady_clock::now();
-#endif
+#endif // PRINT_TOTAL_COLLISION_STAT
 	bool ret = m_space.obbTriCollisionFirstHit(be);
-#ifdef PRINT_TRI_VS_OBB_LATENCY
-    auto tp2 = std::chrono::steady_clock::now();
-    auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-    std::printf("Time diff obb vs tri ns: %d, total nodes: %d, total leafes: %d, "
-           "total polys: %d, res: %d\n",
-           (int)diff, m_space.getNodesPerCall(), m_space.getLeafesPerCall(),
-           m_space.getPolysPerCall(), (int)ret);
-    m_space.clearStatPerCall();
-    ++callCnt;
-    nsCnt += diff;
-    if (callCnt % 10 == 0) {
-        std::printf("Ns obb vs tri per call +100: %zu\n", nsCnt / callCnt);
-    }
-#endif
+#ifdef PRINT_TOTAL_COLLISION_STAT
+	auto tp2 = std::chrono::steady_clock::now();
+	auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
+	++callCnt;
+	nsCnt += diff;
+	if (nsCnt % PRINT_PER_N_CALLS == 0) {
+		m_ctx->log(RC_LOG_PROGRESS, "Obb vs tri(first) +%llu calls, av. time: %llu ns",
+			PRINT_PER_N_CALLS, nsCnt / callCnt);
+	}
+#endif // PRINT_TOTAL_COLLISION_STAT
     return ret;
 }
 
 bool InputGeom::raycastMesh(
     const float* src, const float* dst, float& tmin, bool nearestHit
 ) const {
-#ifdef PRINT_TRI_VS_SEG_LATENCY_TOTAL
-    static uint64_t callCnt = 0;
-    static uint64_t nsCnt = 0;
+#ifdef PRINT_TOTAL_COLLISION_STAT
+    static uint64_t callCntFh = 0;
+	static uint64_t callCntNh = 0;
+    static uint64_t nsCntFh = 0;
+	static uint64_t nsCntNh = 0;
+	static double lenFh = 0.;
+	static double lenNh = 0.;
     auto tp1 = std::chrono::steady_clock::now();
-#endif
+#endif // PRINT_TOTAL_COLLISION_STAT
 	bool ret;
-	if (nearestHit)
+
+	if (nearestHit) {
 		ret = m_space.segTriCollisionNearestHit(src, dst, tmin);
-	else
+#ifdef PRINT_TOTAL_COLLISION_STAT
+		auto tp2 = std::chrono::steady_clock::now();
+		auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
+		++callCntNh;
+		nsCntNh += diff;
+		lenNh += rcVdist(src, dst);
+		if (callCntNh % PRINT_PER_N_CALLS == 0) {
+			m_ctx->log(RC_LOG_PROGRESS, "Seg vs tri(nearest) +%llu calls, av. time: %llu ns, av. len.: %f",
+				PRINT_PER_N_CALLS, nsCntNh / callCntNh, lenNh / callCntNh);
+		}
+#endif // PRINT_TOTAL_COLLISION_STAT
+	}
+	else {
 		ret = m_space.segTriCollisionFirstHit(src, dst, tmin);
-#ifdef PRINT_TRI_VS_SEG_LATENCY_TOTAL
-    auto tp2 = std::chrono::steady_clock::now();
-    auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-    ++callCnt;
-    nsCnt += diff;
-    if (callCnt % PRINT_AFTER_N_POLYS == 0) {
-        std::printf("Ns seg vs tri per call +%d: %zu ns\n", PRINT_AFTER_N_POLYS, nsCnt / callCnt);
-    }
-#endif
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-    std::printf("Time diff seg vs tri ns: %d, total nodes: %d, total leafes: %d,"
-           "total polys: %d\n", (int)diff, m_space.getNodesPerCall(),
-           m_space.getLeafesPerCall(), m_space.getPolysPerCall());
-    m_space.clearStatPerCall();
-#endif
+#ifdef PRINT_TOTAL_COLLISION_STAT
+		auto tp2 = std::chrono::steady_clock::now();
+		auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
+		++callCntFh;
+		nsCntFh += diff;
+		lenFh += rcVdist(src, dst);
+		if (callCntFh % PRINT_PER_N_CALLS == 0) {
+			m_ctx->log(RC_LOG_PROGRESS, "Seg vs tri(first) +%llu calls, av. time: %llu ns, av. len.: %f",
+				PRINT_PER_N_CALLS, nsCntFh / callCntFh, lenFh / callCntFh);
+		}
+#endif // PRINT_TOTAL_COLLISION_STAT
+	}
+
     return ret;
 }
 
@@ -634,8 +667,9 @@ private:
     mutable bool m_active = true;
 };
 
-Octree::Octree(int maxDepth, int minTrisInLeaf):
-    m_maxDepth(maxDepth),
+Octree::Octree(BaseLogger* log, int maxDepth, int minTrisInLeaf):
+    m_log(log),
+	m_maxDepth(maxDepth),
     m_minTrisInLeaf(minTrisInLeaf)
 {}
 
@@ -821,8 +855,10 @@ bool Octree::detectSegmentPolyCollision(
     auto tp2 = std::chrono::steady_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
     m_totalNodes += m_leafNodes;
-    std::printf("%d = time diff ns: %d, total nodes: %d, total leafes: %d, total polys: %d\n",
+#ifndef DISABLE_LOGGER
+	m_log->log(RC_LOG_PROGRESS, "%d = time diff ns: %d, total nodes: %d, total leafes: %d, total polys: %d",
            n, (int)diff, m_totalNodes, m_leafNodes, m_polys);
+#endif // DISABLE_LOGGER
     return res;
 }
 
@@ -2164,9 +2200,14 @@ void Grid2dBvh::deleteOffMeshConn(int i)
 	m_offMeshConns.offMeshNum -= 1;
 }
 
-int Grid2dBvh::load(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize)
+bool Grid2dBvh::saveBinaryMesh() const
 {
-    int ret = loadInternal(ctx, mesh, cellSize);
+	return false;
+}
+
+int Grid2dBvh::load(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize, bool shrinkBvhAabb)
+{
+    int ret = loadInternal(ctx, mesh, cellSize, shrinkBvhAabb);
 	if (ret != SUCCESSFUL) {
 		release();
 	}
@@ -2179,7 +2220,7 @@ void Grid2dBvh::getBounds(float* bMin, float* bMax) const
     rcVcopy(bMax, m_worldMax);
 }
 
-int Grid2dBvh::loadInternal(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize)
+int Grid2dBvh::loadInternal(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize, bool shrinkBvhAabb)
 {
 	m_cellSize = cellSize;
 	m_cellSizeInv = 1.0f / m_cellSize;
@@ -3026,40 +3067,16 @@ bool Grid2dBvh::segTriCollisionFirstHit(const float* start, const float* end, fl
         const GridCell* xShift = m_grid + m_wszCellsZ * i;
         for (int j = ziMin; j <= ziMax; ++j) {
             const GridCell* cell = xShift + j;
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-            auto tp1 = std::chrono::steady_clock::now();
-#endif
             bool ret = isectSegXzAabbRed(aabbArgs, cell->bmin, cell->bmax);
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-            auto tp2 = std::chrono::steady_clock::now();
-            auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-            std::printf("Time diff isectSegAABBXZ ns: %d\n", (int)diff);
-#endif
             if (!ret) continue;
             const BvhNode* curNode = cell->childs;
             const BvhNode* endNode = curNode + cell->childsNumber;
             while (curNode < endNode) {
 				const bool leaf = curNode->triId >= 0;
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-                auto tp1 = std::chrono::steady_clock::now();
-#endif
                 const bool boxIntersect =
                     isectSegAabbRed(aabbArgs, curNode->min, curNode->max);
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-                auto tp2 = std::chrono::steady_clock::now();
-                auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-                std::printf("Time diff isectSegAABB ns: %d\n", (int)diff);
-                ++totalNodesTraversed;
-                if (leaf) ++totalLeafesTraversed;
-#endif
                 if (leaf && boxIntersect) {
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-                    ++totalPolysTraversed;
-#endif
                     const int* vIds = m_tris + curNode->triId;
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-                    auto tp1 = std::chrono::steady_clock::now();
-#endif
                     ret = intersectSegmentTriangleRed(
                         triArgs,
                         m_verts + vIds[0],
@@ -3090,11 +3107,6 @@ bool Grid2dBvh::segTriCollisionFirstHit(const float* start, const float* end, fl
 							return true;
 						}
 					}
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-                    auto tp2 = std::chrono::steady_clock::now();
-                    auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-                    std::printf("Time diff intersectSegmentTriangle ns: %d\n", (int)diff);
-#endif
                 }
                 if (leaf || boxIntersect)
                     ++curNode;
@@ -3127,26 +3139,10 @@ bool Grid2dBvh::segTriCollisionVobFirstHit(
 	const BvhNode* endNode = curNode + vobMesh.childsNumber;
 	while (curNode < endNode) {
 		const bool leaf = curNode->triId >= 0;
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-		auto tp1 = std::chrono::steady_clock::now();
-#endif
 		const bool boxIntersect =
 			isectSegAabbRed(aabbArgs, curNode->min, curNode->max);
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-		auto tp2 = std::chrono::steady_clock::now();
-		auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-        std::printf("Time diff isectSegAABB ns: %d\n", (int)diff);
-		++totalNodesTraversed;
-		if (leaf) ++totalLeafesTraversed;
-#endif
 		if (leaf && boxIntersect) {
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-			++totalPolysTraversed;
-#endif
 			const int* vIds = tris + curNode->triId;
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-			auto tp1 = std::chrono::steady_clock::now();
-#endif
 			bool ret = intersectSegmentTriangleRed(
 				triArgs,
 				verts + vIds[0],
@@ -3157,11 +3153,6 @@ bool Grid2dBvh::segTriCollisionVobFirstHit(
 			if (ret) {
 				return true;
 			}
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-			auto tp2 = std::chrono::steady_clock::now();
-			auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-            std::printf("Time diff intersectSegmentTriangle ns: %d\n", (int)diff);
-#endif
 		}
 		if (leaf || boxIntersect)
 			++curNode;
@@ -3210,40 +3201,16 @@ bool Grid2dBvh::segTriCollisionNearestHit(const float* start, const float* end, 
 		const GridCell* xShift = m_grid + m_wszCellsZ * i;
 		for (int j = ziMin; j <= ziMax; ++j) {
 			const GridCell* cell = xShift + j;
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-			auto tp1 = std::chrono::steady_clock::now();
-#endif
 			bool ret = isectSegXzAabbRed(aabbArgs, cell->bmin, cell->bmax);
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-			auto tp2 = std::chrono::steady_clock::now();
-			auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-            std::printf("Time diff isectSegAABBXZ ns: %d\n", (int)diff);
-#endif
 			if (!ret) continue;
 			const BvhNode* curNode = cell->childs;
 			const BvhNode* endNode = curNode + cell->childsNumber;
 			while (curNode < endNode) {
 				const bool leaf = curNode->triId >= 0;
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-				auto tp1 = std::chrono::steady_clock::now();
-#endif
 				const bool boxIntersect =
 					isectSegAabbRed(aabbArgs, curNode->min, curNode->max);
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-				auto tp2 = std::chrono::steady_clock::now();
-				auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-                std::printf("Time diff isectSegAABB ns: %d\n", (int)diff);
-				++totalNodesTraversed;
-				if (leaf) ++totalLeafesTraversed;
-#endif
 				if (leaf && boxIntersect) {
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-					++totalPolysTraversed;
-#endif
 					const int* vIds = m_tris + curNode->triId;
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-					auto tp1 = std::chrono::steady_clock::now();
-#endif
 					ret = intersectSegmentTriangleRed(
 						triArgs,
 						m_verts + vIds[0],
@@ -3274,11 +3241,6 @@ bool Grid2dBvh::segTriCollisionNearestHit(const float* start, const float* end, 
 							if (tCur < t) t = tCur;
 						}
 					}
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-					auto tp2 = std::chrono::steady_clock::now();
-					auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-                    std::printf("Time diff intersectSegmentTriangle ns: %d\n", (int)diff);
-#endif
 				}
 				if (leaf || boxIntersect)
 					++curNode;
@@ -3315,26 +3277,10 @@ bool Grid2dBvh::segTriCollisionVobNearestHit(
 	const BvhNode* endNode = curNode + vobMesh.childsNumber;
 	while (curNode < endNode) {
 		const bool leaf = curNode->triId >= 0;
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-		auto tp1 = std::chrono::steady_clock::now();
-#endif
 		const bool boxIntersect =
 			isectSegAabbRed(aabbArgs, curNode->min, curNode->max);
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-		auto tp2 = std::chrono::steady_clock::now();
-		auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-        std::printf("Time diff isectSegAABB ns: %d\n", (int)diff);
-		++totalNodesTraversed;
-		if (leaf) ++totalLeafesTraversed;
-#endif
 		if (leaf && boxIntersect) {
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-			++totalPolysTraversed;
-#endif
 			const int* vIds = tris + curNode->triId;
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-			auto tp1 = std::chrono::steady_clock::now();
-#endif
 			bool ret = intersectSegmentTriangleRed(
 				triArgs,
 				verts + vIds[0],
@@ -3345,11 +3291,6 @@ bool Grid2dBvh::segTriCollisionVobNearestHit(
 			if (ret) {
 				if (tCur < t) t = tCur;
 			}
-#ifdef PRINT_TRI_VS_SEG_LATENCY
-			auto tp2 = std::chrono::steady_clock::now();
-			auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-            std::printf("Time diff intersectSegmentTriangle ns: %d\n", (int)diff);
-#endif
 		}
 		if (leaf || boxIntersect)
 			++curNode;
@@ -3420,53 +3361,20 @@ bool Grid2dBvh::obbTriCollisionFirstHit(const OBBExt* be) const // TODO add robu
         const GridCell* xShift = m_grid + m_wszCellsZ * i;
 		for (int j = ret.ziMin; j <= ret.ziMax; ++j) {
             const GridCell* cell = xShift + j;
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//            auto tp1 = std::chrono::steady_clock::now();
-//#endif
             bool ret = checkAabbsCollisionXZ(min, max, cell->bmin, cell->bmax);
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//            auto tp2 = std::chrono::steady_clock::now();
-//            auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-//            std::printf("Time diff checkAabbsCollisionXZ ns: %d\n", (int)diff);
-//#endif
             if (!ret) continue;
             const BvhNode* curNode = cell->childs;
             const BvhNode* endNode = curNode + cell->childsNumber;
             while (curNode < endNode) {
 				const bool leaf = curNode->triId >= 0;
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//                auto tp1 = std::chrono::steady_clock::now();
-//#endif
                 const bool boxIntersect =
                     checkAabbsCollision(min, max, curNode->min, curNode->max);
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//                auto tp2 = std::chrono::steady_clock::now();
-//                auto diff =
-//                    std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-//                std::printf("Time diff checkAabbsCollision ns: %d\n", (int)diff);
-//#endif
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//                ++totalNodesTraversed;
-//                if (leaf) ++totalLeafesTraversed;
-//#endif
                 if (leaf && boxIntersect) {
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//                    ++totalPolysTraversed;
-//#endif
                     const int* vIds = m_tris + curNode->triId;
                     rcVcopy(triPoints, m_verts + vIds[0]);
                     rcVcopy(triPoints + 3, m_verts + vIds[1]);
                     rcVcopy(triPoints + 6, m_verts + vIds[2]);
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//                auto tp3 = std::chrono::steady_clock::now();
-//#endif
                     ret = intersectObbTriangle(be, triPoints);
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//                auto tp4 = std::chrono::steady_clock::now();
-//                auto diff =
-//                    std::chrono::duration_cast<std::chrono::nanoseconds>(tp4 - tp3).count();
-//                std::printf("Time diff intersectObbTriangle ns: %d\n", (int)diff);
-//#endif
 					if (ret) { // TODO last collide id checking
 						PolyAreaFlags::FlagType flag = m_triFlags[curNode->triId / 3];
 						if (flag.isVobPos) {
@@ -3524,39 +3432,14 @@ bool Grid2dBvh::obbTriCollisionVobFirstHit(int vobId, const OBBExt* be) const
 	const BvhNode* endNode = curNode + vobMesh.childsNumber;
 	while (curNode < endNode) {
 		const bool leaf = curNode->triId >= 0;
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//                auto tp1 = std::chrono::steady_clock::now();
-//#endif
 		const bool boxIntersect =
 			checkAabbsCollision(min, max, curNode->min, curNode->max);
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//                auto tp2 = std::chrono::steady_clock::now();
-//                auto diff =
-//                    std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
-//                std::printf("Time diff checkAabbsCollision ns: %d\n", (int)diff);
-//#endif
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//                ++totalNodesTraversed;
-//                if (leaf) ++totalLeafesTraversed;
-//#endif
 		if (leaf && boxIntersect) {
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//                    ++totalPolysTraversed;
-//#endif
 			const int* vIds = tris + curNode->triId;
 			rcVcopy(triPoints, verts + vIds[0]);
 			rcVcopy(triPoints + 3, verts + vIds[1]);
 			rcVcopy(triPoints + 6, verts + vIds[2]);
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//                auto tp3 = std::chrono::steady_clock::now();
-//#endif
 			bool ret = intersectObbTriangle(be, triPoints);
-//#ifdef PRINT_TRI_VS_OBB_LATENCY
-//                auto tp4 = std::chrono::steady_clock::now();
-//                auto diff =
-//                    std::chrono::duration_cast<std::chrono::nanoseconds>(tp4 - tp3).count();
-//                std::printf("Time diff intersectObbTriangle ns: %d\n", (int)diff);
-//#endif
 			if (ret) {
 				return true;
 			}

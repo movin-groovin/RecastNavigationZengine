@@ -415,6 +415,13 @@ public:
 	/// @return The tile reference of the tile.
 	dtTileRef getTileRef(const dtMeshTile* tile) const;
 
+#ifdef ZENGINE_NAVMESH
+	int getTileIndex(const dtMeshTile* tile) const;
+	void collectInfo(
+		int& nTiles, int& nPolys, int& nConnectedEdges, int& nNonConnectedEdges
+	) const;
+#endif // ZENGINE_NAVMESH
+
 	/// Gets the tile for the specified tile reference.
 	///  @param[in]	ref		The tile reference of the tile to retrieve.
 	/// @return The tile for the specified reference, or null if the 

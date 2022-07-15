@@ -23,6 +23,7 @@
 #include "DetourNavMesh.h"
 #include "DetourNavMeshQuery.h"
 #include "InputGeom.h"
+#include "SampleInterfaces.h"
 
 #include <string>
 
@@ -102,15 +103,13 @@ class NavMeshTesterTool : public SampleTool
 private:
     static constexpr float POLY_PICK_Y = 40.f;
 
-public:
+	BuildContext* m_ctx;
     bool m_initError = false;
     Sample* m_sample;
 	
 	dtNavMesh* m_navMesh;
 	dtNavMeshQuery* m_navQuery;
-
 	dtQueryFilter m_filter;
-
 	dtStatus m_pathFindStatus;
 
 	enum ToolMode
@@ -188,7 +187,7 @@ public:
 	int m_steerPointCount;
 	
 public:
-    NavMeshTesterTool(InputGeom* inGeom);
+    NavMeshTesterTool(InputGeom* inGeom, BuildContext* ctx);
     ~NavMeshTesterTool();
 
 	virtual int type() { return TOOL_NAVMESH_TESTER; }

@@ -451,8 +451,6 @@ dtNavMesh* Sample::loadAll(FILE* fp)
 	}
 
 	// Read tiles.
-	///dtNavMesh::PolysParams polyParams;
-	///polyParams.tilesNum = header.numTiles;
 	for (int i = 0; i < header.numTiles; ++i)
 	{
 		NavMeshTileHeader tileHeader;
@@ -476,14 +474,9 @@ dtNavMesh* Sample::loadAll(FILE* fp)
 		}
 
 		mesh->addTile(
-			data, tileHeader.dataSize, DT_TILE_FREE_DATA, tileHeader.tileRef, 0/*, &polyParams*/
+			data, tileHeader.dataSize, DT_TILE_FREE_DATA, tileHeader.tileRef, 0
 		);
 	}
-	///std::printf("Navmesh characteristics:\n");
-	///std::printf("Tiles number: %d\n", polyParams.tilesNum);
-	///std::printf("Polys number: %d\n", polyParams.polysNum);
-	///std::printf("Connected edges number: %d\n", polyParams.connEdgesNum);
-	///std::printf("Non connected edges number: %d\n", polyParams.nonConnEdgesNum);
 
 	return mesh;
 }

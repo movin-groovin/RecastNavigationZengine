@@ -34,7 +34,7 @@ bool initOpenglMethods()
 	};
 	if (!wglGetCurrentContext())
 	{
-		std::printf("Can't initialise opengl ptr methods. Opengl subsystem is not initialised");
+		throw std::runtime_error("Can't initialise opengl ptr methods, error of wglGetCurrentContext");
 		return false;
 	}
 	glBindBufferPtr = (PFNGLBINDBUFFERPROC)wglGetProcAddress("glBindBuffer");
@@ -45,12 +45,14 @@ bool initOpenglMethods()
 	if (!(
 		glBindBufferPtr && glGenBuffersPtr && glBufferDataPtr && glBufferSubDataPtr && glDeleteBuffersPtr
 	)) {
-		std::printf(
-			"Can't initialise opengl ptr methods. One of methods is not initialised, "
+		static char msg[512];
+		std::sprintf(
+			msg, "Can't initialise opengl ptr methods. One of methods is not initialised, "
 			"glBindBufferPtr: %s, glGenBuffersPtr: %s, glBufferDataPtr: %s, glBufferSubDataPtr: %s, glDeleteBuffersPtr: %s",
 			fptrToStr(glBindBufferPtr), fptrToStr(glGenBuffersPtr), fptrToStr(glBufferDataPtr), fptrToStr(glBufferSubDataPtr),
 			fptrToStr(glDeleteBuffersPtr)
 		);
+		throw std::runtime_error(msg);
 		return false;
 	}
 #else

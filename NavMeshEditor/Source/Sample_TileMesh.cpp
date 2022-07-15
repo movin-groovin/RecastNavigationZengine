@@ -176,6 +176,7 @@ Sample_TileMesh::Sample_TileMesh() :
     m_keepInterResults(false),
     m_buildAll(true),
     m_totalBuildTimeMs(0),
+	m_collected(false),
     m_drawMode(DRAWMODE_NAVMESH),
     m_showNonTriPolys(false),
     m_highlightLiquidPolys(false),
@@ -191,8 +192,7 @@ Sample_TileMesh::Sample_TileMesh() :
 	m_navmeshUpdated(),
 	m_asyncNavMeshGeneration(false),
 	m_interruptAsyncBuilding(false),
-	m_asyncBuildingProgress(0),
-	m_msgIdx(0)
+	m_asyncBuildingProgress(0)
 {
     resetCommonSettings();
     memset(m_lastBuiltTileBmin, 0, sizeof(m_lastBuiltTileBmin));
@@ -243,19 +243,21 @@ void Sample_TileMesh::handleSettings()
         const int ts = (int)m_tileSize;
         const int tw = (gw + ts-1) / ts;
         const int th = (gh + ts-1) / ts;
-        snprintf(text, 64, "Tiles  %d x %d", tw, th);
+        snprintf(text, 64, "Tiles: %d x %d", tw, th);
         imguiValue(text);
 
         // Max tiles and max polys affect how the tile IDs are caculated.
-        // There are 22 bits available for identifying a tile and a polygon.
-        int tileBits = rcMin((int)ilog2(nextPow2(tw*th)), 14);
-        if (tileBits > 14) tileBits = 14;
-        int polyBits = 22 - tileBits;
-        m_maxTiles = 1 << tileBits;
-        m_maxPolysPerTile = 1 << polyBits;
-        snprintf(text, 64, "Max Tiles  %d", m_maxTiles);
+		// Using enhanced tiles mode: DT_POLYREF64
+        int tileBits = rcMin((int)ilog2(nextPow2(tw*th)), (int)DT_TILE_BITS);
+        int newMaxTiles = 1 << tileBits;
+		m_maxTiles = rcMax(m_maxTiles, newMaxTiles);
+        m_maxPolysPerTile = 0; // not used
+        snprintf(text, 64, "Max tiles: %d", m_maxTiles);
         imguiValue(text);
-        snprintf(text, 64, "Max Polys  %d", m_maxPolysPerTile);
+        if (m_maxPolysPerTile)
+			snprintf(text, 64, "Max polys: %d", m_maxPolysPerTile);
+		else
+			snprintf(text, 64, "Max polys: %s", "unlimited");
         imguiValue(text);
     }
     else
@@ -301,7 +303,7 @@ void Sample_TileMesh::handleTools()
 
     if (imguiCheck("Test Navmesh", type == TOOL_NAVMESH_TESTER))
     {
-        NavMeshTesterTool* tool = new NavMeshTesterTool(getInputGeom());
+        NavMeshTesterTool* tool = new NavMeshTesterTool(getInputGeom(), m_ctx);
         setTool(tool);
     }
     if (imguiCheck("Create Tiles", type == TOOL_TILE_EDIT))
@@ -763,6 +765,9 @@ void Sample_TileMesh::handleMeshChanged(InputGeom* geom)
 	initAsyncBuildData();
     dtFreeNavMesh(m_navMesh);
     m_navMesh = 0;
+	m_maxTiles = 0;
+	m_navGenParams.reset();
+	m_collected = false;
 
     if (m_tool)
     {
@@ -803,6 +808,9 @@ bool Sample_TileMesh::initNavMesh()
 		m_ctx->log(RC_LOG_ERROR, "initNavMesh: Could not init Detour navmesh query");
 		return false;
 	}
+
+	m_navGenParams = std::make_unique<NavmeshGenParams[]>(1 + m_maxTiles);
+	std::memset(m_navGenParams.get(), 0, sizeof(NavmeshGenParams) * (1 + m_maxTiles));
 
 	return true;
 }
@@ -889,20 +897,29 @@ void Sample_TileMesh::buildTile(const float* pos)
 	}
 
     // Remove any previous data (navmesh owns and deletes the data).
-    m_navMesh->removeTile(m_navMesh->getTileRefAt(tx,ty,0),0,0);
+    m_navMesh->removeTile(m_navMesh->getTileRefAt(tx, ty, 0), 0, 0);
 
     // Add tile, or leave the location empty.
     if (data)
     {
         // Let the navmesh own the data.
-        dtStatus status = m_navMesh->addTile(data,dataSize,DT_TILE_FREE_DATA,0,0);
-        if (dtStatusFailed(status))
-            dtFree(data);
+        dtStatus status = m_navMesh->addTile(data, dataSize, DT_TILE_FREE_DATA, 0, 0);
+		const dtMeshTile* tile = m_navMesh->getTileAt(tx, ty, 0);
+		if (dtStatusFailed(status) || !tile) {
+			dtFree(data);
+		}
+		else {
+			int tIdx = m_navMesh->getTileIndex(tile) + 1;
+			collectNavmeshGenParams(m_navGenParams[tIdx]);
+			if (!m_collected) {
+				collectNavmeshGenParams(m_navGenParams[0]);
+				m_collected = true;
+			}
+		}
     }
 	resetNavMeshDrawers();
 
-	m_ctx->dumpLog(m_msgIdx, "Build Tile (%d,%d):", tx, ty);
-	m_msgIdx = m_ctx->getLogCount();
+	m_ctx->log(RC_LOG_PROGRESS, "Build Tile, x: %d, y: %d):", tx, ty);
 }
 
 void Sample_TileMesh::getTilePos(const float* pos, int& tx, int& ty)
@@ -938,7 +955,12 @@ void Sample_TileMesh::removeTile(const float* pos)
 
     m_tileCol = duRGBA(128,32,16,64);
 
-    m_navMesh->removeTile(m_navMesh->getTileRefAt(tx,ty,0),0,0);
+    m_navMesh->removeTile(m_navMesh->getTileRefAt(tx, ty, 0), 0, 0);
+	const dtMeshTile* tile = m_navMesh->getTileAt(tx, ty, 0);
+	if (tile) {
+		int tIdx = m_navMesh->getTileIndex(tile) + 1;
+		std::memset(&m_navGenParams[tIdx], 0, sizeof(m_navGenParams[tIdx]));
+	}
 
 	resetNavMeshDrawers();
 }
@@ -958,10 +980,11 @@ void Sample_TileMesh::buildAllTiles()
     const float tcs = m_tileSize*m_cellSize;
 
 	m_ctx->resetLog();
-	m_msgIdx = 0;
 	m_tileMemUsage = 0;
 	m_tileBuildTime = 0;
 	m_tileTriCount = 0;
+	collectNavmeshGenParams(m_navGenParams[0]);
+	m_collected = true;
 	m_asyncBuild = std::thread(
 		&Sample_TileMesh::buildAllTilesDo, this, bmin, bmax, tw, th, tcs
 	);
@@ -1025,7 +1048,6 @@ void Sample_TileMesh::buildAllTilesDo(
 		resetNavMeshDrawers();
 		m_asyncNavMeshGeneration = false;
 		m_interruptAsyncBuilding = false;
-		m_msgIdx = m_ctx->getLogCount();
 		m_asyncBuildingProgress = 0;
 	};
 
@@ -1100,7 +1122,12 @@ void Sample_TileMesh::buildAllTilesDo(
 			} else {
 				status = m_navMesh->addTile(e.data, e.dataSize, DT_TILE_FREE_DATA, 0, 0);
 			}
-			if (dtStatusFailed(status)) {
+			const dtMeshTile* tile = m_navMesh->getTileAt(e.x, e.y, 0);
+			if (tile) {
+				int tIdx = m_navMesh->getTileIndex(tile) + 1;
+				collectNavmeshGenParams(m_navGenParams[tIdx]);
+			}
+			if (dtStatusFailed(status) || (!tile && e.data)) {
 				dtFree(e.data);
 				for (int j = i; j < n; ++j) {
 					dtFree(tilesData[j].data);
@@ -1108,6 +1135,7 @@ void Sample_TileMesh::buildAllTilesDo(
 				m_ctx->log(RC_LOG_ERROR, "Has occured an error of addTile");
 				break;
 			}
+
 			if (i && i % TILES_PER_ITERATION_ADD == 0) {
 				float val =
 					(FIRST_STAGE_PROGRESS + SECOND_STAGE_PROGRESS * ((float)i / n)) * 100.f;
@@ -1613,7 +1641,6 @@ int Sample_TileMesh::buildTileMesh(
 		params.cs = genCtx.cfg.cs;
 		params.ch = genCtx.cfg.ch;
         params.buildBvTree = true;
-
         if (!dtCreateNavMeshData(&params, &navData, &navDataSize))
         {
 			m_ctx->log(RC_LOG_ERROR, "buildNavigation: Could not build Detour navmesh");
@@ -1640,65 +1667,115 @@ int Sample_TileMesh::buildTileMesh(
 	return 0;
 }
 
-void Sample_TileMesh::saveAll(const char* path, const dtNavMesh* mesh)
+void Sample_TileMesh::printNavmeshInfo(const dtNavMesh* mesh) const
 {
 	if (!mesh)
 		return;
-	FILE* fp = fopen(path, "wb");
-	if (!fp)
+	int nTiles = 0, nPolys = 0, nConnectedEdges = 0, nNonConnectedEdges = 0;
+	mesh->collectInfo(nTiles, nPolys, nConnectedEdges, nNonConnectedEdges);
+	m_ctx->log(
+		RC_LOG_PROGRESS,
+		"Navmesh stat:\n tiles num: %d, polys num: %d, "
+			"connected edges num: %d, non connected edges num: %d",
+		nTiles, nPolys, nConnectedEdges, nNonConnectedEdges
+	);
+}
+
+void Sample_TileMesh::collectNavmeshGenParams(NavmeshGenParams& params) const
+{
+	params.cellSize = m_cellSize;
+	params.cellHeight = m_cellHeight;
+	params.agentHeight = m_agentHeight;
+	params.agentLiquidWalk = m_agentLiquidWalk;
+	params.agentLiquidFord = m_agentLiquidFord;
+	params.agentLiquidSwim = m_agentLiquidSwim;
+	params.agentRadius = m_agentRadius;
+	params.agentMaxClimb = m_agentMaxClimb;
+	params.agentMaxSlope = m_agentMaxSlope;
+	params.regionMinSize = m_regionMinSize;
+	params.regionMergeSize = m_regionMergeSize;
+	params.edgeMaxLen = m_edgeMaxLen;
+	params.edgeMaxError = m_edgeMaxError;
+	params.vertsPerPoly = m_vertsPerPoly;
+	params.detailSampleDist = m_detailSampleDist;
+	params.detailSampleMaxError = m_detailSampleMaxError;
+	params.partitionType = m_partitionType;
+	params.filterLowHangingObstacles = m_filterLowHangingObstacles;
+	params.filterLedgeSpans = m_filterLedgeSpans;
+	params.filterWalkableLowHeightSpans = m_filterWalkableLowHeightSpans;
+	params.erodeBorderSpans = m_erodeBorderSpans;
+	params.tileSize = m_tileSize;
+}
+
+void Sample_TileMesh::saveAll(const char* path, const dtNavMesh* mesh)
+{
+	if (!mesh || !m_collected) {
+		m_ctx->log(RC_LOG_ERROR, "Error of saveAll, mesh: %d, collected: %d", (mesh ? 1 : 0), (int)m_collected);
 		return;
-	fwrite(&m_cellSize, sizeof(m_cellSize), 1, fp);
-	fwrite(&m_cellHeight, sizeof(m_cellHeight), 1, fp);
-	fwrite(&m_agentHeight, sizeof(m_agentHeight), 1, fp);
-	fwrite(&m_agentLiquidWalk, sizeof(m_agentLiquidWalk), 1, fp);
-	fwrite(&m_agentLiquidFord, sizeof(m_agentLiquidFord), 1, fp);
-	fwrite(&m_agentLiquidSwim, sizeof(m_agentLiquidSwim), 1, fp);
-	fwrite(&m_agentRadius, sizeof(m_agentRadius), 1, fp);
-	fwrite(&m_agentMaxClimb, sizeof(m_agentMaxClimb), 1, fp);
-	fwrite(&m_agentMaxSlope, sizeof(m_agentMaxSlope), 1, fp);
-	fwrite(&m_regionMinSize, sizeof(m_regionMinSize), 1, fp);
-	fwrite(&m_regionMergeSize, sizeof(m_regionMergeSize), 1, fp);
-	fwrite(&m_edgeMaxLen, sizeof(m_edgeMaxLen), 1, fp);
-	fwrite(&m_edgeMaxError, sizeof(m_edgeMaxError), 1, fp);
-	fwrite(&m_vertsPerPoly, sizeof(m_vertsPerPoly), 1, fp);
-	fwrite(&m_detailSampleDist, sizeof(m_detailSampleDist), 1, fp);
-	fwrite(&m_detailSampleMaxError, sizeof(m_detailSampleMaxError), 1, fp);
-	fwrite(&m_partitionType, sizeof(m_partitionType), 1, fp);
-	fwrite(&m_filterLowHangingObstacles, sizeof(m_filterLowHangingObstacles), 1, fp);
-	fwrite(&m_filterLedgeSpans, sizeof(m_filterLedgeSpans), 1, fp);
-	fwrite(&m_filterWalkableLowHeightSpans, sizeof(m_filterWalkableLowHeightSpans), 1, fp);
-	fwrite(&m_tileSize, sizeof(m_tileSize), 1, fp);
+	}
+	FILE* fp = fopen(path, "wb");
+	if (!fp) {
+		m_ctx->log(RC_LOG_ERROR, "Error of saveAll, file: '%s' opening error", path);
+		return;
+	}
 	Sample::saveAll(fp, mesh);
+	uint32_t numTiles = 1 + m_maxTiles;
+	fwrite(&numTiles, sizeof(numTiles), 1, fp);
+	fwrite(m_navGenParams.get(), sizeof(NavmeshGenParams), numTiles, fp);
 	fclose(fp);
 }
 
 dtNavMesh* Sample_TileMesh::loadAll(const char* path)
 {
 	FILE* fp = fopen(path, "rb");
-	if (!fp)
+	if (!fp) {
+		m_ctx->log(RC_LOG_ERROR, "Error of Sample_TileMesh::loadAll, file: '%s' opening error", path);
 		return 0;
-	fread(&m_cellSize, sizeof(m_cellSize), 1, fp);
-	fread(&m_cellHeight, sizeof(m_cellHeight), 1, fp);
-	fread(&m_agentHeight, sizeof(m_agentHeight), 1, fp);
-	fread(&m_agentLiquidWalk, sizeof(m_agentLiquidWalk), 1, fp);
-	fread(&m_agentLiquidFord, sizeof(m_agentLiquidFord), 1, fp);
-	fread(&m_agentLiquidSwim, sizeof(m_agentLiquidSwim), 1, fp);
-	fread(&m_agentRadius, sizeof(m_agentRadius), 1, fp);
-	fread(&m_agentMaxClimb, sizeof(m_agentMaxClimb), 1, fp);
-	fread(&m_agentMaxSlope, sizeof(m_agentMaxSlope), 1, fp);
-	fread(&m_regionMinSize, sizeof(m_regionMinSize), 1, fp);
-	fread(&m_regionMergeSize, sizeof(m_regionMergeSize), 1, fp);
-	fread(&m_edgeMaxLen, sizeof(m_edgeMaxLen), 1, fp);
-	fread(&m_edgeMaxError, sizeof(m_edgeMaxError), 1, fp);
-	fread(&m_vertsPerPoly, sizeof(m_vertsPerPoly), 1, fp);
-	fread(&m_detailSampleDist, sizeof(m_detailSampleDist), 1, fp);
-	fread(&m_detailSampleMaxError, sizeof(m_detailSampleMaxError), 1, fp);
-	fread(&m_partitionType, sizeof(m_partitionType), 1, fp);
-	fread(&m_filterLowHangingObstacles, sizeof(m_filterLowHangingObstacles), 1, fp);
-	fread(&m_filterLedgeSpans, sizeof(m_filterLedgeSpans), 1, fp);
-	fread(&m_filterWalkableLowHeightSpans, sizeof(m_filterWalkableLowHeightSpans), 1, fp);
-	fread(&m_tileSize, sizeof(m_tileSize), 1, fp);
+	}
 	dtNavMesh* mesh = Sample::loadAll(fp);
+	if (!mesh) {
+		m_ctx->log(RC_LOG_ERROR, "Error of Sample::loadAll, file: '%s' opening error", path);
+		fclose(fp);
+		return 0;
+	}
+	int numTiles = 0;
+	fread(&numTiles, sizeof(numTiles), 1, fp);
+	if (numTiles > mesh->getMaxTiles() + 1) {
+		m_ctx->log(RC_LOG_ERROR, "Too big value of numTiles while navmesh loading, num: %d, max: %d,"
+			" file: '%s' opening error", numTiles, mesh->getMaxTiles(), path);
+		dtFreeNavMesh(mesh);
+		fclose(fp);
+		return 0;
+	}
+	m_maxTiles = rcMax(numTiles, 1 + m_maxTiles);
+	m_navGenParams = std::make_unique<NavmeshGenParams[]>(m_maxTiles);
+	std::memset(m_navGenParams.get(), 0, sizeof(NavmeshGenParams) * m_maxTiles);
+	fread(m_navGenParams.get(), sizeof(NavmeshGenParams), numTiles, fp);
+	const NavmeshGenParams& params = m_navGenParams[0];
+	m_cellSize = params.cellSize;
+	m_cellHeight = params.cellHeight;
+	m_agentHeight = params.agentHeight;
+	m_agentLiquidWalk = params.agentLiquidWalk;
+	m_agentLiquidFord = params.agentLiquidFord;
+	m_agentLiquidSwim = params.agentLiquidSwim;
+	m_agentRadius = params.agentRadius;
+	m_agentMaxClimb = params.agentMaxClimb;
+	m_agentMaxSlope = params.agentMaxSlope;
+	m_regionMinSize = params.regionMinSize;
+	m_regionMergeSize = params.regionMergeSize;
+	m_edgeMaxLen = params.edgeMaxLen;
+	m_edgeMaxError = params.edgeMaxError;
+	m_vertsPerPoly = params.vertsPerPoly;
+	m_detailSampleDist = params.detailSampleDist;
+	m_detailSampleMaxError = params.detailSampleMaxError;
+	m_partitionType = params.partitionType;
+	m_filterLowHangingObstacles = params.filterLowHangingObstacles;
+	m_filterLedgeSpans = params.filterLedgeSpans;
+	m_filterWalkableLowHeightSpans = params.filterWalkableLowHeightSpans;
+	m_erodeBorderSpans = params.erodeBorderSpans;
+	m_tileSize = params.tileSize;
+	m_collected = true;
 	fclose(fp);
+	printNavmeshInfo(mesh);
 	return mesh;
 }

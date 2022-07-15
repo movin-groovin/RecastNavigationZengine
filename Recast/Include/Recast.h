@@ -30,7 +30,11 @@ static const float RC_PI = 3.14159265f;
 
 /// Recast log categories.
 /// @see rcContext
+#ifdef ZENGINE_NAVMESH
+enum rcLogCategory: int
+#else
 enum rcLogCategory
+#endif // #ifdef ZENGINE_NAVMESH
 {
 	RC_LOG_PROGRESS = 1,	///< A progress log entry.
 	RC_LOG_WARNING,			///< A warning log entry.

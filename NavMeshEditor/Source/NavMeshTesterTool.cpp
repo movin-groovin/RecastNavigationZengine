@@ -490,7 +490,8 @@ static bool canTransferJumping(const int /*jumpingType*/, const uint8_t /*from*/
   //  }
 }
 
-NavMeshTesterTool::NavMeshTesterTool(InputGeom *inGeom):
+NavMeshTesterTool::NavMeshTesterTool(InputGeom *inGeom, BuildContext* ctx):
+	m_ctx(ctx),
     m_sample(0),
 	m_navMesh(0),
 	m_navQuery(0),
@@ -1086,7 +1087,7 @@ void NavMeshTesterTool::recalc()
 		m_navQuery->findNearestPoly(m_epos, m_polyPickExt, &m_filter, &m_endRef, 0);
 	else
 		m_endRef = 0;
-	//std::printf("====: %zu - %zu\n", m_startRef, m_endRef);
+	m_ctx->log(RC_LOG_PROGRESS, "Recalc path for start: %llu, end: %llu poly's refs", m_startRef, m_endRef);
 	m_pathFindStatus = DT_FAILURE;
 	
 	if (m_toolMode == TOOLMODE_PATHFIND_FOLLOW)
@@ -1095,15 +1096,14 @@ void NavMeshTesterTool::recalc()
 		if (m_sposSet && m_eposSet && m_startRef && m_endRef)
 		{
 #ifdef DUMP_REQS
-			printf("pi  %f %f %f  %f %f %f  0x%x 0x%x\n",
+			m_ctx->log(RC_LOG_PROGRESS, "pi  %f %f %f  %f %f %f  0x%x 0x%x\n",
 				   m_spos[0],m_spos[1],m_spos[2], m_epos[0],m_epos[1],m_epos[2],
 				   m_filter.getIncludeFlags(), m_filter.getExcludeFlags()); 
 #endif
+			auto tp1 = std::chrono::steady_clock::now();
 
 			m_navQuery->findPath(m_startRef, m_endRef, m_spos, m_epos, &m_filter, m_polys, &m_npolys, MAX_POLYS);
-
 			m_nsmoothPath = 0;
-
 			if (m_npolys)
 			{
 				// Iterate over the path to find smooth path on the detail mesh surface.
@@ -1227,7 +1227,9 @@ void NavMeshTesterTool::recalc()
 					}
 				}
 			}
-
+			auto tp2 = std::chrono::steady_clock::now();
+			uint32_t diffVal = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::microseconds>(tp2 - tp1).count());
+			m_ctx->log(RC_LOG_PROGRESS, "Pathfinding follow, time delta microseconds: %u\n", diffVal);
 		}
 		else
 		{
@@ -1240,7 +1242,7 @@ void NavMeshTesterTool::recalc()
 		if (m_sposSet && m_eposSet && m_startRef && m_endRef)
 		{
 #ifdef DUMP_REQS
-            printf("ps  %f,%f,%f %f,%f,%f  0x%x 0x%x\n",
+			m_ctx->log(RC_LOG_PROGRESS, "ps  %f,%f,%f %f,%f,%f  0x%x 0x%x\n",
 				   m_spos[0],m_spos[1],m_spos[2], m_epos[0],m_epos[1],m_epos[2],
 				   m_filter.getIncludeFlags(), m_filter.getExcludeFlags()); 
 #endif
@@ -1261,7 +1263,7 @@ void NavMeshTesterTool::recalc()
 			}
             auto tp2 = std::chrono::steady_clock::now();
 			uint32_t diffVal = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::microseconds>(tp2 - tp1).count());
-			printf("Pathfinding straight, time delta microseconds: %u\n", diffVal);
+			m_ctx->log(RC_LOG_PROGRESS, "Pathfinding straight, time delta microseconds: %u\n", diffVal);
 		}
 		else
 		{
@@ -1273,18 +1275,18 @@ void NavMeshTesterTool::recalc()
     {
     //    if (m_sposSet && m_eposSet && m_startRef && m_endRef)
     //    {
-    //        std::printf("start point: %f, %f, %f; end point: %f, %f, %f\n",
-    //            m_spos[0],m_spos[1],m_spos[2], m_epos[0],m_epos[1],m_epos[2]);
-    //        std::printf("poly start ref: %llu, poly end ref: %llu\n", m_startRef, m_endRef);
+    //        m_ctx->log(RC_LOG_PROGRESS, "Pathfinding with jumps start point: %f, %f, %f; end point: %f, %f, %f",
+    //            m_spos[0], m_spos[1], m_spos[2], m_epos[0], m_epos[1], m_epos[2]);
+    //        m_ctx->log(RC_LOG_PROGRESS, "Pathfinding with jumps poly start ref: %llu, poly end ref: %llu", m_startRef, m_endRef);
     //        auto tp1 = std::chrono::steady_clock::now();
     //        if (!findPathWithJumps(m_startRef, m_endRef, m_spos, m_epos)) {
     //            m_npolys = 0;
     //            m_nstraightPath = 0;
-    //            std::printf("Error of pathfinding with jumps\n");
+    //            m_ctx->log(RC_LOG_PROGRESS, "Error of pathfinding with jumps\n");
     //        } else {
     //            auto tp2 = std::chrono::steady_clock::now();
-				//uint32_t diffVal = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::microseconds>(tp2 - tp1).count());
-    //            std::printf("Pathfinding with jumps, time delta microseconds: %lu\n", diffVal);
+	//			  uint32_t diffVal = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::microseconds>(tp2 - tp1).count());
+    //            m_ctx->log(RC_LOG_PROGRESS, "Pathfinding with jumps, time delta microseconds: %u", diffVal);
     //        }
     //    }
     }
@@ -1293,7 +1295,7 @@ void NavMeshTesterTool::recalc()
 		if (m_sposSet && m_eposSet && m_startRef && m_endRef)
 		{
 #ifdef DUMP_REQS
-			printf("ps  %f %f %f  %f %f %f  0x%x 0x%x\n",
+			m_ctx->log(RC_LOG_PROGRESS, "ps  %f %f %f  %f %f %f  0x%x 0x%x\n",
 				   m_spos[0],m_spos[1],m_spos[2], m_epos[0],m_epos[1],m_epos[2],
 				   m_filter.getIncludeFlags(), m_filter.getExcludeFlags()); 
 #endif
@@ -1314,10 +1316,12 @@ void NavMeshTesterTool::recalc()
 		if (m_sposSet && m_eposSet && m_startRef)
 		{
 #ifdef DUMP_REQS
-			printf("rc  %f %f %f  %f %f %f  0x%x 0x%x\n",
+			m_ctx->log(RC_LOG_PROGRESS, "rc  %f %f %f  %f %f %f  0x%x 0x%x\n",
 				   m_spos[0],m_spos[1],m_spos[2], m_epos[0],m_epos[1],m_epos[2],
 				   m_filter.getIncludeFlags(), m_filter.getExcludeFlags()); 
 #endif
+			auto tp1 = std::chrono::steady_clock::now();
+			
 			float t = 0;
 			m_npolys = 0;
 			m_nstraightPath = 2;
@@ -1345,6 +1349,10 @@ void NavMeshTesterTool::recalc()
 				m_hitPos[1] = h;
 			}
 			dtVcopy(&m_straightPath[3], m_hitPos);
+
+			auto tp2 = std::chrono::steady_clock::now();
+			uint32_t diffVal = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::microseconds>(tp2 - tp1).count());
+			m_ctx->log(RC_LOG_PROGRESS, "Pathfinding raycast, time delta microseconds: %u\n", diffVal);
 		}
 	}
 	else if (m_toolMode == TOOLMODE_DISTANCE_TO_WALL)
@@ -1353,7 +1361,7 @@ void NavMeshTesterTool::recalc()
 		if (m_sposSet && m_startRef)
 		{
 #ifdef DUMP_REQS
-			printf("dw  %f %f %f  %f  0x%x 0x%x\n",
+			m_ctx->log(RC_LOG_PROGRESS, "dw  %f %f %f  %f  0x%x 0x%x\n",
 				   m_spos[0],m_spos[1],m_spos[2], 100.0f,
 				   m_filter.getIncludeFlags(), m_filter.getExcludeFlags()); 
 #endif
@@ -1369,7 +1377,7 @@ void NavMeshTesterTool::recalc()
 			const float dz = m_epos[2] - m_spos[2];
 			float dist = sqrtf(dx*dx + dz*dz);
 #ifdef DUMP_REQS
-			printf("fpc  %f %f %f  %f  0x%x 0x%x\n",
+			m_ctx->log(RC_LOG_PROGRESS, "fpc  %f %f %f  %f  0x%x 0x%x\n",
 				   m_spos[0],m_spos[1],m_spos[2], dist,
 				   m_filter.getIncludeFlags(), m_filter.getExcludeFlags());
 #endif
@@ -1403,7 +1411,7 @@ void NavMeshTesterTool::recalc()
 			m_queryPoly[11] = m_epos[2] + nz;
 			
 #ifdef DUMP_REQS
-			printf("fpp  %f %f %f  %f %f %f  %f %f %f  %f %f %f  0x%x 0x%x\n",
+			m_ctx->log(RC_LOG_PROGRESS, "fpp  %f %f %f  %f %f %f  %f %f %f  %f %f %f  0x%x 0x%x\n",
 				   m_queryPoly[0],m_queryPoly[1],m_queryPoly[2],
 				   m_queryPoly[3],m_queryPoly[4],m_queryPoly[5],
 				   m_queryPoly[6],m_queryPoly[7],m_queryPoly[8],
@@ -1419,7 +1427,7 @@ void NavMeshTesterTool::recalc()
 		if (m_sposSet && m_startRef)
 		{
 #ifdef DUMP_REQS
-			printf("fln  %f %f %f  %f  0x%x 0x%x\n",
+			m_ctx->log(RC_LOG_PROGRESS, "fln  %f %f %f  %f  0x%x 0x%x\n",
 				   m_spos[0],m_spos[1],m_spos[2], m_neighbourhoodRadius,
 				   m_filter.getIncludeFlags(), m_filter.getExcludeFlags());
 #endif
@@ -1434,7 +1442,7 @@ bool NavMeshTesterTool::findPathWithJumps(
     dtPolyRef startRef, dtPolyRef endRef, const float* spos, const float* epos
 ) {
     if (m_initError) {
-        std::printf("Can't run findPathWithJumps, error of initialization");
+        m_ctx->log(RC_LOG_PROGRESS, "Can't run findPathWithJumps, error of initialization");
         return false;
     }
     //m_collDet.disable();
@@ -1443,11 +1451,9 @@ bool NavMeshTesterTool::findPathWithJumps(
         m_polysJumping, &m_infoPolysJumping, &m_npolys
     );
     if (!m_npolys) {
-        printf("Error of pathfinding, dtNavMeshQuery::findPathWithJumps\n");
+        m_ctx->log(RC_LOG_PROGRESS, "Error of pathfinding, dtNavMeshQuery::findPathWithJumps");
         return false;
     }
-
-//    printf("Number of coll det calls: %d\n", m_collDet.getCallsNum());
     m_collDet.clearCallsNum();
 
     float spos_coords[3];

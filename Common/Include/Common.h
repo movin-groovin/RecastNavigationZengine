@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <utility>
 #include <cstdlib>
+#include <cstdarg>
+#include <cstdio>
 #ifdef WIN32
 #include <malloc.h>
 #else
@@ -75,6 +77,32 @@ namespace PolyFlagsCollision
 		LAVA = 4
 	};
 }
+
+struct NavmeshGenParams
+{
+	float cellSize = 0.f;
+	float cellHeight = 0.f;
+	float agentHeight = 0.f;
+	float agentLiquidWalk = 0.f;
+	float agentLiquidFord = 0.f;
+	float agentLiquidSwim = 0.f;
+	float agentRadius = 0.f;
+	float agentMaxClimb = 0.f;
+	float agentMaxSlope = 0.f;
+	float regionMinSize = 0.f;
+	float regionMergeSize = 0.f;
+	float edgeMaxLen = 0.f;
+	float edgeMaxError = 0.f;
+	float vertsPerPoly = 0.f;
+	float detailSampleDist = 0.f;
+	float detailSampleMaxError = 0.f;
+	int partitionType = 0;
+	bool filterLowHangingObstacles = false;
+	bool filterLedgeSpans = false;
+	bool filterWalkableLowHeightSpans = false;
+	bool erodeBorderSpans = false;
+	float tileSize = 0.f;
+};
 
 
 template<typename T>
@@ -173,6 +201,32 @@ inline void freeAlignedArr(T* p, size_t num)
 {
 	freeAlignedImpl<T>(p, num);
 }
+
+class BaseLogger
+{
+public:
+	BaseLogger() = default;
+	virtual ~BaseLogger() = default;
+
+	void log(int category, const char* format, ...)
+	{
+		static const int MSG_SIZE = 1024;
+		char msg[MSG_SIZE];
+		va_list ap;
+		va_start(ap, format);
+		int len = vsnprintf(msg, MSG_SIZE, format, ap);
+		if (len >= MSG_SIZE)
+		{
+			len = MSG_SIZE - 1;
+			msg[MSG_SIZE - 1] = '\0';
+		}
+		va_end(ap);
+		doLogMessage(category, msg, len);
+	}
+
+private:
+	virtual void doLogMessage(int category, const char* msg, int len) = 0;
+};
 
 
 inline float rcVdotXz(const float* v1, const float* v2)

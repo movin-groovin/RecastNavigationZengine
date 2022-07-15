@@ -20,6 +20,7 @@ solution "recastnavigation"
 	rtti "Off"
 	flags { "FatalCompileWarnings" }
 	defines { "ZENGINE_NAVMESH", "DT_POLYREF64" }
+	--defines { "DISABLE_LOGGER" }
 
 	-- debug configs
 	configuration "Debug*"

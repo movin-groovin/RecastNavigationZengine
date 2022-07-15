@@ -19,6 +19,7 @@
 #ifndef INPUTGEOM_H
 #define INPUTGEOM_H
 
+#include "SampleInterfaces.h"
 #include "MeshLoaderObj.h"
 #include "Recast.h"
 #include "Common.h"
@@ -37,10 +38,10 @@
 #include <immintrin.h>
 
 #define PRINT_STRUCTURE_STAT
-//#define PRINT_TRI_VS_SEG_LATENCY_TOTAL 1
-#define PRINT_AFTER_N_POLYS 1000
-//#define PRINT_TRI_VS_SEG_LATENCY 1
-//#define PRINT_TRI_VS_OBB_LATENCY 1
+//#define PRINT_TOTAL_COLLISION_STAT
+#ifdef PRINT_TOTAL_COLLISION_STAT
+static const uint64_t PRINT_PER_N_CALLS = 5;
+#endif // PRINT_TOTAL_COLLISION_STAT
 
 struct BuildSettings
 {
@@ -79,6 +80,21 @@ struct BuildSettings
 	// Size of the tiles in voxels
 	float tileSize;
 };
+
+
+class LoggerAdapter: public BaseLogger, private BuildContext
+{
+public:
+	LoggerAdapter(
+		int messageSize = BuildContext::MAX_MESSAGES,
+		int textPoolSize = BuildContext::TEXT_POOL_SIZE
+	) : BuildContext(messageSize, textPoolSize) {}
+	~LoggerAdapter() = default;
+
+private:
+	void doLogMessage(int category, const char* msg, int len) override;
+};
+
 
 struct Aabb3D
 {
@@ -124,7 +140,7 @@ private:
     };
 
 public:
-    Octree(int maxDepth = 20, int minTrisInLeaf = 101);
+    Octree(BaseLogger* log, int maxDepth = 20, int minTrisInLeaf = 101);
     ~Octree();
 
     bool Load(rcMeshLoaderObjExt* mesh);
@@ -134,14 +150,16 @@ public:
     ) const;
     void printStat() const
     {
-        printf("Delta x: %f, y: %f, z: %f\n", m_bmax[0] - m_bmin[0],
+#ifndef DISABLE_LOGGER
+		m_log->log(RC_LOG_PROGRESS, "Delta x: %f, y: %f, z: %f\n", m_bmax[0] - m_bmin[0],
                m_bmax[1] - m_bmin[1], m_bmax[2] - m_bmin[2]);
-        printf("Polys num: %d, leafs num: %d, average polys in leaf: %f\n"
+		m_log->log(RC_LOG_PROGRESS, "Polys num: %d, leafs num: %d, average polys in leaf: %f, "
                "max polys in leaf: %d, min polys in leaf: %d, current max depth: "
-               "%d\n", m_polyNum, m_leafNum, m_averPolysInLeaf,
+               "%d", m_polyNum, m_leafNum, m_averPolysInLeaf,
                m_maxPolysInLeaf, m_minPolysInLeaf, m_curMaxDepthReached
             );
     }
+#endif // DISABLE_LOGGER
     static bool checkOverlapAabb(
         const float* start, const float* end, const float* bmin, const float* bmax
     );
@@ -157,6 +175,7 @@ private:
     static void calcAabb(const float* verts, const int* triangle, Aabb3D* bbox);
 
 private:
+	BaseLogger* m_log;
     const int m_maxDepth;
     const int m_minTrisInLeaf;
     float m_bmin[3];
@@ -201,7 +220,7 @@ struct ArrayBuffer
 class alignas(__m128) Grid2dBvh
 {
 public:
-	enum {
+	enum: int {
 		SUCCESSFUL,
 		ERROR_NO_MEMORY,
 		ERROR_LOGIC_ERROR,
@@ -265,10 +284,11 @@ private:
 	static const int VOBS_NUM_COLLIDE_CHEKING = 8;
     // TODO replace to common header (also from MeshLoaderExt)
     static const int REGULAR_VERTS_BLOCK = 3;
+	static const int SSE_1_VERTS_BLOCK = 4;
 #ifdef USAGE_SSE_1_0
-    static const int CUR_VERTS_BLOCK = 4;
+    static const int CUR_VERTS_BLOCK = SSE_1_VERTS_BLOCK;
 #else
-    static const int CUR_VERTS_BLOCK = 3;
+    static const int CUR_VERTS_BLOCK = REGULAR_VERTS_BLOCK;
 #endif
     static constexpr float COST_CHECK_BBOX = 0.125f;
     static constexpr float COST_CHECK_TRI = 1.f;
@@ -369,8 +389,9 @@ public:
     Grid2dBvh ();
     ~Grid2dBvh ();
 
-    int load(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize);
+    int load(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize, bool shrinkBvhAabb);
 	bool isLoaded() const;
+	bool saveBinaryMesh() const;
 
     int getOverlappingRectCellIds(
 		const float* min, const float* max, int* cellIds, int idsSize
@@ -427,7 +448,7 @@ private:
 	bool obbTriCollisionVobFirstHit(int vobId, const OBBExt* be) const;
 
 	void release();
-    int loadInternal(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize);
+    int loadInternal(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize, bool shrinkBvhAabb);
 	int constructVobs(rcMeshLoaderObjExt* mesh);
 	int constructRenderingData(rcMeshLoaderObjExt* mesh);
 	int constructOverlappingRectData(
@@ -492,6 +513,7 @@ private:
 	);
 
 private:
+	//BaseLogger* m_log;
     int m_cellSize = 0;
     float m_cellSizeInv = 0.f;
 #ifdef USAGE_SSE_1_0
@@ -552,13 +574,17 @@ private:
 public:
 	InputGeom();
 	~InputGeom();
-
 	InputGeom(const InputGeom&) = delete;
 	InputGeom& operator=(const InputGeom&) = delete;
 
     bool loadFromDir(
-        class rcContext* ctx, const char* filepath, float offsetSize, float bvhGridSize
+        class rcContext* ctx,
+		const char* filepath,
+		float offsetSize,
+		float bvhGridSize,
+		bool shrinkBvhAabb
     );
+	bool saveBinaryMesh() const;
 
 	// service calls
 	rcContext& getCtx() { return *m_ctx; }
@@ -569,7 +595,7 @@ public:
 	const char* getMarkedMeshName() const;
 	const char* getBaseMeshName() const;
 
-	// Method to return static mesh data.
+	// Method to return static mesh data
 	const rcMeshLoaderObjExt* getMeshExt() const { return m_meshExt; }
 	const float* getMeshBoundsMin() const { return m_meshBMin; }
 	const float* getMeshBoundsMax() const { return m_meshBMax; }
@@ -624,7 +650,8 @@ private:
 		const char* vobsMesh,
 		const char* markedMesh,
 		float offsetSize,
-		float bvhGridSize
+		float bvhGridSize,
+		bool shrinkBvhAabb
 	);
 
 private:

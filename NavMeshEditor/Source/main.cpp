@@ -27,6 +27,9 @@
 #else
 #	include <GL/glu.h>
 #endif
+#ifdef WIN32
+	#include <winuser.h>
+#endif
 
 #include <vector>
 #include <string>
@@ -35,6 +38,7 @@
 #include <atomic>
 #include <mutex>
 #include <cstring>
+#include <exception>
 
 #include "imgui.h"
 #include "imguiRenderGL.h"
@@ -279,6 +283,9 @@ static void runProfile() {
 }
 */
 
+static const int ERR_MSG_BUFF_SIZE = 1024;
+static char errMsg[ERR_MSG_BUFF_SIZE];
+static bool shrinkBvhAabb = false;
 static float offsetSize = 2000.f;
 static float bvhGridSize = 1024.f;
 static bool done = false;
@@ -456,12 +463,21 @@ void renderGui()
 	glLoadIdentity();
 }
 
-void renderLog(int& logScroll, const BuildContext& ctx)
+void renderLog(int& logScroll, const BuildContext& ctx, bool duplicateToConsole)
 {
 	if (imguiBeginScrollArea("Log", 250 + 20, 10, width - 300 - 250, 200, &logScroll))
 		mouseOverMenu = true;
-	for (int i = 0; i < ctx.getLogCount(); ++i)
-		imguiLabel(ctx.getLogText(i));
+	if (duplicateToConsole) {
+		for (int i = 0; i < ctx.getLogCount(); ++i) {
+			imguiLabel(ctx.getLogText(i));
+			std::printf("%s\n", ctx.getLogText(i));
+		}
+	}
+	else {
+		for (int i = 0; i < ctx.getLogCount(); ++i) {
+			imguiLabel(ctx.getLogText(i));
+		}
+	}
 	imguiEndScrollArea();
 }
 
@@ -484,7 +500,16 @@ void saveLog(const char* path, BuildContext& ctx)
 	fclose(fp);
 }
 
-int main(int /*argc*/, char** /*argv*/)
+static void errorPrint(const char* s)
+{
+#ifdef WIN32
+	MessageBoxA(NULL, s, "Fatal error message", MB_OK);
+#else
+	std::printf("%s\n", s);
+#endif
+}
+
+int mainInternal(int /*argc*/, char** /*argv*/)
 {
     //if (argc > 1 && !std::strcmp(argv[1], "profile")) {
     //    if (!std::strcmp(argv[1], "profile"))
@@ -495,7 +520,8 @@ int main(int /*argc*/, char** /*argv*/)
     // Init SDL
 	if (SDL_Init(SDL_INIT_EVERYTHING) != 0)
 	{
-		printf("Could not initialise SDL.\nError: %s\n", SDL_GetError());
+		snprintf(errMsg, ERR_MSG_BUFF_SIZE, "Could not initialise SDL, msg: %s\n", SDL_GetError());
+		errorPrint(errMsg);
 		return -1;
 	}
 
@@ -540,7 +566,8 @@ int main(int /*argc*/, char** /*argv*/)
 
 	if (errorCode != 0 || !window || !renderer)
 	{
-		printf("Could not initialise SDL opengl\nError: %s\n", SDL_GetError());
+		snprintf(errMsg, ERR_MSG_BUFF_SIZE, "Could not initialise SDL opengl, msg: %s\n", SDL_GetError());
+		errorPrint(errMsg);
 		return -1;
 	}
 
@@ -548,12 +575,15 @@ int main(int /*argc*/, char** /*argv*/)
 	SDL_GL_CreateContext(window);
 	if (!initOpenglMethods())
 	{
-		printf("Could not initialise ptrs of opengl methods");
+		errorPrint("Could not initialise ptrs of opengl methods\n");
+		return -1;
 	}
 
 	if (!imguiRenderGLInit("DroidSans.ttf"))
 	{
-		printf("Could not init GUI renderer.\n");
+		snprintf(errMsg, ERR_MSG_BUFF_SIZE,
+			"Could not init GUI renderer, error of font loading: %s\n", "DroidSans.ttf");
+		errorPrint(errMsg);
 		SDL_Quit();
 		return -1;
 	}
@@ -570,6 +600,7 @@ int main(int /*argc*/, char** /*argv*/)
 	float rayStart[3];
 	float rayEnd[3];
 	
+	bool duplicateToConsole = false;
 	bool showLog = false;
 	bool showTools = true;
 
@@ -776,7 +807,7 @@ int main(int /*argc*/, char** /*argv*/)
 				asyncBuilding = sample->isAsyncBuilding();
 			}
 			imguiEndScrollArea();
-			renderLog(logScroll, ctx);
+			renderLog(logScroll, ctx, duplicateToConsole);
 			finalizeRendering(window);
 			continue;
 		}
@@ -803,6 +834,8 @@ int main(int /*argc*/, char** /*argv*/)
 			if (imguiBeginScrollArea("Properties", width-250-10, 10, 250, height-20, &propScroll))
 				mouseOverMenu = true;
 
+			if (imguiCheck("Duplicate log to console", duplicateToConsole))
+				duplicateToConsole = !duplicateToConsole;
 			if (imguiCheck("Show Log", showLog))
 				showLog = !showLog;
 			if (imguiCheck("Show Tools", showTools))
@@ -837,6 +870,8 @@ int main(int /*argc*/, char** /*argv*/)
 			}
 			
 			imguiSeparator();
+			if (imguiCheck("Shrink bvh aabb", shrinkBvhAabb))
+				shrinkBvhAabb = !shrinkBvhAabb;
             imguiSlider("Offset size", &offsetSize, 0.f, 5000.f, 100.f);
             imguiSlider("Bvh grid size", &bvhGridSize, 256.f, 16384.f, 256.f);
 			imguiLabel("Input Mesh");
@@ -856,12 +891,20 @@ int main(int /*argc*/, char** /*argv*/)
 					scanDirectoryAppend(meshesFolder, ".gset", files);
 				}
 			}
+			imguiSeparator();
+			if (imguiButton("Save binary mesh"))
+			{
+				geom->saveBinaryMesh();
+			}
 			if (geom)
 			{
-				char text[64];
-				snprintf(text, 64, "Verts rendering: %.1fk  Tris: %.1fk",
-						 geom->getVertCount()/1000.0f,
-						 geom->getTriCount()/1000.0f);
+				char text[128];
+				const auto& rndData = geom->getSpace().getRenderingData();
+				snprintf(
+					text, 128, "Rendering v: %.1fK; t: %.1fK",
+					rndData.vertsNumCurrent /1000.0f,
+					rndData.trisNumCurrent /1000.0f
+				);
 				imguiValue(text);
 			}
 			imguiSeparator();
@@ -880,7 +923,7 @@ int main(int /*argc*/, char** /*argv*/)
 						showLog = true;
 						logScroll = 0;
 					}
-					ctx.dumpLog(0, "Build log '%s':", meshName.c_str());
+					ctx.log(RC_LOG_PROGRESS, "Build started for mesh: '%s'", meshName.c_str());
 					
 					// Clear test.
 					delete test;
@@ -995,7 +1038,7 @@ int main(int /*argc*/, char** /*argv*/)
 				
 				geom = allocAligned<InputGeom>(16);
 				//if (!geom->load(&ctx, path))
-                if (!geom->loadFromDir(&ctx, path.c_str(), offsetSize, bvhGridSize))
+                if (!geom->loadFromDir(&ctx, path.c_str(), offsetSize, bvhGridSize, shrinkBvhAabb))
 				{
 					freeAligned<InputGeom>(geom);
 					geom = 0;
@@ -1009,7 +1052,7 @@ int main(int /*argc*/, char** /*argv*/)
 					
 					showLog = true;
 					logScroll = 0;
-					ctx.dumpLog(0, "Geom load log %s:", meshName.c_str());
+					ctx.log(RC_LOG_PROGRESS, "Geom load for mesh: %s", meshName.c_str());
 				}
 				if (sample && geom)
 				{
@@ -1106,7 +1149,7 @@ int main(int /*argc*/, char** /*argv*/)
 					
 					freeAligned<InputGeom>(geom);
 					geom = allocAligned<InputGeom>(16);
-					if (!geom || !geom->loadFromDir(&ctx, path.c_str(), 0.f, 0.f))
+					if (!geom || !geom->loadFromDir(&ctx, path.c_str(), 0.f, 0.f, false))
 					{
 						freeAligned<InputGeom>(geom);
 						geom = 0;
@@ -1114,7 +1157,7 @@ int main(int /*argc*/, char** /*argv*/)
 						sample = 0;
 						showLog = true;
 						logScroll = 0;
-						ctx.dumpLog(0, "Geom load log %s:", meshName.c_str());
+						ctx.log(RC_LOG_PROGRESS, "Geom load for mesh: %s", meshName.c_str());
 					}
 					if (sample && geom)
 					{
@@ -1128,7 +1171,7 @@ int main(int /*argc*/, char** /*argv*/)
 					ctx.resetLog();
 					if (sample && !sample->handleBuild())
 					{
-						ctx.dumpLog(0, "Build log %s:", meshName.c_str());
+						ctx.log(RC_LOG_PROGRESS, "Build started for mesh: %s", meshName.c_str());
 					}
 					
 					if (geom || sample)
@@ -1169,7 +1212,7 @@ int main(int /*argc*/, char** /*argv*/)
 		// Log
 		if (showLog && showMenu)
 		{
-			renderLog(logScroll, ctx);
+			renderLog(logScroll, ctx, duplicateToConsole);
 		}
 		
 		// Left column tools menu
@@ -1230,4 +1273,19 @@ int main(int /*argc*/, char** /*argv*/)
 	freeAligned<InputGeom>(geom);
 	
 	return 0;
+}
+
+int main(int argc, char** argv)
+{
+	try {
+		return mainInternal(argc, argv);
+	}
+	catch (const std::exception& e) {
+#ifdef WIN32
+		MessageBoxA(NULL, e.what(), "Exception error", MB_OK);
+#else
+		std::printf("Exception error: %s\n", e.what());
+#endif
+	}
+	return 1;
 }
