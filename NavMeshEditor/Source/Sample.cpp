@@ -156,25 +156,6 @@ void Sample::handleRenderOverlay(double* /*proj*/, double* /*model*/, int* /*vie
 void Sample::handleMeshChanged(InputGeom* geom)
 {
 	m_geom = geom;
-
-	const BuildSettings* buildSettings = geom->getBuildSettings();
-	if (buildSettings)
-	{
-		m_cellSize = buildSettings->cellSize;
-		m_cellHeight = buildSettings->cellHeight;
-		m_agentHeight = buildSettings->agentHeight;
-		m_agentRadius = buildSettings->agentRadius;
-		m_agentMaxClimb = buildSettings->agentMaxClimb;
-		m_agentMaxSlope = buildSettings->agentMaxSlope;
-		m_regionMinSize = buildSettings->regionMinSize;
-		m_regionMergeSize = buildSettings->regionMergeSize;
-		m_edgeMaxLen = buildSettings->edgeMaxLen;
-		m_edgeMaxError = buildSettings->edgeMaxError;
-		m_vertsPerPoly = buildSettings->vertsPerPoly;
-		m_detailSampleDist = buildSettings->detailSampleDist;
-		m_detailSampleMaxError = buildSettings->detailSampleMaxError;
-		m_partitionType = buildSettings->partitionType;
-	}
 	resetDrawers();
 }
 
@@ -258,8 +239,8 @@ void Sample::handleCommonSettings()
 	
 	if (m_geom)
 	{
-		const float* bmin = m_geom->getNavMeshBoundsMin();
-		const float* bmax = m_geom->getNavMeshBoundsMax();
+		const float* bmin = m_geom->getMeshBoundsMin();
+		const float* bmax = m_geom->getMeshBoundsMax();
 		int gw = 0, gh = 0;
 		rcCalcGridSize(bmin, bmax, m_cellSize, &gw, &gh);
 		char text[64];

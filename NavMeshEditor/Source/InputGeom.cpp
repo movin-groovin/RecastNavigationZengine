@@ -86,50 +86,34 @@ static bool intersectSegmentTriangle(
 	return true;
 }
 
-static char* parseRow(char* buf, char* bufEnd, char* row, int len)
-{
-	bool start = true;
-	bool done = false;
-	int n = 0;
-	while (!done && buf < bufEnd)
-	{
-		char c = *buf;
-		buf++;
-		// multirow
-		switch (c)
-		{
-			case '\n':
-				if (start) break;
-				done = true;
-				break;
-			case '\r':
-				break;
-			case '\t':
-			case ' ':
-				if (start) break;
-				// else falls through
-			default:
-				start = false;
-				row[n++] = c;
-				if (n >= len-1)
-					done = true;
-				break;
-		}
-	}
-	row[n] = '\0';
-	return buf;
-}
-
 InputGeom::InputGeom():
 	m_ctx(0),
-	m_meshExt(0),
-	m_hasBuildSettings(false)
+	m_showOffsetPlanes(),
+	m_xMinOffsetCut(),
+	m_xMaxOffsetCut(),
+	m_zMinOffsetCut(),
+	m_zMaxOffsetCut()
 {
+	release();
+	zeroBboxes();
 }
 
 InputGeom::~InputGeom()
 {
-	delete m_meshExt;
+	release();
+}
+
+void InputGeom::release()
+{
+	m_meshExt.reset();
+}
+
+void InputGeom::zeroBboxes()
+{
+	std::memset(&m_meshBMin, 0, sizeof(m_meshBMin));
+	std::memset(&m_meshBMax, 0, sizeof(m_meshBMax));
+	std::memset(&m_meshBMinCur, 0, sizeof(m_meshBMinCur));
+	std::memset(&m_meshBMaxCur, 0, sizeof(m_meshBMaxCur));
 }
 
 bool InputGeom::loadMesh(
@@ -138,17 +122,14 @@ bool InputGeom::loadMesh(
 	const char* staticMesh,
 	const char* vobsMesh,
     const char* markedMesh,
-    float offsetSize,
     float bvhGridSize,
-	bool shrinkBvhAabb
+	float xMinOffsetCut,
+	float xMaxOffsetCut,
+	float zMinOffsetCut,
+	float zMaxOffsetCut
 ) {
-	if (m_meshExt)
-	{
-		delete m_meshExt;
-		m_meshExt = nullptr;
-	}
-
-    m_meshExt = new(std::nothrow) rcMeshLoaderObjExt;
+	release();
+    m_meshExt.reset(new(std::nothrow) rcMeshLoaderObjExt);
 	if (!m_meshExt)
 	{
         ctx->log(RC_LOG_ERROR, "loadMesh(dir): Out of memory 'm_mesh'");
@@ -162,7 +143,11 @@ bool InputGeom::loadMesh(
         "Loading static: %s, vobs: %s, marked: %s",
         staticMesh, vobsMesh, markedMesh
     );
-    auto ret = m_meshExt->load(navMeshName, staticMesh, vobsMesh, markedMesh, offsetSize, true);
+	fixOffsets(xMinOffsetCut, xMaxOffsetCut, zMinOffsetCut, zMaxOffsetCut);
+    auto ret = m_meshExt->load(
+		staticMesh, vobsMesh, markedMesh, xMinOffsetCut,
+		xMaxOffsetCut, zMinOffsetCut,  zMaxOffsetCut, true
+	);
 	if (!ret.isOk())
 	{
 		ctx->log(RC_LOG_ERROR, "loadMesh(dir): could not load mesh, "
@@ -175,15 +160,14 @@ bool InputGeom::loadMesh(
 #ifdef PRINT_STRUCTURE_STAT
     auto tp2 = std::chrono::steady_clock::now();
 #endif
-	int loadRet = m_space.load(
-		ctx, m_meshExt, static_cast<int>(bvhGridSize), shrinkBvhAabb
-	);
+	m_space.release();
+	int loadRet = m_space.load(ctx, m_meshExt.get(), static_cast<int>(bvhGridSize));
 	if (loadRet != Grid2dBvh::SUCCESSFUL)
 	{
         ctx->log(RC_LOG_ERROR, "loadMesh(dir): mesh bvh construction error");
 		return false;
 	}
-    m_space.getBounds(m_meshBMin, m_meshBMax);
+	m_space.getBounds(m_meshBMinCur, m_meshBMaxCur);
 
 #ifdef PRINT_STRUCTURE_STAT
     auto tp3 = std::chrono::steady_clock::now();
@@ -201,55 +185,68 @@ bool InputGeom::loadMesh(
     return true;
 }
 
+void InputGeom::fixOffsets(
+	float& xMinOffsetCut,
+	float& xMaxOffsetCut,
+	float& zMinOffsetCut,
+	float& zMaxOffsetCut
+) {
+	xMinOffsetCut += m_meshBMinCur[0] - m_meshBMin[0];
+	xMaxOffsetCut += m_meshBMax[0] - m_meshBMaxCur[0];
+	zMinOffsetCut += m_meshBMinCur[2] - m_meshBMin[2];
+	zMaxOffsetCut += m_meshBMax[2] - m_meshBMaxCur[2];
+}
+
+void InputGeom::updateOffsets(
+	float xMinOffsetCut,
+	float xMaxOffsetCut,
+	float zMinOffsetCut,
+	float zMaxOffsetCut,
+	bool showOffsetPlanes
+) {
+	m_xMinOffsetCut = xMinOffsetCut;
+	m_xMaxOffsetCut = xMaxOffsetCut;
+	m_zMinOffsetCut = zMinOffsetCut;
+	m_zMaxOffsetCut = zMaxOffsetCut;
+	m_showOffsetPlanes = showOffsetPlanes;
+}
+
 bool InputGeom::loadFromDir(
     class rcContext* ctx,
 	const char* filepath,
-	float offsetSize,
-	float bvhGridSize,
-	bool shrinkBvhAabb
+	float bvhGridSize
 ) {
-#ifdef WIN32
-	static const char SEP = '\\';
-#else
-	static const char SEP = '/';
-#endif
-	char staticMesh[STR_SIZE];
-	char vobsMesh[STR_SIZE];
-	char markedMesh[STR_SIZE];
-	char navMesh[STR_SIZE];
+	m_staticMeshName = filepath;
+	m_staticMeshName.append(1, Constants::SEP).append("static_mesh.obj");
+	m_vobsMeshName = filepath;
+	m_vobsMeshName.append(1, Constants::SEP).append("vobs_mesh.obj");
+	m_markedMeshName = filepath;
+	m_markedMeshName.append(1, Constants::SEP).append("marked_mesh.obj");
+	m_navMeshName = filepath;
+	m_navMeshName.append(1, Constants::SEP).append("navmesh.bin");
+	m_baseMeshName = filepath;
 
-	int strLen = static_cast<int>(std::strlen(filepath));
-	std::strcpy(staticMesh, filepath);
-	staticMesh[strLen] = SEP;
-	std::strcpy(vobsMesh, filepath);
-	vobsMesh[strLen] = SEP;
-	std::strcpy(markedMesh, filepath);
-	markedMesh[strLen] = SEP;
-	std::strcpy(navMesh, filepath);
-	navMesh[strLen] = SEP;
-	std::strcpy(m_baseMeshName, filepath);
-	m_baseMeshName[STR_SIZE - 1] = '\0';
-
-	strLen += 1;
-	std::strcpy(staticMesh + strLen, "static_mesh.obj");
-	staticMesh[STR_SIZE - 1] = '\0';
-	std::strcpy(vobsMesh + strLen, "vobs_mesh.obj");
-	vobsMesh[STR_SIZE - 1] = '\0';
-	std::strcpy(markedMesh + strLen, "marked_mesh.obj");
-	markedMesh[STR_SIZE - 1] = '\0';
-	std::strcpy(navMesh + strLen, "navmesh.bin");
-	navMesh[STR_SIZE - 1] = '\0';
-	std::strcpy(m_markedMeshName, markedMesh);
-	m_markedMeshName[STR_SIZE - 1] = '\0';
-
-    return loadMesh(
-		ctx, navMesh, staticMesh, vobsMesh, markedMesh, offsetSize, bvhGridSize, shrinkBvhAabb
+	zeroBboxes();
+    bool ret = loadMesh(
+		ctx, m_navMeshName.c_str(), m_staticMeshName.c_str(), m_vobsMeshName.c_str(),
+		m_markedMeshName.c_str(), bvhGridSize, 0.f, 0.f, 0.f, 0.f
 	);
+	m_space.getBounds(m_meshBMin, m_meshBMax);
+	return ret;
 }
 
 bool InputGeom::saveBinaryMesh() const
 {
 	return m_space.saveBinaryMesh();
+}
+
+void InputGeom::cutMesh(float offsetXmin, float offsetXmax, float offsetZmin, float offsetZmax)
+{
+	loadMesh(
+		m_ctx, m_navMeshName.c_str(), m_staticMeshName.c_str(), m_vobsMeshName.c_str(),
+		m_markedMeshName.c_str(), (float)m_space.getCellSize(), offsetXmin, offsetXmax,
+		offsetZmin, offsetZmax
+	);
 }
 
 static bool isectSegAABB(const float* sp, const float* sq,
@@ -455,6 +452,47 @@ void InputGeom::drawOffMeshConnections(duDebugDraw* dd, bool hilight)
 	dd->depthMask(true);
 }
 
+void InputGeom::drawCutPlanes(struct duDebugDraw* dd)
+{	
+	if (!m_showOffsetPlanes) return;
+	
+	float xMinOffsetCut = m_xMinOffsetCut;
+	float xMaxOffsetCut = m_xMaxOffsetCut;
+	float zMinOffsetCut = m_zMinOffsetCut;
+	float zMaxOffsetCut = m_zMaxOffsetCut;
+	fixOffsets(xMinOffsetCut, xMaxOffsetCut, zMinOffsetCut, zMaxOffsetCut);
+
+	glDisable(GL_CULL_FACE);
+	unsigned int colXmin = duRGBA(255, 0, 0, 255);
+	unsigned int colXmax = duRGBA(0, 255, 0, 255);
+	unsigned int colZmin = duRGBA(0, 0, 255, 255);
+	unsigned int colZmax = duRGBA(255, 255, 0, 255);
+	dd->begin(DU_DRAW_QUADS);
+
+	dd->vertex(m_meshBMinCur[0] + m_xMinOffsetCut, m_meshBMinCur[1], m_meshBMinCur[2], colXmin);
+	dd->vertex(m_meshBMinCur[0] + m_xMinOffsetCut, m_meshBMinCur[1], m_meshBMaxCur[2], colXmin);
+	dd->vertex(m_meshBMinCur[0] + m_xMinOffsetCut, m_meshBMaxCur[1], m_meshBMaxCur[2], colXmin);
+	dd->vertex(m_meshBMinCur[0] + m_xMinOffsetCut, m_meshBMaxCur[1], m_meshBMinCur[2], colXmin);
+
+	dd->vertex(m_meshBMaxCur[0] - m_xMaxOffsetCut, m_meshBMinCur[1], m_meshBMinCur[2], colXmax);
+	dd->vertex(m_meshBMaxCur[0] - m_xMaxOffsetCut, m_meshBMinCur[1], m_meshBMaxCur[2], colXmax);
+	dd->vertex(m_meshBMaxCur[0] - m_xMaxOffsetCut, m_meshBMaxCur[1], m_meshBMaxCur[2], colXmax);
+	dd->vertex(m_meshBMaxCur[0] - m_xMaxOffsetCut, m_meshBMaxCur[1], m_meshBMinCur[2], colXmax);
+
+	dd->vertex(m_meshBMinCur[0], m_meshBMinCur[1], m_meshBMinCur[2] + m_zMinOffsetCut, colZmin);
+	dd->vertex(m_meshBMaxCur[0], m_meshBMinCur[1], m_meshBMinCur[2] + m_zMinOffsetCut, colZmin);
+	dd->vertex(m_meshBMaxCur[0], m_meshBMaxCur[1], m_meshBMinCur[2] + m_zMinOffsetCut, colZmin);
+	dd->vertex(m_meshBMinCur[0], m_meshBMaxCur[1], m_meshBMinCur[2] + m_zMinOffsetCut, colZmin);
+
+	dd->vertex(m_meshBMinCur[0], m_meshBMinCur[1], m_meshBMaxCur[2] - m_zMaxOffsetCut, colZmax);
+	dd->vertex(m_meshBMaxCur[0], m_meshBMinCur[1], m_meshBMaxCur[2] - m_zMaxOffsetCut, colZmax);
+	dd->vertex(m_meshBMaxCur[0], m_meshBMaxCur[1], m_meshBMaxCur[2] - m_zMaxOffsetCut, colZmax);
+	dd->vertex(m_meshBMinCur[0], m_meshBMaxCur[1], m_meshBMaxCur[2] - m_zMaxOffsetCut, colZmax);
+
+	dd->end();
+	glEnable(GL_CULL_FACE);
+}
+
 int InputGeom::getConvexVolumeCount() const {
 	return m_space.getMarkedAreaSize();
 }
@@ -591,17 +629,32 @@ int InputGeom::getTriCount() const
 
 const char* InputGeom::getNavMeshName() const
 {
-	return m_meshExt->getNavMeshName();
+	return m_navMeshName.c_str();
 }
 
 const char* InputGeom::getMarkedMeshName() const
 {
-	return m_markedMeshName;
+	return m_markedMeshName.c_str();
 }
 
 const char* InputGeom::getBaseMeshName() const
 {
-	return m_baseMeshName;
+	return m_baseMeshName.c_str();
+}
+
+const rcMeshLoaderObjExt* InputGeom::getMeshExt() const
+{
+	return m_meshExt.get();
+}
+
+const float* InputGeom::getMeshBoundsMin() const
+{
+	return m_meshBMinCur;
+}
+
+const float* InputGeom::getMeshBoundsMax() const
+{
+	return m_meshBMaxCur;
 }
 
 static bool checkAabbsCollision(
@@ -1038,8 +1091,7 @@ private:
 };
 
 Grid2dBvh::Grid2dBvh() {
-    m_worldMin[0] = m_worldMin[1] = m_worldMin[2] = std::numeric_limits<float>::max();
-    m_worldMax[0] = m_worldMax[1] = m_worldMax[2] = -std::numeric_limits<float>::max();
+	clearState();
 }
 
 Grid2dBvh::~Grid2dBvh () {
@@ -1057,15 +1109,57 @@ void Grid2dBvh::release() {
     m_tris = nullptr;
     delete [] m_triFlags;
     m_triFlags = nullptr;
-    //delete [] m_verts;
 	freeAlignedArr<float>(m_verts, 0);
     m_verts = nullptr;
 	delete [] m_vobs;
 	m_vobs = nullptr;
 	delete [] m_vobsMeshes;
 	m_vobsMeshes = nullptr;
-    delete [] m_markedAreas.data;
-    m_markedAreas.data = nullptr;
+	m_moverNameToVob.release();
+	m_overlappingRectData.release();
+	m_markedAreas.release();
+	m_offMeshConns.release();
+	m_renderingData.release();
+	clearState();
+}
+
+void Grid2dBvh::clearState()
+{
+	m_cellSize = 0;
+	m_cellSizeInv = 0.f;
+#ifdef USAGE_SSE_1_0
+	m_cellSizeInvVec = _mm_setr_ps(0.f, 0.f, 0.f, 0.f);
+#endif
+	m_cellsNum = 0;
+	m_trisNum = 0;
+	m_vertsNum = 0;
+	m_vobsNum = 0;
+	m_vobsMeshesNum = 0;
+#ifdef USAGE_SSE_1_0
+	m_worldMinVecXzXz = _mm_setr_ps(0.f, 0.f, 0.f, 0.f);
+#endif
+	m_worldMin[0] = m_worldMin[1] = m_worldMin[2] = std::numeric_limits<float>::max();
+	m_worldMax[0] = m_worldMax[1] = m_worldMax[2] = -std::numeric_limits<float>::max();
+	m_worldSize[0] = m_worldSize[1] = m_worldSize[2] = 0.f;
+	m_wszCellsX = 0;
+	m_wszCellsY = 0;
+	m_wszCellsZ = 0;
+#ifdef PRINT_STRUCTURE_STAT
+	m_totalNodes = 0;
+	m_leafNodes = 0;
+	m_internalNodes = 0;
+	m_maxDepth = 0;
+	m_curDepth = 0;
+	m_maxTrisInGridCell = 0;
+	m_maxBoxesInGridCell = 0;
+	m_bytesPerConstruction = 0;
+	m_bytesForData = 0;
+#endif
+#if (PRINT_TRI_VS_SEG_LATENCY || PRINT_TRI_VS_OBB_LATENCY)
+	totalNodesTraversed = 0;
+	totalLeafesTraversed = 0;
+	totalPolysTraversed = 0;
+#endif
 }
 
 static void calcProjection(
@@ -1430,7 +1524,6 @@ int Grid2dBvh::constructRenderingData(rcMeshLoaderObjExt* mesh)
 		return SUCCESSFUL;
 	}
 
-	m_mesh = mesh;
 	m_renderingData.vertsNum = mesh->getVertCountStatic();
 	m_renderingData.trisNum = mesh->getTriCountStatic();
 	int vobsVertsNum = 0, vobsTrisNum = 0;
@@ -2205,9 +2298,9 @@ bool Grid2dBvh::saveBinaryMesh() const
 	return false;
 }
 
-int Grid2dBvh::load(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize, bool shrinkBvhAabb)
+int Grid2dBvh::load(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize)
 {
-    int ret = loadInternal(ctx, mesh, cellSize, shrinkBvhAabb);
+    int ret = loadInternal(ctx, mesh, cellSize);
 	if (ret != SUCCESSFUL) {
 		release();
 	}
@@ -2220,7 +2313,17 @@ void Grid2dBvh::getBounds(float* bMin, float* bMax) const
     rcVcopy(bMax, m_worldMax);
 }
 
-int Grid2dBvh::loadInternal(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize, bool shrinkBvhAabb)
+void Grid2dBvh::getWorldSize(float* res) const
+{
+	rcVcopy(res, m_worldSize);
+}
+
+int Grid2dBvh::getCellSize() const
+{
+	return m_cellSize;
+}
+
+int Grid2dBvh::loadInternal(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize)
 {
 	m_cellSize = cellSize;
 	m_cellSizeInv = 1.0f / m_cellSize;

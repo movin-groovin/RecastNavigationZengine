@@ -6,12 +6,25 @@
 #include <cstdlib>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #ifdef WIN32
 #include <malloc.h>
 #else
 #include <mm_malloc.h>
 #endif // WIN32
 #include <exception>
+
+namespace Constants
+{
+#ifdef WIN32
+	static const char SEP = '\\';
+#else
+	static const char SEP = '/';
+#endif
+
+	static const int STR_SIZE = 4096;
+	static const int NAME_SIZE = 256;
+}
 
 /// Represents the null area.
 /// When a data element is given this value it is considered to no longer be 

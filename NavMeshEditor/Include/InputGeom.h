@@ -25,6 +25,7 @@
 #include "Common.h"
 
 #include <vector>
+#include <string>
 #include <utility>
 #include <limits>
 #include <memory>
@@ -204,8 +205,8 @@ template <typename T>
 struct ArrayBuffer
 {
     ArrayBuffer() = default;
-    ~ArrayBuffer() { cleanup(); }
-    void cleanup() {
+    ~ArrayBuffer() { release(); }
+    void release() {
         delete [] data;
         data = nullptr;
         size = 0;
@@ -233,15 +234,20 @@ public:
 		TrianglesData(const TrianglesData&) = delete;
 		const TrianglesData operator=(const TrianglesData&) = delete;
 		// move operators deleted automatically
-		~TrianglesData() {
-			delete [] verts;
+		~TrianglesData() { release(); }
+
+		void release() {
+			delete[] verts;
 			verts = nullptr;
-			delete [] tris;
+			delete[] tris;
 			tris = nullptr;
-			delete [] triFlags;
+			delete[] triFlags;
 			triFlags = nullptr;
-            delete [] normals;
-            normals = nullptr;
+			delete[] normals;
+			normals = nullptr;
+			vertsNum = 0;
+			trisNum = 0;
+			clearCurrent();
 		}
 
 		void clearCurrent() {
@@ -261,14 +267,24 @@ public:
 	struct OffMeshData
 	{
         OffMeshData() = default;
-        ~OffMeshData() {
-            delete [] offMeshVerts; offMeshVerts = nullptr;
-            delete [] offMeshRads; offMeshRads = nullptr;
-            delete [] offMeshDirs; offMeshDirs = nullptr;
-            delete [] offMeshAreas; offMeshAreas = nullptr;
-            delete [] offMeshFlags; offMeshFlags = nullptr;
-            delete [] offMeshId; offMeshId = nullptr;
-        }
+		~OffMeshData() { release(); }
+
+		void release() {
+			delete[] offMeshVerts;
+			offMeshVerts = nullptr;
+			delete[] offMeshRads;
+			offMeshRads = nullptr;
+			delete[] offMeshDirs;
+			offMeshDirs = nullptr;
+			delete[] offMeshAreas;
+			offMeshAreas = nullptr;
+			delete[] offMeshFlags;
+			offMeshFlags = nullptr;
+			delete[] offMeshId;
+			offMeshId = nullptr;
+			offMeshSize = 0;
+			offMeshNum = 0;
+		}
 
         float* offMeshVerts = nullptr;
         float* offMeshRads = nullptr;
@@ -389,7 +405,9 @@ public:
     Grid2dBvh ();
     ~Grid2dBvh ();
 
-    int load(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize, bool shrinkBvhAabb);
+	void release();
+
+    int load(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize);
 	bool isLoaded() const;
 	bool saveBinaryMesh() const;
 
@@ -441,14 +459,16 @@ public:
 	);
 	void deleteOffMeshConn(int i);
     void getBounds(float* bMin, float* bMax) const;
+	void getWorldSize(float* res) const;
+	int getCellSize() const;
 
 private:
 	bool segTriCollisionVobFirstHit(int vobId, const float* start, const float* end, float& t) const;
 	bool segTriCollisionVobNearestHit(int vobId, const float* start, const float* end, float& t) const;
 	bool obbTriCollisionVobFirstHit(int vobId, const OBBExt* be) const;
 
-	void release();
-    int loadInternal(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize, bool shrinkBvhAabb);
+	void clearState();
+    int loadInternal(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize);
 	int constructVobs(rcMeshLoaderObjExt* mesh);
 	int constructRenderingData(rcMeshLoaderObjExt* mesh);
 	int constructOverlappingRectData(
@@ -544,7 +564,6 @@ private:
     ArrayBuffer<MarkedEntry> m_markedAreas;
     OffMeshData m_offMeshConns;
 	TrianglesData m_renderingData;
-	rcMeshLoaderObjExt* m_mesh = nullptr;
     // statisctics per construction
 #ifdef PRINT_STRUCTURE_STAT
     mutable int m_totalNodes = 0;
@@ -568,7 +587,6 @@ private:
 class alignas(__m128) InputGeom
 {
 private:
-	static const int STR_SIZE = 1024;
 	static const int MAX_VOLUMES = 256;
 
 public:
@@ -577,14 +595,29 @@ public:
 	InputGeom(const InputGeom&) = delete;
 	InputGeom& operator=(const InputGeom&) = delete;
 
+	void release();
+	void zeroBboxes();
+
     bool loadFromDir(
-        class rcContext* ctx,
+		class rcContext* ctx,
 		const char* filepath,
-		float offsetSize,
-		float bvhGridSize,
-		bool shrinkBvhAabb
-    );
+		float bvhGridSize
+	);
 	bool saveBinaryMesh() const;
+	void updateOffsets(
+		float xMinOffsetCut,
+		float xMaxOffsetCut,
+		float zMinOffsetCut,
+		float zMaxOffsetCut,
+		bool showOffsetPlanes
+	);
+	void fixOffsets(
+		float& xMinOffsetCut,
+		float& xMaxOffsetCut,
+		float& zMinOffsetCut,
+		float& zMaxOffsetCut
+	);
+	void cutMesh(float offsetXmin, float offsetXmax, float offsetZmin, float offsetZmax);
 
 	// service calls
 	rcContext& getCtx() { return *m_ctx; }
@@ -596,12 +629,9 @@ public:
 	const char* getBaseMeshName() const;
 
 	// Method to return static mesh data
-	const rcMeshLoaderObjExt* getMeshExt() const { return m_meshExt; }
-	const float* getMeshBoundsMin() const { return m_meshBMin; }
-	const float* getMeshBoundsMax() const { return m_meshBMax; }
-	const float* getNavMeshBoundsMin() const { return m_hasBuildSettings ? m_buildSettings.navMeshBMin : m_meshBMin; }
-	const float* getNavMeshBoundsMax() const { return m_hasBuildSettings ? m_buildSettings.navMeshBMax : m_meshBMax; }
-	const BuildSettings* getBuildSettings() const { return m_hasBuildSettings ? &m_buildSettings : 0; }
+	const rcMeshLoaderObjExt* getMeshExt() const;
+	const float* getMeshBoundsMin() const;
+	const float* getMeshBoundsMax() const;
 
 	// collisions
     bool raycastMesh(const float* src, const float* dst, float& tmin, bool nearestHit) const;
@@ -627,6 +657,7 @@ public:
 	);
 	void deleteOffMeshConnection(int i);
 	void drawOffMeshConnections(struct duDebugDraw* dd, bool hilight = false);
+	void drawCutPlanes(struct duDebugDraw* dd);
 
 	// Box Volumes.
 	int getConvexVolumeCount() const;
@@ -649,22 +680,32 @@ private:
 		const char* staticMesh,
 		const char* vobsMesh,
 		const char* markedMesh,
-		float offsetSize,
 		float bvhGridSize,
-		bool shrinkBvhAabb
+		float xMinOffsetCut,
+		float xMaxOffsetCut,
+		float zMinOffsetCut,
+		float zMaxOffsetCut
 	);
 
 private:
 	rcContext* m_ctx;
 	//Octree m_oct;
 	Grid2dBvh m_space;
-	char m_markedMeshName[STR_SIZE];
-	char m_baseMeshName[STR_SIZE];
-	rcMeshLoaderObjExt* m_meshExt;
+	bool m_showOffsetPlanes;
+	float m_xMinOffsetCut;
+	float m_xMaxOffsetCut;
+	float m_zMinOffsetCut;
+	float m_zMaxOffsetCut;
+	std::string m_staticMeshName;
+	std::string m_vobsMeshName;
+	std::string m_markedMeshName;
+	std::string m_navMeshName;
+	std::string m_baseMeshName;
+	std::unique_ptr<rcMeshLoaderObjExt> m_meshExt;
 	float m_meshBMin[3];
 	float m_meshBMax[3];
-	BuildSettings m_buildSettings;
-	bool m_hasBuildSettings;
+	float m_meshBMinCur[3];
+	float m_meshBMaxCur[3];
 };
 
 #endif // INPUTGEOM_H

@@ -27,9 +27,13 @@
 #include <sstream>
 #include <cassert>
 #include <limits>
+#include <vector>
+#include <utility>
+#include <unordered_map>
+#include <functional>
 #include <new>
 #define _USE_MATH_DEFINES
-#include <math.h>
+#include <cmath>
 
 static char* parseRow(char* buf, char* bufEnd, char* row, int len)
 {
@@ -143,9 +147,9 @@ std::pair<std::unique_ptr<char[]>, int> rcMeshLoaderObjExt::loadFile(const char*
 int rcMeshLoaderObjExt::saveFile(
 	const char* fileName, const std::unique_ptr<char[]>& data, int dataSize
 ) {
-	char name[STR_SIZE + 4];
+	char name[Constants::STR_SIZE + 4];
 	std::strcpy(name, fileName);
-	name[STR_SIZE - 1] = '\0';
+	name[Constants::STR_SIZE - 1] = '\0';
 	std::strcpy(name + strlen(fileName), ".tmp");
 	FILE* fp = fopen(name, "wb");
 	if (!fp) {
@@ -216,19 +220,104 @@ uint8_t rcMeshLoaderObjExt::addTriangle(
 	return 0;
 }
 
-/*
 static bool intersectionSegmentVsPlane(
     const float* n, const float d, const float* A, const float* B, float* P
 ) {
-    float AB[3];
+	static const float EPS = 1e-6f;
+	float AB[3];
     rcVsub(AB, B, A);
-    const float t = (d - rcVdot(n, A)) / rcVdot(n, AB);
+	const float nabDot = rcVdot(n, AB);
+	if (std::abs(nabDot) < EPS) {
+		return false;
+	}
+    const float t = (d - rcVdot(n, A)) / nabDot;
     if (t <= 0.f || t >= 1.f) // except contact of segment and plane
         return false;
     rcVmad(P, A, AB, t);
     return true;
 }
-*/
+
+static void calcProjectionXz(
+	const float* points, int n, const float* axis, float(&minMax)[2]
+) {
+	assert(n >= 1);
+	minMax[0] = rcVdotXz(points, axis);
+	minMax[1] = minMax[0];
+	for (int i = 1; i < n; ++i) {
+		float val = rcVdotXz(points + i * 3, axis);
+		minMax[0] = rcMin(minMax[0], val);
+		minMax[1] = rcMax(minMax[1], val);
+	}
+}
+
+static void makeAabbPointsXz(float* aabbPoints, const float* bmin, const float* bmax)
+{
+	float dx = bmax[0] - bmin[0];
+	float dz = bmax[2] - bmin[2];
+	float* pos = aabbPoints;
+	rcVcopy(pos, bmin); // 0
+	pos += 3; //1
+	rcVcopy(pos, bmin);
+	pos[0] += dx;
+	pos += 3; // 2
+	rcVcopy(pos, bmin);
+	pos[0] += dx;
+	pos[2] += dz;
+	pos += 3; // 3
+	rcVcopy(pos, bmin);
+	pos[2] += dz;
+}
+
+// edge connection minds no collision ( <=, >=)
+static bool intersectionAabbVsTriangleXz(
+	const float* bmin, const float* bmax, const float* v0, const float* v1, const float* v2
+) {
+	// SAT
+	static const int AABB_NPOINTS = 4;
+	static const int TRI_NPOINTS = 3;
+	float triPoints[3 * TRI_NPOINTS];
+	rcVcopy(triPoints, v0);
+	rcVcopy(triPoints + 3, v1);
+	rcVcopy(triPoints + 6, v2);
+	float aabbPoints[3 * AABB_NPOINTS];
+	makeAabbPointsXz(aabbPoints, bmin, bmax);
+	float minMaxAabb[2];
+	float minMaxTri[2];
+
+	// 3 tri edge's normals
+	float triEdge0[3], triEdge1[3], triEdge2[3];
+	rcVsub(triEdge0, v0, v1);
+	rcVsub(triEdge1, v1, v2);
+	rcVsub(triEdge2, v2, v0);
+	float axis[3] = {0, 0, 0};
+	axis[0] = -triEdge0[2];
+	axis[2] = triEdge0[0];
+	calcProjectionXz(aabbPoints, AABB_NPOINTS, axis, minMaxAabb);
+	calcProjectionXz(triPoints, TRI_NPOINTS, axis, minMaxTri);
+	if (minMaxAabb[1] < minMaxTri[0] || minMaxAabb[0] > minMaxTri[1]) return false;
+	axis[0] = -triEdge1[2];
+	axis[2] = triEdge1[0];
+	calcProjectionXz(aabbPoints, AABB_NPOINTS, axis, minMaxAabb);
+	calcProjectionXz(triPoints, TRI_NPOINTS, axis, minMaxTri);
+	if (minMaxAabb[1] < minMaxTri[0] || minMaxAabb[0] > minMaxTri[1]) return false;
+	axis[0] = -triEdge2[2];
+	axis[2] = triEdge2[0];
+	calcProjectionXz(aabbPoints, AABB_NPOINTS, axis, minMaxAabb);
+	calcProjectionXz(triPoints, TRI_NPOINTS, axis, minMaxTri);
+	if (minMaxAabb[1] < minMaxTri[0] || minMaxAabb[0] > minMaxTri[1]) return false;
+
+	// 2 axises (x, z)
+	float xAxis[3] = { 1, 0, 0 };
+	calcProjectionXz(aabbPoints, AABB_NPOINTS, xAxis, minMaxAabb);
+	calcProjectionXz(triPoints, TRI_NPOINTS, xAxis, minMaxTri);
+	if (minMaxAabb[1] < minMaxTri[0] || minMaxAabb[0] > minMaxTri[1]) return false;
+	float zAxis[3] = { 0, 0, 1 };
+	calcProjectionXz(aabbPoints, AABB_NPOINTS, zAxis, minMaxAabb);
+	calcProjectionXz(triPoints, TRI_NPOINTS, zAxis, minMaxTri);
+	if (minMaxAabb[1] < minMaxTri[0] || minMaxAabb[0] > minMaxTri[1]) return false;
+
+	return true;
+}
 
 /*
 static bool intersectionSegmentVsPlane(
@@ -251,105 +340,324 @@ static bool intersectionSegmentVsPlane(
 
 static bool isPointInAabbXz(const float* p, const float* bmin, const float* bmax)
 {
-    return p[0] >= bmin[0] && p[0] <= bmax[0] && p[2] >= bmin[2] && p[2] <= bmax[2];
+    return p[0] > bmin[0] && p[0] < bmax[0] && p[2] > bmin[2] && p[2] < bmax[2];
 }
 
 void rcMeshLoaderObjExt::calcResBboxes(
-    float* minResBbox, float* maxResBbox, float offsetForLiquidCutting
+    float* minResBbox,
+	float* maxResBbox,
+	float xMinOffsetCut,
+	float xMaxOffsetCut,
+	float zMinOffsetCut,
+	float zMaxOffsetCut
 ) const {
     const static float MAXF = std::numeric_limits<float>::max();
     const static float MINF = -std::numeric_limits<float>::max();
-    float minSolidBbox[3] = {MAXF, MAXF, MAXF};
-    float maxSolidBbox[3] = {MINF, MINF, MINF};
-    float minLiquidBbox[3] = {MAXF, MAXF, MAXF};
-    float maxLiquidBbox[3] = {MINF, MINF, MINF};
+	minResBbox[0] = minResBbox[1] = minResBbox[2] = MAXF;
+	maxResBbox[0] = maxResBbox[1] = maxResBbox[2] = MINF;
+
     for (int i = 0; i < m_triCount; ++i) {
         const int* vIds = m_tris.get() + i * 3;
         const float* v0 = &m_verts[vIds[0] * 3];
         const float* v1 = &m_verts[vIds[1] * 3];
         const float* v2 = &m_verts[vIds[2] * 3];
-        if ((uint8_t)m_flags[i].polyFlags <= PolyAreaFlags::LAVA) {
-            rcVmin(minLiquidBbox, v0);
-            rcVmin(minLiquidBbox, v1);
-            rcVmin(minLiquidBbox, v2);
-            rcVmax(maxLiquidBbox, v0);
-            rcVmax(maxLiquidBbox, v1);
-            rcVmax(maxLiquidBbox, v2);
-        }
-        else { // >= PolyAreaFlags::GROUND
-            rcVmin(minSolidBbox, v0);
-            rcVmin(minSolidBbox, v1);
-            rcVmin(minSolidBbox, v2);
-            rcVmax(maxSolidBbox, v0);
-            rcVmax(maxSolidBbox, v1);
-            rcVmax(maxSolidBbox, v2);
-        }
+		rcVmin(minResBbox, v0);
+		rcVmin(minResBbox, v1);
+		rcVmin(minResBbox, v2);
+		rcVmax(maxResBbox, v0);
+		rcVmax(maxResBbox, v1);
+		rcVmax(maxResBbox, v2);
     }
-    minSolidBbox[0] -= offsetForLiquidCutting;
-    minSolidBbox[2] -= offsetForLiquidCutting;
-    maxSolidBbox[0] += offsetForLiquidCutting;
-    maxSolidBbox[2] += offsetForLiquidCutting;
-
-    minResBbox[0] = minSolidBbox[0];
-    minResBbox[1] = std::min(minLiquidBbox[1], minSolidBbox[1]);
-    minResBbox[2] = minSolidBbox[2];
-    maxResBbox[0] = maxSolidBbox[0];
-    maxResBbox[1] = std::max(maxLiquidBbox[1], maxSolidBbox[1]);
-    maxResBbox[2] = maxSolidBbox[2];
+	minResBbox[0] += xMinOffsetCut;
+	minResBbox[2] += zMinOffsetCut;
+	maxResBbox[0] -= xMaxOffsetCut;
+	maxResBbox[2] -= zMaxOffsetCut;
 }
 
-// TODO tool for gui bbox mesh cutting (cutting, not polygon extraction, like now)
 ErrorCode4 rcMeshLoaderObjExt::loadStaticMesh(
-    std::unique_ptr<char[]>& staticData, int staticSize, float offsetForLiquidCutting
+    std::unique_ptr<char[]>& staticData,
+	int staticSize,
+	float xMinOffsetCut,
+	float xMaxOffsetCut,
+	float zMinOffsetCut,
+	float zMaxOffsetCut
 ) {
+	if (xMinOffsetCut < 0.f || xMaxOffsetCut < 0.f || zMinOffsetCut < 0.f || zMaxOffsetCut < 0.f) {
+		return {1, 0, 0, 0};
+	}
 	char* src = staticData.get();
 	char* srcEnd = src + staticSize;
     ErrorCode4 ret = loadStatic(
 		m_verts, m_tris, m_normals, m_flags, m_vertCount, m_triCount, src, srcEnd
 	);
     if (!ret.isOk()) {
-        return {1, ret.code0, ret.code1, ret.code2};
+        return {2, ret.code0, ret.code1, ret.code2};
     }
-    if (offsetForLiquidCutting == 0.f) {
+    if (xMinOffsetCut == 0.f && xMaxOffsetCut == 0.f && zMinOffsetCut == 0.f && zMaxOffsetCut == 0.f) {
         return {};
     }
 
-    //std::unique_ptr<float[]> newVerts(new(std::nothrow) float[3 * m_vertCount]);
-    std::unique_ptr<int[]> newTris(new(std::nothrow) int[3 * m_triCount]);
-    std::unique_ptr<float[]> newNormals(new(std::nothrow) float[3 * m_triCount]);
-    std::unique_ptr<PolyAreaFlags::FlagType[]> newFlags(
-        new(std::nothrow) PolyAreaFlags::FlagType[m_triCount]
-    );
-    if (/*!newVerts || */!newTris || !newNormals || !newFlags) {
-        return {2, 0, 0, 0};
-    }
-    float minResBbox[3], maxResBbox[3];
-    calcResBboxes(minResBbox, maxResBbox, offsetForLiquidCutting);
+	float minBbox[3], maxBbox[3];
+	calcResBboxes(minBbox, maxBbox, xMinOffsetCut, xMaxOffsetCut, zMinOffsetCut, zMaxOffsetCut);
+	size_t newTriCount = 0;
+	std::vector<int> trisForCutting;
+	std::vector<float> verts(3 * m_vertCount);
+	std::vector<int> tris(3 * m_triCount);
+	std::vector<float> normals(3 * m_triCount);
+	std::vector<PolyAreaFlags::FlagType> flags(m_triCount);
+	std::memcpy(verts.data(), m_verts.get(), 3 * sizeof(float) * m_vertCount);
 
-    //std::memcpy(newVerts.get(), m_verts.get(), 3 * sizeof(int) * m_vertCount);
-    int newTriCount = 0;
-    for (int i = 0; i < m_triCount; ++i) {
-        const int* vIds = m_tris.get() + i * 3;
-        const float* v0 = &m_verts[vIds[0] * 3];
-        const float* v1 = &m_verts[vIds[1] * 3];
-        const float* v2 = &m_verts[vIds[2] * 3];
+	for (int i = 0; i < m_triCount; ++i) {
+	    const int* vIds = m_tris.get() + i * 3;
+	    const float* v0 = &verts[vIds[0] * 3];
+	    const float* v1 = &verts[vIds[1] * 3];
+	    const float* v2 = &verts[vIds[2] * 3];
 
-        int inside0 = isPointInAabbXz(v0, minResBbox, maxResBbox);
-        int inside1 = isPointInAabbXz(v1, minResBbox, maxResBbox);
-        int inside2 = isPointInAabbXz(v2, minResBbox, maxResBbox);
-        if (inside0 + inside1 + inside2 > 0) {
-            std::memcpy(newTris.get() + newTriCount * 3, m_tris.get() + i * 3, 3 * sizeof(int));
-            std::memcpy(newNormals.get() + newTriCount * 3, m_normals.get() + i * 3, 3 * sizeof(float));
-            newFlags[newTriCount] = m_flags[i];
-            ++newTriCount;
-        }
-    }
-    m_tris.reset(newTris.release());
-    m_normals.reset(newNormals.release());
-    m_flags.reset(newFlags.release());
-    m_triCount = newTriCount;
+	    int inside0 = isPointInAabbXz(v0, minBbox, maxBbox);
+	    int inside1 = isPointInAabbXz(v1, minBbox, maxBbox);
+	    int inside2 = isPointInAabbXz(v2, minBbox, maxBbox);
+		int nIns = inside0 + inside1 + inside2;
+		if (nIns == 3) { // tri is inside
+	        std::memcpy(tris.data() + newTriCount * 3, m_tris.get() + i * 3, 3 * sizeof(int));
+	        std::memcpy(normals.data() + newTriCount * 3, m_normals.get() + i * 3, 3 * sizeof(float));
+			flags[newTriCount] = m_flags[i];
+	        ++newTriCount;
+	    }
+		else if (nIns > 0 && nIns < 3) { // tri and plane intersection
+			trisForCutting.push_back(i);
+		}
+		else if (intersectionAabbVsTriangleXz(minBbox, maxBbox, v0, v1, v2)) {
+			trisForCutting.push_back(i);
+		}
+		// else remove triangle
+	}
+
+	size_t nTrisCutted = 0;
+	std::vector<int> trisCutted(3 * trisForCutting.size());
+	std::vector<float> normalsCutted(3 * trisForCutting.size());
+	std::vector<PolyAreaFlags::FlagType> flagsCutted(trisForCutting.size());
+	for (int i : trisForCutting) {
+		std::memcpy(trisCutted.data() + nTrisCutted * 3, m_tris.get() + i * 3, 3 * sizeof(int));
+		std::memcpy(
+			normalsCutted.data() + nTrisCutted * 3, m_normals.get() + i * 3, 3 * sizeof(float)
+		);
+		flagsCutted[nTrisCutted] = m_flags[i];
+		++nTrisCutted;
+	}
+	size_t nTotalVerts = m_vertCount;
+	cutPolygons(minBbox, maxBbox, nTotalVerts, verts, nTrisCutted, trisCutted, normalsCutted, flagsCutted);
+	tris.resize(3 * (newTriCount + nTrisCutted));
+	normals.resize(3 * (newTriCount + nTrisCutted));
+	flags.resize(newTriCount + nTrisCutted);
+	std::memcpy(
+		tris.data() + 3 * newTriCount, trisCutted.data(), 3 * sizeof(int) * nTrisCutted
+	);
+	std::memcpy(
+		normals.data() + 3 * newTriCount, normalsCutted.data(), 3 * sizeof(float) * nTrisCutted
+	);
+	std::memcpy(
+		flags.data() + newTriCount, flagsCutted.data(), sizeof(PolyAreaFlags::FlagType) * nTrisCutted
+	);
+	newTriCount += nTrisCutted;
+
+	removeUnusedVertices(nTotalVerts, verts, newTriCount, tris);
+
+	m_verts.reset(new(std::nothrow) float[3 * nTotalVerts]);
+	m_tris.reset(new(std::nothrow) int[3 * newTriCount]);
+	m_normals.reset(new(std::nothrow) float[3 * newTriCount]);
+	m_flags.reset(new(std::nothrow) PolyAreaFlags::FlagType[newTriCount]);
+	if (!m_verts || !m_tris || !m_normals || !m_flags) {
+		return { 3, 0, 0, 0 };
+	}
+	std::memcpy(m_verts.get(), verts.data(), 3 * sizeof(float) * nTotalVerts);
+	std::memcpy(m_tris.get(), tris.data(), 3 * sizeof(int) * newTriCount);
+	std::memcpy(m_normals.get(), normals.data(), 3 * sizeof(float) * newTriCount);
+	std::memcpy(m_flags.get(), flags.data(), sizeof(PolyAreaFlags::FlagType) * newTriCount);
+	m_vertCount = (int)nTotalVerts;
+	m_triCount = (int)newTriCount;
 
     return {};
+}
+
+void rcMeshLoaderObjExt::cutPolygons(
+	const float* minBbox,
+	const float* maxBbox,
+	size_t& nTotalVerts,
+	std::vector<float>& verts,
+	size_t& nTrisCutted,
+	std::vector<int>& trisCutted,
+	std::vector<float>& normalsCutted,
+	std::vector<PolyAreaFlags::FlagType>& flagsCutted
+) {
+	static const size_t NUM_APPEND = 1000;
+	std::vector<int> trisCuttedCp(3 * nTrisCutted);
+	std::vector<float> normalsCuttedCp(3 * nTrisCutted);
+	std::vector<PolyAreaFlags::FlagType> flagsCuttedCp(nTrisCutted);
+	size_t nTrisCuttedCp = 0;
+
+	Plane directions[4] = {
+		{-1.f, 0.f, 0.f, -minBbox[0]},
+		{1.f, 0.f, 0.f, maxBbox[0]},
+		{0.f, 0.f, -1.f, -minBbox[2]},
+		{0.f, 0.f, 1.f, maxBbox[2]}
+	};
+	float P0[3], P1[3], P2[3];
+	auto copyVertex = [&verts, &nTotalVerts] (const float* P) {
+		if (verts.size() < (nTotalVerts + 1) * 3) {
+			verts.resize(verts.size() + NUM_APPEND * 3);
+		}
+		std::memcpy(verts.data() + 3 * nTotalVerts, P, 3 * sizeof(float));
+		++nTotalVerts;
+	};
+	auto copyTriangle = [&minBbox, &maxBbox, &verts,
+		&trisCuttedCp, &normalsCuttedCp, &flagsCuttedCp,
+		&normalsCutted, &flagsCutted, &nTrisCuttedCp
+	]
+	(int idV0, int idV1, int idV2, size_t fromTriId) {
+		if (trisCuttedCp.size() < (nTrisCuttedCp + 1) * 3) {
+			trisCuttedCp.resize(trisCuttedCp.size() + NUM_APPEND * 3);
+			normalsCuttedCp.resize(normalsCuttedCp.size() + NUM_APPEND * 3);
+			flagsCuttedCp.resize(flagsCuttedCp.size() + NUM_APPEND);
+		}
+
+		trisCuttedCp[nTrisCuttedCp * 3] = idV0;
+		trisCuttedCp[nTrisCuttedCp * 3 + 1] = idV1;
+		trisCuttedCp[nTrisCuttedCp * 3 + 2] = idV2;
+		std::memcpy(
+			normalsCuttedCp.data() + 3 * nTrisCuttedCp,
+			normalsCutted.data() + 3 * fromTriId,
+			3 * sizeof(float)
+		);
+		flagsCuttedCp[nTrisCuttedCp] = flagsCutted[fromTriId];
+		++nTrisCuttedCp;
+	};
+
+	for (int i = 0; i < 4; ++i)
+	{
+		const float* norm = directions[i].norm;
+		const float dist = directions[i].dist;
+		for (size_t j = 0; j < nTrisCutted; ++j) {
+			const int* vIds = trisCutted.data() + j * 3;
+			const float* v0 = &verts[vIds[0] * 3];
+			const float* v1 = &verts[vIds[1] * 3];
+			const float* v2 = &verts[vIds[2] * 3];
+			const float d0 = rcVdot(v0, norm);
+			const float d1 = rcVdot(v1, norm);
+			const float d2 = rcVdot(v2, norm);
+			bool res0 = intersectionSegmentVsPlane(norm, dist, v0, v1, P0);
+			bool res1 = intersectionSegmentVsPlane(norm, dist, v1, v2, P1);
+			bool res2 = intersectionSegmentVsPlane(norm, dist, v2, v0, P2);
+			int cnt = res0 + res1 + res2;
+			assert(cnt == 0 || cnt == 2);
+
+			if (res0 && res1) {
+				// add 2 new verts
+				copyVertex(P0);
+				copyVertex(P1);
+				if (d1 < dist) {
+					// replace 1 triangle
+					copyTriangle(vIds[1], (int)nTotalVerts - 1, (int)nTotalVerts - 2, j);
+				}
+				else {
+					assert(d0 < dist && d2 < dist);
+					// replace 1 triangle
+					copyTriangle(vIds[0], (int)nTotalVerts - 2, vIds[2], j);
+					// add 1 new triangle
+					copyTriangle((int)nTotalVerts - 2, (int)nTotalVerts - 1, vIds[2], j);
+				}
+			}
+			else if (res1 && res2) {
+				// add 2 new verts
+				copyVertex(P1);
+				copyVertex(P2);
+				if (d2 < dist) {
+					// replace 1 triangle
+					copyTriangle(vIds[2], (int)nTotalVerts - 1, (int)nTotalVerts - 2, j);
+				}
+				else {
+					assert(d0 < dist && d1 < dist);
+					// replace 1 triangle
+					copyTriangle(vIds[1], (int)nTotalVerts - 2, vIds[0], j);
+					// add 1 new triangle
+					copyTriangle((int)nTotalVerts - 2, (int)nTotalVerts - 1, vIds[0], j);
+				}
+			}
+			else if (res2 && res0) {
+				// add 2 new verts
+				copyVertex(P2);
+				copyVertex(P0);
+				if (d0 < dist) {
+					// replace 1 triangle
+					copyTriangle(vIds[0], (int)nTotalVerts - 1, (int)nTotalVerts - 2, j);
+				}
+				else {
+					assert(d1 < dist && d2 < dist);
+					// replace 1 triangle
+					copyTriangle(vIds[2], (int)nTotalVerts - 2, vIds[1], j);
+					// add 1 new triangle
+					copyTriangle((int)nTotalVerts - 2, (int)nTotalVerts - 1, vIds[1], j);
+				}
+			}
+			else { // copy triangle
+				int cnt = d0 < dist;
+				cnt += d1 < dist;
+				cnt += d2 < dist;
+				if (cnt)
+					copyTriangle(vIds[0], vIds[1], vIds[2], j);
+			}
+		}
+
+		trisCutted.resize(3 * nTrisCuttedCp);
+		normalsCutted.resize(3 * nTrisCuttedCp);
+		flagsCutted.resize(nTrisCuttedCp);
+		std::memcpy(trisCutted.data(), trisCuttedCp.data(), 3 * sizeof(float) * nTrisCuttedCp);
+		std::memcpy(normalsCutted.data(), normalsCuttedCp.data(), 3 * sizeof(int) * nTrisCuttedCp);
+		std::memcpy(flagsCutted.data(), flagsCuttedCp.data(), sizeof(PolyAreaFlags::FlagType) * nTrisCuttedCp);
+		nTrisCutted = nTrisCuttedCp;
+		nTrisCuttedCp = 0;
+	}
+}
+
+void rcMeshLoaderObjExt::removeUnusedVertices(
+	size_t& nTotalVerts,
+	std::vector<float>& verts,
+	size_t newTriCount,
+	std::vector<int>& tris
+) {
+	std::unordered_map<int, std::vector<size_t>> vertsUsing;
+	vertsUsing.max_load_factor(0.5f);
+
+	for (size_t i = 0; i < newTriCount; ++i) {
+		const int* vIds = tris.data() + 3 * i;
+		vertsUsing[vIds[0]].push_back(i);
+		vertsUsing[vIds[1]].push_back(i);
+		vertsUsing[vIds[2]].push_back(i);
+	}
+	int vertCount = 0;
+	std::vector<float> newVerts(3 * nTotalVerts);
+	for (int i = 0, n = (int)nTotalVerts; i < n; ++i) {
+		const auto& triIds = vertsUsing[i];
+		if (triIds.empty()) {
+			continue;
+		}
+		std::memcpy(newVerts.data() + 3 * vertCount, verts.data() + 3 * i, 3 * sizeof(float));
+		for (size_t triId : triIds) {
+			int* vIds = tris.data() + 3 * triId;
+			if (vIds[0] == i) {
+				vIds[0] = vertCount;
+			}
+			else if (vIds[1] == i) {
+				vIds[1] = vertCount;
+			}
+			else {
+				assert(vIds[2] == i);
+				vIds[2] = vertCount;
+			}
+		}
+		++vertCount;
+	}
+	verts.swap(newVerts);
+	nTotalVerts = (size_t)vertCount;
 }
 
 ErrorCode4 rcMeshLoaderObjExt::loadStatic(
@@ -510,8 +818,8 @@ ErrorCode4 rcMeshLoaderObjExt::loadVobsAndMesh(
 		if (!e.allocVisualName()) {
             return {6, 0, 0, 0};
 		}
-        std::strncpy(e.visualName, name, NAME_SIZE);
-		e.visualName[NAME_SIZE - 1] = '\0';
+        std::strncpy(e.visualName, name, Constants::NAME_SIZE);
+		e.visualName[Constants::NAME_SIZE - 1] = '\0';
         m_nameToVobMeshIndex.put(e.visualName, meshesCnt);
 		++meshesCnt;
 
@@ -625,8 +933,8 @@ ErrorCode4 rcMeshLoaderObjExt::loadVobsAndMesh(
 			if (!e.allocVobName()) {
                 return {17, 0, 0, 0};
 			}
-            std::strncpy(e.vobName, vobName, NAME_SIZE);
-			e.vobName[NAME_SIZE - 1] = '\0';
+            std::strncpy(e.vobName, vobName, Constants::NAME_SIZE);
+			e.vobName[Constants::NAME_SIZE - 1] = '\0';
 		}
 		e.vobType = vobType;
 		e.meshIndex = pos[0];
@@ -1120,22 +1428,18 @@ int rcMeshLoaderObjExt::addMarkedAreaToMemory(
 }
 
 ErrorCode4 rcMeshLoaderObjExt::load(
-	const char* navMeshName,
 	const char* staticMeshName,
 	const char* vobsMeshName,
 	const char* markedMeshName,
-    float offsetForLiquidCutting,
+	float xMinOffsetCut,
+	float xMaxOffsetCut,
+	float zMinOffsetCut,
+	float zMaxOffsetCut,
 	bool enabledRendering
 ) {
 	if (m_loaded) {
 		return {1, 0, 0, 0};
 	}
-    m_navMeshName.reset(new(std::nothrow) char[1024]);
-	if (!m_navMeshName) {
-		return {2, 0, 0, 0};
-	}
-	std::strcpy(m_navMeshName.get(), navMeshName);
-	m_navMeshName[1024 - 1] = '\0';
 
 	m_enabledRendering = enabledRendering;
 	int staticSize = 0;
@@ -1151,7 +1455,9 @@ ErrorCode4 rcMeshLoaderObjExt::load(
 	std::tie(vobsData, vobsSize) = loadFile(vobsMeshName);
 	std::tie(markedData, markedSize) = loadFile(markedMeshName);
 
-    ErrorCode4 ret = loadStaticMesh(staticData, staticSize, offsetForLiquidCutting);
+    ErrorCode4 ret = loadStaticMesh(
+		staticData, staticSize, xMinOffsetCut, xMaxOffsetCut, zMinOffsetCut, zMaxOffsetCut
+	);
 	if (!ret.isOk()) {
         return {4, ret.code0, ret.code1, ret.code2};
 	}

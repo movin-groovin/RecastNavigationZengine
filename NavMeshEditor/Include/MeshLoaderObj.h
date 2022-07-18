@@ -81,6 +81,7 @@ public:
 
 	void release() {
 		delete [] m_data;
+		m_data = nullptr;
 		m_hash = {};
 		m_numBuckets = {};
 		m_loadFactor = {};
@@ -171,9 +172,18 @@ struct ErrorCode4
 
 class rcMeshLoaderObjExt
 {
+private:
+	struct Plane
+	{
+		Plane() : norm{ 0.f, 0.f, 0.f }, dist(0.f) {}
+		Plane(const float* n, float d) : dist(d) { std::memcpy(norm, n, 3 * sizeof(float)); }
+		Plane(float nx, float ny, float nz, float d) : norm{ nx, ny, nz }, dist(d) {}
+
+		float norm[3];
+		float dist;
+	};
+
 public:
-	static const int NAME_SIZE = 256;
-	static const int STR_SIZE = 1024;
     // TODO replace to common header (also from InputGeom)
     static const int REGULAR_VERTS_BLOCK = 3;
 #ifdef USAGE_SSE_1_0
@@ -260,7 +270,7 @@ public:
 		}
 
 		bool allocVobName() {
-            vobName = new(std::nothrow) char[NAME_SIZE];
+            vobName = new(std::nothrow) char[Constants::NAME_SIZE];
             return vobName;
 		}
 
@@ -274,7 +284,7 @@ public:
 				if (!to.allocVobName()) {
 					return false;
 				}
-                std::strncpy(to.vobName, vobName, NAME_SIZE);
+                std::strncpy(to.vobName, vobName, Constants::NAME_SIZE);
 			}
 			to.vobType = vobType;
 			to.meshIndex = meshIndex;
@@ -314,7 +324,7 @@ public:
         }
 
         bool allocVisualName() {
-            visualName = new(std::nothrow) char[NAME_SIZE];
+            visualName = new(std::nothrow) char[Constants::NAME_SIZE];
             return visualName;
 		}
 
@@ -327,8 +337,8 @@ public:
 			if (!to.allocVisualName()) {
 				return false;
 			}
-            std::strncpy(to.visualName, visualName, NAME_SIZE - 1);
-			to.visualName[NAME_SIZE - 1] = '\0';
+            std::strncpy(to.visualName, visualName, Constants::NAME_SIZE - 1);
+			to.visualName[Constants::NAME_SIZE - 1] = '\0';
 			to.verts = allocAlignedArr<float>(vertCount * CUR_VERTS_BLOCK, 16);
 			to.alignedVerts = true;
             to.tris.reset( new(std::nothrow) int[triCount * 3] );
@@ -375,15 +385,16 @@ public:
 	~rcMeshLoaderObjExt() = default;
 
 	ErrorCode4 load(
-		const char* navMeshName,
 		const char* staticMeshName,
 		const char* vobsMeshName,
 		const char* markedMeshName,
-        float offsetForLiquidCutting,
+		float xMinOffsetCut,
+		float xMaxOffsetCut,
+		float zMinOffsetCut,
+		float zMaxOffsetCut,
 		bool enabledRendering
 	);
 
-	const char* getNavMeshName() const { return m_navMeshName.get(); }
 	bool isEnabledRendering() const { return m_enabledRendering; }
 	const float* getVerts() const { return m_verts.get(); }
 	const float* getNormals() const { return m_normals.get(); }
@@ -424,7 +435,12 @@ public:
 
 private:
     ErrorCode4 loadStaticMesh(
-        std::unique_ptr<char[]>& staticData, int staticSize, float offsetForLiquidCutting
+        std::unique_ptr<char[]>& staticData,
+		int staticSize,
+		float xMinOffsetCut,
+		float xMaxOffsetCut,
+		float zMinOffsetCut,
+		float zMaxOffsetCut
     );
 	ErrorCode4 loadStatic(
 		std::unique_ptr<float[]>& verts,
@@ -436,13 +452,36 @@ private:
 		char* src,
 		char* srcEnd
 	);
+	void cutPolygons(
+		const float* minBbox,
+		const float* maxBbox,
+		size_t& nTotalVerts,
+		std::vector<float>& verts,
+		size_t& nTrisCutted,
+		std::vector<int>& trisCutted,
+		std::vector<float>& normalsCutted,
+		std::vector<PolyAreaFlags::FlagType>& flagsCutted
+	);
+	void removeUnusedVertices(
+		size_t& nTotalVerts,
+		std::vector<float>& verts,
+		size_t newTriCount,
+		std::vector<int>& tris
+	);
     ErrorCode4 loadVobsAndMesh(std::unique_ptr<char[]>& vobsData, int vobsSize);
     uint8_t loadMarked(const std::unique_ptr<char[]>& markedData, int size);
     ErrorCode4 addVobBboxesToStaticMesh();
     uint8_t appendMarkedArea(
         std::unique_ptr<float[]>& verts, int vertsNum, float minh, float maxh, int area
     );
-    void calcResBboxes(float* minResBbox, float* maxResBbox, float offsetForLiquidCutting) const;
+    void calcResBboxes(
+		float* minResBbox,
+		float* maxResBbox,
+		float xMinOffsetCut,
+		float xMaxOffsetCut,
+		float zMinOffsetCut,
+		float zMaxOffsetCut
+	) const;
 
 	static uint8_t addTriangle(
 		std::unique_ptr<int[]>& tris, std::unique_ptr<PolyAreaFlags::FlagType[]>& flags,
@@ -460,7 +499,6 @@ private:
 private:
 	bool m_loaded = false;
 	bool m_enabledRendering = false;
-	std::unique_ptr<char[]> m_navMeshName;
 	// static mesh
 	std::unique_ptr<float[]> m_verts;
 	std::unique_ptr<int[]> m_tris;

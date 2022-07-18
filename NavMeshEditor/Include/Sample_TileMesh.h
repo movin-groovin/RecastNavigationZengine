@@ -61,8 +61,8 @@ protected:
 		void cleanup(bool cleanIds)
 		{
 			if (cleanIds) {
-                cellIds.cleanup();
-                markedAreaIds.cleanup();
+                cellIds.release();
+                markedAreaIds.release();
 				delete [] meshData.verts;
 				meshData.verts = nullptr;
 				delete [] meshData.tris;
@@ -211,6 +211,7 @@ private:
 	void initAsyncBuildData();
 	void buildAllTilesDo(const float* bmin, const float* bmax, int tw, int th, float tcs);
 	void collectNavmeshGenParams(NavmeshGenParams& params) const;
+	void handleRenderOverlayOffsetPlanes(double* proj, double* model, int* view);
 };
 
 

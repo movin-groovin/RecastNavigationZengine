@@ -205,8 +205,6 @@ protected:
 	VboDebugDraw m_ddVboNvmTile;
 
 protected:
-	void resetDrawers();
-	void resetNavMeshDrawers();
 	dtNavMesh* loadAll(const char* path);
 	dtNavMesh* loadAll(FILE* fp);
 	void saveAll(const char* path, const dtNavMesh* mesh);
@@ -225,6 +223,8 @@ public:
 	void setToolState(int type, SampleToolState* s) { m_toolStates[type] = s; }
 
 	SampleDebugDraw& getDebugDraw() { return m_dd; }
+	void resetDrawers();
+	void resetNavMeshDrawers();
 
 	virtual void handleSettings();
 	virtual void handleTools();

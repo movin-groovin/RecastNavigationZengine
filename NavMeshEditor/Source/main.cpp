@@ -285,8 +285,11 @@ static void runProfile() {
 
 static const int ERR_MSG_BUFF_SIZE = 1024;
 static char errMsg[ERR_MSG_BUFF_SIZE];
-static bool shrinkBvhAabb = false;
-static float offsetSize = 2000.f;
+static bool showOffsetPlanes = false;
+static float offsetXmin = 0.f;
+static float offsetXmax = 0.f;
+static float offsetZmin = 0.f;
+static float offsetZmax = 0.f;
 static float bvhGridSize = 1024.f;
 static bool done = false;
 static bool showLevels = false;
@@ -868,12 +871,6 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 					showTestCases = false;
 				}
 			}
-			
-			imguiSeparator();
-			if (imguiCheck("Shrink bvh aabb", shrinkBvhAabb))
-				shrinkBvhAabb = !shrinkBvhAabb;
-            imguiSlider("Offset size", &offsetSize, 0.f, 5000.f, 100.f);
-            imguiSlider("Bvh grid size", &bvhGridSize, 256.f, 16384.f, 256.f);
 			imguiLabel("Input Mesh");
 			if (imguiButton(meshName.c_str()))
 			{
@@ -886,11 +883,42 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 					showSample = false;
 					showTestCases = false;
 					showLevels = true;
-                    //scanDirectory(meshesFolder, ".obj", files);
-                    scanDirectory(meshesFolder, files);
-					scanDirectoryAppend(meshesFolder, ".gset", files);
+					//scanDirectory(meshesFolder, ".obj", files);
+					scanDirectory(meshesFolder, files);
+					//scanDirectoryAppend(meshesFolder, ".gset", files);
 				}
 			}
+			
+			imguiSeparator();
+			if (geom && geom->getSpace().isLoaded())
+			{
+				if (imguiCheck("Show offset planes", showOffsetPlanes))
+				{
+					showOffsetPlanes = !showOffsetPlanes;
+				}
+				static const float NPARTS = 1000.f;
+				const auto& space = geom->getSpace();
+				float wSize[3];
+				space.getWorldSize(wSize);
+				float xStep = std::ceil(wSize[0] / NPARTS);
+				float zStep = std::ceil(wSize[2] / NPARTS);
+				imguiSlider("Offset size xmin (red)", &offsetXmin, 0.f, wSize[0], xStep);
+				imguiSlider("Offset size xmax (green)", &offsetXmax, 0.f, wSize[0], xStep);
+				imguiSlider("Offset size zmin (blue)", &offsetZmin, 0.f, wSize[2], zStep);
+				imguiSlider("Offset size zmax (yellow)", &offsetZmax, 0.f, wSize[2], zStep);
+				geom->updateOffsets(offsetXmin, offsetXmax, offsetZmin, offsetZmax, showOffsetPlanes);
+				if (imguiButton("Cut mesh"))
+				{
+					geom->cutMesh(offsetXmin, offsetXmax, offsetZmin, offsetZmax);
+					offsetXmin = 0.f;
+					offsetXmax = 0.f;
+					offsetZmin = 0.f;
+					offsetZmax = 0.f;
+					sample->resetDrawers();
+				}
+				imguiSeparator();
+			}
+            imguiSlider("Bvh grid size", &bvhGridSize, 256.f, 16384.f, 256.f);
 			imguiSeparator();
 			if (imguiButton("Save binary mesh"))
 			{
@@ -985,8 +1013,8 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 				const float* bmax = 0;
 				if (geom)
 				{
-					bmin = geom->getNavMeshBoundsMin();
-					bmax = geom->getNavMeshBoundsMax();
+					bmin = geom->getMeshBoundsMin();
+					bmax = geom->getMeshBoundsMax();
 				}
 				// Reset camera and fog to match the mesh bounds.
 				if (bmin && bmax)
@@ -1038,8 +1066,7 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 				
 				geom = allocAligned<InputGeom>(16);
 				//if (!geom->load(&ctx, path))
-                if (!geom->loadFromDir(&ctx, path.c_str(), offsetSize, bvhGridSize, shrinkBvhAabb))
-				{
+                if (!geom->loadFromDir(&ctx, path.c_str(), bvhGridSize)) {
 					freeAligned<InputGeom>(geom);
 					geom = 0;
 
@@ -1052,8 +1079,13 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 					
 					showLog = true;
 					logScroll = 0;
-					ctx.log(RC_LOG_PROGRESS, "Geom load for mesh: %s", meshName.c_str());
+					ctx.log(RC_LOG_ERROR, "Geom load for mesh: %s", meshName.c_str());
 				}
+				offsetXmin = 0.f;
+				offsetXmax = 0.f;
+				offsetZmin = 0.f;
+				offsetZmax = 0.f;
+
 				if (sample && geom)
 				{
 					sample->handleMeshChanged(geom);
@@ -1065,8 +1097,8 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 					const float* bmax = 0;
 					if (geom)
 					{
-						bmin = geom->getNavMeshBoundsMin();
-						bmax = geom->getNavMeshBoundsMax();
+						bmin = geom->getMeshBoundsMin();
+						bmax = geom->getMeshBoundsMax();
 					}
 					// Reset camera and fog to match the mesh bounds.
 					if (bmin && bmax)
@@ -1144,12 +1176,11 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 					// Load geom.
 					meshName = test->getGeomFileName();
 					
-					
 					path = meshesFolder + "/" + meshName;
 					
 					freeAligned<InputGeom>(geom);
 					geom = allocAligned<InputGeom>(16);
-					if (!geom || !geom->loadFromDir(&ctx, path.c_str(), 0.f, 0.f, false))
+					if (!geom || !geom->loadFromDir(&ctx, path.c_str(), 0.f))
 					{
 						freeAligned<InputGeom>(geom);
 						geom = 0;
@@ -1180,8 +1211,8 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 						const float* bmax = 0;
 						if (geom)
 						{
-							bmin = geom->getNavMeshBoundsMin();
-							bmax = geom->getNavMeshBoundsMax();
+							bmin = geom->getMeshBoundsMin();
+							bmax = geom->getMeshBoundsMax();
 						}
 						// Reset camera and fog to match the mesh bounds.
 						if (bmin && bmax)

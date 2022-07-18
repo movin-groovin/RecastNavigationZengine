@@ -237,8 +237,8 @@ void Sample_TileMesh::handleSettings()
     {
         char text[64];
         int gw = 0, gh = 0;
-        const float* bmin = m_geom->getNavMeshBoundsMin();
-        const float* bmax = m_geom->getNavMeshBoundsMax();
+        const float* bmin = m_geom->getMeshBoundsMin();
+        const float* bmax = m_geom->getMeshBoundsMax();
         rcCalcGridSize(bmin, bmax, m_cellSize, &gw, &gh);
         const int ts = (int)m_tileSize;
         const int tw = (gw + ts-1) / ts;
@@ -549,14 +549,15 @@ void Sample_TileMesh::handleRender(const float* cameraPos)
 			);
 		}
         m_geom->drawOffMeshConnections(&m_dd);
+		m_geom->drawCutPlanes(&m_dd);
 		m_ddVboMesh.draw();
     }
 
     glDepthMask(GL_FALSE);
 
     // Draw bounds
-    const float* bmin = m_geom->getNavMeshBoundsMin();
-    const float* bmax = m_geom->getNavMeshBoundsMax();
+    const float* bmin = m_geom->getMeshBoundsMin();
+    const float* bmax = m_geom->getMeshBoundsMax();
     duDebugDrawBoxWire(&m_dd, bmin[0],bmin[1],bmin[2], bmax[0],bmax[1],bmax[2], duRGBA(255,255,255,128), 1.0f);
     // Tiling grid.
     int gw = 0, gh = 0;
@@ -727,10 +728,16 @@ void Sample_TileMesh::handleRender(const float* cameraPos)
     glDepthMask(GL_TRUE);
 }
 
+void Sample_TileMesh::handleRenderOverlayOffsetPlanes(double* proj, double* model, int* view)
+{
+	;
+}
+
 void Sample_TileMesh::handleRenderOverlay(double* proj, double* model, int* view)
 {
-    GLdouble x, y, z;
-
+	handleRenderOverlayOffsetPlanes(proj, model, view);
+	
+	GLdouble x, y, z;
     // Draw start and end point labels
 	if (
 		m_tileBuildTime > 0 &&
@@ -756,11 +763,6 @@ void Sample_TileMesh::handleRenderOverlay(double* proj, double* model, int* view
 void Sample_TileMesh::handleMeshChanged(InputGeom* geom)
 {
     Sample::handleMeshChanged(geom);
-
-    const BuildSettings* buildSettings = geom->getBuildSettings();
-	if (buildSettings && buildSettings->tileSize > 0) {
-        m_tileSize = buildSettings->tileSize;
-	}
 
 	initAsyncBuildData();
     dtFreeNavMesh(m_navMesh);
@@ -789,7 +791,7 @@ bool Sample_TileMesh::initNavMesh()
 	}
 
 	dtNavMeshParams params;
-	rcVcopy(params.orig, m_geom->getNavMeshBoundsMin());
+	rcVcopy(params.orig, m_geom->getMeshBoundsMin());
 	params.tileWidth = m_tileSize*m_cellSize;
 	params.tileHeight = m_tileSize*m_cellSize;
 	params.maxTiles = m_maxTiles;
@@ -861,8 +863,8 @@ void Sample_TileMesh::buildTile(const float* pos)
 		}
 	}
 
-    const float* bmin = m_geom->getNavMeshBoundsMin();
-    const float* bmax = m_geom->getNavMeshBoundsMax();
+    const float* bmin = m_geom->getMeshBoundsMin();
+    const float* bmax = m_geom->getMeshBoundsMax();
 
     const float ts = m_tileSize*m_cellSize;
     const int tx = (int)((pos[0] - bmin[0]) / ts);
@@ -926,7 +928,7 @@ void Sample_TileMesh::getTilePos(const float* pos, int& tx, int& ty)
 {
     if (!m_geom) return;
 
-    const float* bmin = m_geom->getNavMeshBoundsMin();
+    const float* bmin = m_geom->getMeshBoundsMin();
 
     const float ts = m_tileSize*m_cellSize;
     tx = (int)((pos[0] - bmin[0]) / ts);
@@ -938,8 +940,8 @@ void Sample_TileMesh::removeTile(const float* pos)
     if (!m_geom) return;
     if (!m_navMesh) return;
 
-    const float* bmin = m_geom->getNavMeshBoundsMin();
-    const float* bmax = m_geom->getNavMeshBoundsMax();
+    const float* bmin = m_geom->getMeshBoundsMin();
+    const float* bmax = m_geom->getMeshBoundsMax();
 
     const float ts = m_tileSize*m_cellSize;
     const int tx = (int)((pos[0] - bmin[0]) / ts);
@@ -970,8 +972,8 @@ void Sample_TileMesh::buildAllTiles()
     if (!m_geom) return;
     if (!m_navMesh) return;
 
-    const float* bmin = m_geom->getNavMeshBoundsMin();
-    const float* bmax = m_geom->getNavMeshBoundsMax();
+    const float* bmin = m_geom->getMeshBoundsMin();
+    const float* bmax = m_geom->getMeshBoundsMax();
     int gw = 0, gh = 0;
     rcCalcGridSize(bmin, bmax, m_cellSize, &gw, &gh);
     const int ts = (int)m_tileSize;
@@ -1180,8 +1182,8 @@ void Sample_TileMesh::removeAllTiles()
     if (!m_geom || !m_navMesh)
         return;
 
-    const float* bmin = m_geom->getNavMeshBoundsMin();
-    const float* bmax = m_geom->getNavMeshBoundsMax();
+    const float* bmin = m_geom->getMeshBoundsMin();
+    const float* bmax = m_geom->getMeshBoundsMax();
     int gw = 0, gh = 0;
     rcCalcGridSize(bmin, bmax, m_cellSize, &gw, &gh);
     const int ts = (int)m_tileSize;
