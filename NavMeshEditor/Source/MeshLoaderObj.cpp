@@ -105,7 +105,7 @@ static int parseFace(char* row, int* data, int n, int vcnt, int* area)
 	return j;
 }
 
-std::pair<std::unique_ptr<char[]>, int> rcMeshLoaderObjExt::loadFile(const char* filename)
+std::pair<std::unique_ptr<char[]>, int> MeshLoaderObjExt::loadFile(const char* filename)
 {
 	char* buf = 0;
 	FILE* fp = fopen(filename, "rb");
@@ -144,12 +144,12 @@ std::pair<std::unique_ptr<char[]>, int> rcMeshLoaderObjExt::loadFile(const char*
 	return {std::unique_ptr<char[]>(buf), bufSize};
 }
 
-int rcMeshLoaderObjExt::saveFile(
+int MeshLoaderObjExt::saveFile(
 	const char* fileName, const std::unique_ptr<char[]>& data, int dataSize
 ) {
-	char name[Constants::STR_SIZE + 4];
+	char name[common::Constants::STR_SIZE + 4];
 	std::strcpy(name, fileName);
-	name[Constants::STR_SIZE - 1] = '\0';
+	name[common::Constants::STR_SIZE - 1] = '\0';
 	std::strcpy(name + strlen(fileName), ".tmp");
 	FILE* fp = fopen(name, "wb");
 	if (!fp) {
@@ -168,7 +168,7 @@ int rcMeshLoaderObjExt::saveFile(
 	return 0;
 }
 
-uint8_t rcMeshLoaderObjExt::addVertex(
+uint8_t MeshLoaderObjExt::addVertex(
 	std::unique_ptr<float[]>& verts, int& vertCount, float x, float y, float z, int& cap
 ) {
 	if (vertCount + 1 > cap)
@@ -189,15 +189,15 @@ uint8_t rcMeshLoaderObjExt::addVertex(
 	return 0;
 }
 
-uint8_t rcMeshLoaderObjExt::addTriangle(
-	std::unique_ptr<int[]>& tris, std::unique_ptr<PolyAreaFlags::FlagType[]>& flags,
+uint8_t MeshLoaderObjExt::addTriangle(
+	std::unique_ptr<int[]>& tris, std::unique_ptr<mesh::FlagType[]>& flags,
 	int& triCount, int a, int b, int c, int& cap, bool isTri, int area
 ) {
 	if (triCount + 1 > cap)
 	{
 		cap = !cap ? 8 : cap * 2;
         int* nv = new(std::nothrow) int[cap * 3];
-        PolyAreaFlags::FlagType* flagsNew = new(std::nothrow) PolyAreaFlags::FlagType[cap];
+        mesh::FlagType* flagsNew = new(std::nothrow) mesh::FlagType[cap];
         if (!nv || !flagsNew) {
             delete [] nv;
             delete [] flagsNew;
@@ -214,136 +214,13 @@ uint8_t rcMeshLoaderObjExt::addTriangle(
 	*dst++ = a;
 	*dst++ = b;
 	*dst++ = c;
-	PolyAreaFlags::FlagType flag = { isTri, 0, 0, 0, 0, 0, static_cast<uint8_t>(area) };
+	mesh::FlagType flag = { isTri, 0, 0, 0, 0, 0, static_cast<uint8_t>(area) };
 	flags[triCount] = flag;
 	triCount++;
 	return 0;
 }
 
-static bool intersectionSegmentVsPlane(
-    const float* n, const float d, const float* A, const float* B, float* P
-) {
-	static const float EPS = 1e-6f;
-	float AB[3];
-    rcVsub(AB, B, A);
-	const float nabDot = rcVdot(n, AB);
-	if (std::abs(nabDot) < EPS) {
-		return false;
-	}
-    const float t = (d - rcVdot(n, A)) / nabDot;
-    if (t <= 0.f || t >= 1.f) // except contact of segment and plane
-        return false;
-    rcVmad(P, A, AB, t);
-    return true;
-}
-
-static void calcProjectionXz(
-	const float* points, int n, const float* axis, float(&minMax)[2]
-) {
-	assert(n >= 1);
-	minMax[0] = rcVdotXz(points, axis);
-	minMax[1] = minMax[0];
-	for (int i = 1; i < n; ++i) {
-		float val = rcVdotXz(points + i * 3, axis);
-		minMax[0] = rcMin(minMax[0], val);
-		minMax[1] = rcMax(minMax[1], val);
-	}
-}
-
-static void makeAabbPointsXz(float* aabbPoints, const float* bmin, const float* bmax)
-{
-	float dx = bmax[0] - bmin[0];
-	float dz = bmax[2] - bmin[2];
-	float* pos = aabbPoints;
-	rcVcopy(pos, bmin); // 0
-	pos += 3; //1
-	rcVcopy(pos, bmin);
-	pos[0] += dx;
-	pos += 3; // 2
-	rcVcopy(pos, bmin);
-	pos[0] += dx;
-	pos[2] += dz;
-	pos += 3; // 3
-	rcVcopy(pos, bmin);
-	pos[2] += dz;
-}
-
-// edge connection minds no collision ( <=, >=)
-static bool intersectionAabbVsTriangleXz(
-	const float* bmin, const float* bmax, const float* v0, const float* v1, const float* v2
-) {
-	// SAT
-	static const int AABB_NPOINTS = 4;
-	static const int TRI_NPOINTS = 3;
-	float triPoints[3 * TRI_NPOINTS];
-	rcVcopy(triPoints, v0);
-	rcVcopy(triPoints + 3, v1);
-	rcVcopy(triPoints + 6, v2);
-	float aabbPoints[3 * AABB_NPOINTS];
-	makeAabbPointsXz(aabbPoints, bmin, bmax);
-	float minMaxAabb[2];
-	float minMaxTri[2];
-
-	// 3 tri edge's normals
-	float triEdge0[3], triEdge1[3], triEdge2[3];
-	rcVsub(triEdge0, v0, v1);
-	rcVsub(triEdge1, v1, v2);
-	rcVsub(triEdge2, v2, v0);
-	float axis[3] = {0, 0, 0};
-	axis[0] = -triEdge0[2];
-	axis[2] = triEdge0[0];
-	calcProjectionXz(aabbPoints, AABB_NPOINTS, axis, minMaxAabb);
-	calcProjectionXz(triPoints, TRI_NPOINTS, axis, minMaxTri);
-	if (minMaxAabb[1] < minMaxTri[0] || minMaxAabb[0] > minMaxTri[1]) return false;
-	axis[0] = -triEdge1[2];
-	axis[2] = triEdge1[0];
-	calcProjectionXz(aabbPoints, AABB_NPOINTS, axis, minMaxAabb);
-	calcProjectionXz(triPoints, TRI_NPOINTS, axis, minMaxTri);
-	if (minMaxAabb[1] < minMaxTri[0] || minMaxAabb[0] > minMaxTri[1]) return false;
-	axis[0] = -triEdge2[2];
-	axis[2] = triEdge2[0];
-	calcProjectionXz(aabbPoints, AABB_NPOINTS, axis, minMaxAabb);
-	calcProjectionXz(triPoints, TRI_NPOINTS, axis, minMaxTri);
-	if (minMaxAabb[1] < minMaxTri[0] || minMaxAabb[0] > minMaxTri[1]) return false;
-
-	// 2 axises (x, z)
-	float xAxis[3] = { 1, 0, 0 };
-	calcProjectionXz(aabbPoints, AABB_NPOINTS, xAxis, minMaxAabb);
-	calcProjectionXz(triPoints, TRI_NPOINTS, xAxis, minMaxTri);
-	if (minMaxAabb[1] < minMaxTri[0] || minMaxAabb[0] > minMaxTri[1]) return false;
-	float zAxis[3] = { 0, 0, 1 };
-	calcProjectionXz(aabbPoints, AABB_NPOINTS, zAxis, minMaxAabb);
-	calcProjectionXz(triPoints, TRI_NPOINTS, zAxis, minMaxTri);
-	if (minMaxAabb[1] < minMaxTri[0] || minMaxAabb[0] > minMaxTri[1]) return false;
-
-	return true;
-}
-
-/*
-static bool intersectionSegmentVsPlane(
-    const float* v0, const float* v1, const float* v2, const float* A, const float* B, float* P
-) {
-    float e1[3], e2[3], n[3];
-    rcVsub(e1, v1, v0);
-    rcVsub(e2, v2, v0);
-    rcVcross(n, e1, e2);
-    float d = rcVdot(n, v0);
-    if (d < 0) {
-        d *= -1.f;
-        n[0] *= -1.f;
-        n[1] *= -1.f;
-        n[2] *= -1.f;
-    }
-    return intersectionSegmentVsPlane(n, d, A, B, P);
-}
-*/
-
-static bool isPointInAabbXz(const float* p, const float* bmin, const float* bmax)
-{
-    return p[0] > bmin[0] && p[0] < bmax[0] && p[2] > bmin[2] && p[2] < bmax[2];
-}
-
-void rcMeshLoaderObjExt::calcResBboxes(
+void MeshLoaderObjExt::calcResBboxes(
     float* minResBbox,
 	float* maxResBbox,
 	float xMinOffsetCut,
@@ -374,7 +251,7 @@ void rcMeshLoaderObjExt::calcResBboxes(
 	maxResBbox[2] -= zMaxOffsetCut;
 }
 
-ErrorCode4 rcMeshLoaderObjExt::loadStaticMesh(
+ErrorCode4 MeshLoaderObjExt::loadStaticMesh(
     std::unique_ptr<char[]>& staticData,
 	int staticSize,
 	float xMinOffsetCut,
@@ -404,7 +281,7 @@ ErrorCode4 rcMeshLoaderObjExt::loadStaticMesh(
 	std::vector<float> verts(3 * m_vertCount);
 	std::vector<int> tris(3 * m_triCount);
 	std::vector<float> normals(3 * m_triCount);
-	std::vector<PolyAreaFlags::FlagType> flags(m_triCount);
+	std::vector<mesh::FlagType> flags(m_triCount);
 	std::memcpy(verts.data(), m_verts.get(), 3 * sizeof(float) * m_vertCount);
 
 	for (int i = 0; i < m_triCount; ++i) {
@@ -413,9 +290,9 @@ ErrorCode4 rcMeshLoaderObjExt::loadStaticMesh(
 	    const float* v1 = &verts[vIds[1] * 3];
 	    const float* v2 = &verts[vIds[2] * 3];
 
-	    int inside0 = isPointInAabbXz(v0, minBbox, maxBbox);
-	    int inside1 = isPointInAabbXz(v1, minBbox, maxBbox);
-	    int inside2 = isPointInAabbXz(v2, minBbox, maxBbox);
+	    int inside0 = geometry::isPointInAabbXz(v0, minBbox, maxBbox);
+	    int inside1 = geometry::isPointInAabbXz(v1, minBbox, maxBbox);
+	    int inside2 = geometry::isPointInAabbXz(v2, minBbox, maxBbox);
 		int nIns = inside0 + inside1 + inside2;
 		if (nIns == 3) { // tri is inside
 	        std::memcpy(tris.data() + newTriCount * 3, m_tris.get() + i * 3, 3 * sizeof(int));
@@ -426,7 +303,7 @@ ErrorCode4 rcMeshLoaderObjExt::loadStaticMesh(
 		else if (nIns > 0 && nIns < 3) { // tri and plane intersection
 			trisForCutting.push_back(i);
 		}
-		else if (intersectionAabbVsTriangleXz(minBbox, maxBbox, v0, v1, v2)) {
+		else if (geometry::intersectionAabbVsTriangleXz(minBbox, maxBbox, v0, v1, v2)) {
 			trisForCutting.push_back(i);
 		}
 		// else remove triangle
@@ -435,7 +312,7 @@ ErrorCode4 rcMeshLoaderObjExt::loadStaticMesh(
 	size_t nTrisCutted = 0;
 	std::vector<int> trisCutted(3 * trisForCutting.size());
 	std::vector<float> normalsCutted(3 * trisForCutting.size());
-	std::vector<PolyAreaFlags::FlagType> flagsCutted(trisForCutting.size());
+	std::vector<mesh::FlagType> flagsCutted(trisForCutting.size());
 	for (int i : trisForCutting) {
 		std::memcpy(trisCutted.data() + nTrisCutted * 3, m_tris.get() + i * 3, 3 * sizeof(int));
 		std::memcpy(
@@ -456,7 +333,7 @@ ErrorCode4 rcMeshLoaderObjExt::loadStaticMesh(
 		normals.data() + 3 * newTriCount, normalsCutted.data(), 3 * sizeof(float) * nTrisCutted
 	);
 	std::memcpy(
-		flags.data() + newTriCount, flagsCutted.data(), sizeof(PolyAreaFlags::FlagType) * nTrisCutted
+		flags.data() + newTriCount, flagsCutted.data(), sizeof(mesh::FlagType) * nTrisCutted
 	);
 	newTriCount += nTrisCutted;
 
@@ -465,21 +342,21 @@ ErrorCode4 rcMeshLoaderObjExt::loadStaticMesh(
 	m_verts.reset(new(std::nothrow) float[3 * nTotalVerts]);
 	m_tris.reset(new(std::nothrow) int[3 * newTriCount]);
 	m_normals.reset(new(std::nothrow) float[3 * newTriCount]);
-	m_flags.reset(new(std::nothrow) PolyAreaFlags::FlagType[newTriCount]);
+	m_flags.reset(new(std::nothrow) mesh::FlagType[newTriCount]);
 	if (!m_verts || !m_tris || !m_normals || !m_flags) {
 		return { 3, 0, 0, 0 };
 	}
 	std::memcpy(m_verts.get(), verts.data(), 3 * sizeof(float) * nTotalVerts);
 	std::memcpy(m_tris.get(), tris.data(), 3 * sizeof(int) * newTriCount);
 	std::memcpy(m_normals.get(), normals.data(), 3 * sizeof(float) * newTriCount);
-	std::memcpy(m_flags.get(), flags.data(), sizeof(PolyAreaFlags::FlagType) * newTriCount);
+	std::memcpy(m_flags.get(), flags.data(), sizeof(mesh::FlagType) * newTriCount);
 	m_vertCount = (int)nTotalVerts;
 	m_triCount = (int)newTriCount;
 
     return {};
 }
 
-void rcMeshLoaderObjExt::cutPolygons(
+void MeshLoaderObjExt::cutPolygons(
 	const float* minBbox,
 	const float* maxBbox,
 	size_t& nTotalVerts,
@@ -487,15 +364,15 @@ void rcMeshLoaderObjExt::cutPolygons(
 	size_t& nTrisCutted,
 	std::vector<int>& trisCutted,
 	std::vector<float>& normalsCutted,
-	std::vector<PolyAreaFlags::FlagType>& flagsCutted
+	std::vector<mesh::FlagType>& flagsCutted
 ) {
 	static const size_t NUM_APPEND = 1000;
 	std::vector<int> trisCuttedCp(3 * nTrisCutted);
 	std::vector<float> normalsCuttedCp(3 * nTrisCutted);
-	std::vector<PolyAreaFlags::FlagType> flagsCuttedCp(nTrisCutted);
+	std::vector<mesh::FlagType> flagsCuttedCp(nTrisCutted);
 	size_t nTrisCuttedCp = 0;
 
-	Plane directions[4] = {
+	geometry::Plane directions[4] = {
 		{-1.f, 0.f, 0.f, -minBbox[0]},
 		{1.f, 0.f, 0.f, maxBbox[0]},
 		{0.f, 0.f, -1.f, -minBbox[2]},
@@ -544,9 +421,9 @@ void rcMeshLoaderObjExt::cutPolygons(
 			const float d0 = rcVdot(v0, norm);
 			const float d1 = rcVdot(v1, norm);
 			const float d2 = rcVdot(v2, norm);
-			bool res0 = intersectionSegmentVsPlane(norm, dist, v0, v1, P0);
-			bool res1 = intersectionSegmentVsPlane(norm, dist, v1, v2, P1);
-			bool res2 = intersectionSegmentVsPlane(norm, dist, v2, v0, P2);
+			bool res0 = geometry::intersectionSegmentVsPlane(norm, dist, v0, v1, P0);
+			bool res1 = geometry::intersectionSegmentVsPlane(norm, dist, v1, v2, P1);
+			bool res2 = geometry::intersectionSegmentVsPlane(norm, dist, v2, v0, P2);
 			int cnt = res0 + res1 + res2;
 			assert(cnt == 0 || cnt == 2);
 
@@ -612,13 +489,13 @@ void rcMeshLoaderObjExt::cutPolygons(
 		flagsCutted.resize(nTrisCuttedCp);
 		std::memcpy(trisCutted.data(), trisCuttedCp.data(), 3 * sizeof(float) * nTrisCuttedCp);
 		std::memcpy(normalsCutted.data(), normalsCuttedCp.data(), 3 * sizeof(int) * nTrisCuttedCp);
-		std::memcpy(flagsCutted.data(), flagsCuttedCp.data(), sizeof(PolyAreaFlags::FlagType) * nTrisCuttedCp);
+		std::memcpy(flagsCutted.data(), flagsCuttedCp.data(), sizeof(mesh::FlagType) * nTrisCuttedCp);
 		nTrisCutted = nTrisCuttedCp;
 		nTrisCuttedCp = 0;
 	}
 }
 
-void rcMeshLoaderObjExt::removeUnusedVertices(
+void MeshLoaderObjExt::removeUnusedVertices(
 	size_t& nTotalVerts,
 	std::vector<float>& verts,
 	size_t newTriCount,
@@ -660,11 +537,11 @@ void rcMeshLoaderObjExt::removeUnusedVertices(
 	nTotalVerts = (size_t)vertCount;
 }
 
-ErrorCode4 rcMeshLoaderObjExt::loadStatic(
+ErrorCode4 MeshLoaderObjExt::loadStatic(
 	std::unique_ptr<float[]>& verts,
 	std::unique_ptr<int[]>& tris,
 	std::unique_ptr<float[]>& normals,
-	std::unique_ptr<PolyAreaFlags::FlagType[]>& flags,
+	std::unique_ptr<mesh::FlagType[]>& flags,
 	int& vertCount,
 	int& triCount,
 	char* src,
@@ -715,40 +592,38 @@ ErrorCode4 rcMeshLoaderObjExt::loadStatic(
 		}
 	}
 
-	if (m_enabledRendering) {
-		// Calculate normals.
-        normals.reset(new(std::nothrow) float[triCount * 3]);
-		if (!normals) {
-			return {3, 0, 0, 0};
-		}
-		for (int i = 0; i < triCount * 3; i += 3)
+	// Calculate normals.
+    normals.reset(new(std::nothrow) float[triCount * 3]);
+	if (!normals) {
+		return {3, 0, 0, 0};
+	}
+	for (int i = 0; i < triCount * 3; i += 3)
+	{
+		const float* v0 = &verts[tris[i] * 3];
+		const float* v1 = &verts[tris[i + 1] * 3];
+		const float* v2 = &verts[tris[i + 2] * 3];
+		float e0[3], e1[3];
+		for (int j = 0; j < 3; ++j)
 		{
-			const float* v0 = &verts[tris[i] * 3];
-			const float* v1 = &verts[tris[i + 1] * 3];
-			const float* v2 = &verts[tris[i + 2] * 3];
-			float e0[3], e1[3];
-			for (int j = 0; j < 3; ++j)
-			{
-				e0[j] = v1[j] - v0[j];
-				e1[j] = v2[j] - v0[j];
-			}
-			float* n = &normals[i];
-			n[0] = e0[1] * e1[2] - e0[2] * e1[1];
-			n[1] = e0[2] * e1[0] - e0[0] * e1[2];
-			n[2] = e0[0] * e1[1] - e0[1] * e1[0];
-			float d = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-			d = 1.0f / d;
-			//if (n[1] < 0.f) d *= -1.f;
-			n[0] *= d;
-			n[1] *= d;
-			n[2] *= d;
+			e0[j] = v1[j] - v0[j];
+			e1[j] = v2[j] - v0[j];
 		}
+		float* n = &normals[i];
+		n[0] = e0[1] * e1[2] - e0[2] * e1[1];
+		n[1] = e0[2] * e1[0] - e0[0] * e1[2];
+		n[2] = e0[0] * e1[1] - e0[1] * e1[0];
+		float d = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+		d = 1.0f / d;
+		//if (n[1] < 0.f) d *= -1.f;
+		n[0] *= d;
+		n[1] *= d;
+		n[2] *= d;
 	}
 
 	return {};
 }
 
-char* rcMeshLoaderObjExt::fixStrEnd(char* src, const char* srcEnd) {
+char* MeshLoaderObjExt::fixStrEnd(char* src, const char* srcEnd) {
 	while (src < srcEnd)
 	{
 		if (*src == '\n') {
@@ -760,7 +635,7 @@ char* rcMeshLoaderObjExt::fixStrEnd(char* src, const char* srcEnd) {
 	return src + 1;
 }
 
-std::vector<float> rcMeshLoaderObjExt::splitStrBySpacesToFloats(const char* str) {
+std::vector<float> MeshLoaderObjExt::splitStrBySpacesToFloats(const char* str) {
 	std::vector<float> ret;
 	ret.reserve(16);
 	std::istringstream iss(str);
@@ -773,7 +648,7 @@ std::vector<float> rcMeshLoaderObjExt::splitStrBySpacesToFloats(const char* str)
 	return ret;
 }
 
-ErrorCode4 rcMeshLoaderObjExt::loadVobsAndMesh(
+ErrorCode4 MeshLoaderObjExt::loadVobsAndMesh(
 	std::unique_ptr<char[]>& vobsData, int vobsSize
 ) {
 	int meshesNum = 0;
@@ -788,7 +663,7 @@ ErrorCode4 rcMeshLoaderObjExt::loadVobsAndMesh(
         return {1, 0, 0, 0};
 	}
 	src = newSrc;
-    m_vobMeshes.reset(new(std::nothrow) MeshEntry[meshesNum]);
+    m_vobMeshes.reset(new(std::nothrow) mesh::VobMeshEntry[meshesNum]);
     if (!m_vobMeshes) {
         return {2, 0, 0, 0};
     }
@@ -814,12 +689,12 @@ ErrorCode4 rcMeshLoaderObjExt::loadVobsAndMesh(
 		src += 13;
 		const char* name = src;
 		src = fixStrEnd(src, srcEnd);
-		MeshEntry& e = m_vobMeshes[meshesCnt];
+		mesh::VobMeshEntry& e = m_vobMeshes[meshesCnt];
 		if (!e.allocVisualName()) {
             return {6, 0, 0, 0};
 		}
-        std::strncpy(e.visualName, name, Constants::NAME_SIZE);
-		e.visualName[Constants::NAME_SIZE - 1] = '\0';
+        std::strncpy(e.visualName, name, common::Constants::NAME_SIZE);
+		e.visualName[common::Constants::NAME_SIZE - 1] = '\0';
         m_nameToVobMeshIndex.put(e.visualName, meshesCnt);
 		++meshesCnt;
 
@@ -837,10 +712,16 @@ ErrorCode4 rcMeshLoaderObjExt::loadVobsAndMesh(
                 return {7, 0, 0, 0};
 			}
 			std::unique_ptr<float[]> tmpVerts;
+			std::unique_ptr<int[]> tmpTris;
+			std::unique_ptr<float[]> tmpNormals;
+			std::unique_ptr<mesh::FlagType[]> tmpFlags;
             ErrorCode4 ret = loadStatic(
-				tmpVerts, e.tris, e.normals, e.flags, e.vertCount, e.triCount, src, curEnd
+				tmpVerts, tmpTris, tmpNormals, tmpFlags, e.vertCount, e.triCount, src, curEnd
 			);
 			e.verts = tmpVerts.release();
+			e.tris = tmpTris.release();
+			e.normals = tmpNormals.release();
+			e.flags = tmpFlags.release();
             if (!ret.isOk()) {
                 return {8, ret.code0, ret.code1, ret.code2};
             }
@@ -868,7 +749,7 @@ ErrorCode4 rcMeshLoaderObjExt::loadVobsAndMesh(
 	if (!vobsNum) {
         return {9, 0, 0, 0};
 	}
-    m_vobs.reset(new(std::nothrow) VobEntry[vobsNum]);
+    m_vobs.reset(new(std::nothrow) mesh::VobEntry[vobsNum]);
     if (!m_vobs) {
         return {10, 0, 0, 0};
     }
@@ -892,7 +773,7 @@ ErrorCode4 rcMeshLoaderObjExt::loadVobsAndMesh(
         if (!m_nameToVobMeshIndex.get(visualName, pos)) {
             return {13, 0, 0, 0};
 		}
-		const MeshEntry& mesh = m_vobMeshes[pos[0]];
+		const mesh::VobMeshEntry& mesh = m_vobMeshes[pos[0]];
 		if (mesh.isEmpty()) {
 			// TODO: check mesh loading from the engine
 			//assert(1 != 1)
@@ -928,13 +809,13 @@ ErrorCode4 rcMeshLoaderObjExt::loadVobsAndMesh(
 			continue;
 		}
 
-		VobEntry& e = m_vobs[vobsCnt];
+		mesh::VobEntry& e = m_vobs[vobsCnt];
 		if (std::strlen(vobName)) {
 			if (!e.allocVobName()) {
                 return {17, 0, 0, 0};
 			}
-            std::strncpy(e.vobName, vobName, Constants::NAME_SIZE);
-			e.vobName[Constants::NAME_SIZE - 1] = '\0';
+            std::strncpy(e.vobName, vobName, common::Constants::NAME_SIZE);
+			e.vobName[common::Constants::NAME_SIZE - 1] = '\0';
 		}
 		e.vobType = vobType;
 		e.meshIndex = pos[0];
@@ -956,16 +837,16 @@ ErrorCode4 rcMeshLoaderObjExt::loadVobsAndMesh(
 			src = newSrc;
 			if (posCnt == e.posCnt) {
 				e.posCnt = posCnt * 2 + 1;
-                Position* newPos = new(std::nothrow) Position[e.posCnt];
+				mesh::Position* newPos = new(std::nothrow) mesh::Position[e.posCnt];
                 if (!newPos) {
                     return {19, 0, 0, 0};
                 }
-                std::memcpy(newPos, e.positions, sizeof(Position) * posCnt);
+                std::memcpy(newPos, e.positions, sizeof(mesh::Position) * posCnt);
                 delete [] e.positions;
                 e.positions = newPos;
                 newPos = nullptr;
 			}
-			Position& pos = e.positions[posCnt];
+			mesh::Position& pos = e.positions[posCnt];
 			// aabb min
 			newSrc = fixStrEnd(src, srcEnd);
 			const char* aabbMin = src + 10; // "aabb min: "
@@ -1012,14 +893,14 @@ ErrorCode4 rcMeshLoaderObjExt::loadVobsAndMesh(
     return {};
 }
 
-ErrorCode4 rcMeshLoaderObjExt::addVobBboxesToStaticMesh()
+ErrorCode4 MeshLoaderObjExt::addVobBboxesToStaticMesh()
 {
 	int polysNum = m_vobsCnt * 2 * 12;
 	int vertsNum = m_vobsCnt * 2 * 8;
     std::unique_ptr<float[]> verts(new(std::nothrow) float[vertsNum * 3]);
     std::unique_ptr<int[]> tris(new(std::nothrow) int[polysNum * 3]);
-    std::unique_ptr<PolyAreaFlags::FlagType[]> flags(
-        new(std::nothrow) PolyAreaFlags::FlagType[polysNum]
+    std::unique_ptr<mesh::FlagType[]> flags(
+        new(std::nothrow) mesh::FlagType[polysNum]
     );
     if (!verts || !tris || !flags) {
         return {1, 0, 0, 0};
@@ -1028,8 +909,8 @@ ErrorCode4 rcMeshLoaderObjExt::addVobBboxesToStaticMesh()
 	int polyCnt = 0;
 	for (int j = 0; j < m_vobsCnt; ++j)
 	{
-		VobEntry& vob = m_vobs[j];
-		const MeshEntry& mesh = m_vobMeshes[vob.meshIndex];
+		mesh::VobEntry& vob = m_vobs[j];
+		const mesh::VobMeshEntry& mesh = m_vobMeshes[vob.meshIndex];
 		if (mesh.isEmpty())
 		{
 			//assert(1 != 1);
@@ -1042,7 +923,7 @@ ErrorCode4 rcMeshLoaderObjExt::addVobBboxesToStaticMesh()
 		vob.activePosIndex = 0; // TODO loading from an outer source
 		for (int i = 0; i < vob.posCnt; ++i)
 		{
-			Position& pos = vob.positions[i];
+			mesh::Position& pos = vob.positions[i];
 			const float dX = pos.aabbMax[0] - pos.aabbMin[0];
 			const float dY = pos.aabbMax[1] - pos.aabbMin[1];
 			const float dZ = pos.aabbMax[2] - pos.aabbMin[2];
@@ -1077,15 +958,15 @@ ErrorCode4 rcMeshLoaderObjExt::addVobBboxesToStaticMesh()
 			if (polyCnt == polysNum) {
 				polysNum *= 2;
                 int* polysNew = new(std::nothrow) int[polysNum * 3];
-                PolyAreaFlags::FlagType* flagsNew =
-                    new(std::nothrow) PolyAreaFlags::FlagType[polysNum];
+                mesh::FlagType* flagsNew =
+                    new(std::nothrow) mesh::FlagType[polysNum];
                 if (!polysNew || !flagsNew) {
                     delete [] polysNew;
                     delete [] flagsNew;
                     return {3, 0, 0, 0};
                 }
 				std::memcpy(polysNew, tris.get(), polyCnt * 3 * sizeof(int));
-				std::memcpy(flagsNew, flags.get(), polyCnt * sizeof(PolyAreaFlags::FlagType));
+				std::memcpy(flagsNew, flags.get(), polyCnt * sizeof(mesh::FlagType));
 				tris.reset(polysNew);
 				flags.reset(flagsNew);
 			}
@@ -1169,7 +1050,7 @@ ErrorCode4 rcMeshLoaderObjExt::addVobBboxesToStaticMesh()
 	int triCountNew = m_triCount + polyCnt;
     float* newVerts = new(std::nothrow) float[vertCountNew * 3];
     int* newTris = new(std::nothrow) int[triCountNew * 3];
-    PolyAreaFlags::FlagType* newFlags = new(std::nothrow) PolyAreaFlags::FlagType[triCountNew];
+    mesh::FlagType* newFlags = new(std::nothrow) mesh::FlagType[triCountNew];
     if (!newVerts || !newTris || !newFlags) {
         delete [] newVerts;
         delete [] newTris;
@@ -1186,19 +1067,17 @@ ErrorCode4 rcMeshLoaderObjExt::addVobBboxesToStaticMesh()
 		trisPtr[i + 1] += m_vertCount;
 		trisPtr[i + 2] += m_vertCount;
 	}
-	std::memcpy(newFlags, m_flags.get(), m_triCount * sizeof(PolyAreaFlags::FlagType));
-	std::memcpy(newFlags + m_triCount, flags.get(), polyCnt * sizeof(PolyAreaFlags::FlagType));
+	std::memcpy(newFlags, m_flags.get(), m_triCount * sizeof(mesh::FlagType));
+	std::memcpy(newFlags + m_triCount, flags.get(), polyCnt * sizeof(mesh::FlagType));
 	m_verts.reset(newVerts);
 	m_tris.reset(newTris);
 	m_flags.reset(newFlags);
-	if (m_enabledRendering) {
-        float* newNormals = new(std::nothrow) float[triCountNew * 3];
-		if (!newNormals)
-            return {5, 0, 0, 0};
-		std::memcpy(newNormals, m_normals.get(), m_triCount * 3 * sizeof(float));
-		std::memset(newNormals + m_triCount * 3, 0xff, polyCnt * 3 * sizeof(float));
-		m_normals.reset(newNormals);
-	}
+    float* newNormals = new(std::nothrow) float[triCountNew * 3];
+	if (!newNormals)
+        return {5, 0, 0, 0};
+	std::memcpy(newNormals, m_normals.get(), m_triCount * 3 * sizeof(float));
+	std::memset(newNormals + m_triCount * 3, 0xff, polyCnt * 3 * sizeof(float));
+	m_normals.reset(newNormals);
 	m_vertCountStatic = m_vertCount;
 	m_triCountStatic = m_triCount;
 	m_vertCount = vertCountNew;
@@ -1207,18 +1086,18 @@ ErrorCode4 rcMeshLoaderObjExt::addVobBboxesToStaticMesh()
     return {};
 }
 
-uint8_t rcMeshLoaderObjExt::appendMarkedArea(
+uint8_t MeshLoaderObjExt::appendMarkedArea(
     std::unique_ptr<float[]>& verts, int vertsNum, float minh, float maxh, int area
 ) {
     if (m_markedCnt == m_markedSize) {
         m_markedSize = 1 + m_markedSize * 2;
-        MarkedEntry* markedNew = new(std::nothrow) MarkedEntry[m_markedSize];
+		mesh::MarkedArea* markedNew = new(std::nothrow) mesh::MarkedArea[m_markedSize];
         if (!markedNew) {
             return 1;
         }
         for (int i = 0; i < m_markedCnt; ++i) {
-            MarkedEntry& mTo = markedNew[i];
-            MarkedEntry& mFrom = m_marked[i];
+			mesh::MarkedArea& mTo = markedNew[i];
+			mesh::MarkedArea& mFrom = m_marked[i];
             mTo.vertsNum = mFrom.vertsNum;
             mTo.verts = mFrom.verts;
             mFrom.verts = nullptr;
@@ -1228,7 +1107,7 @@ uint8_t rcMeshLoaderObjExt::appendMarkedArea(
         }
         m_marked.reset(markedNew);
     }
-    MarkedEntry& mNew = m_marked[m_markedCnt];
+	mesh::MarkedArea& mNew = m_marked[m_markedCnt];
     mNew.vertsNum = vertsNum;
     mNew.verts = verts.release();
     mNew.minh = minh;
@@ -1238,7 +1117,7 @@ uint8_t rcMeshLoaderObjExt::appendMarkedArea(
     return 0;
 }
 
-std::vector<char*> rcMeshLoaderObjExt::splitByChar(char* s, char ch)
+std::vector<char*> MeshLoaderObjExt::splitByChar(char* s, char ch)
 {
 	std::vector<char*> ret;
 	ret.reserve(16);
@@ -1257,7 +1136,7 @@ std::vector<char*> rcMeshLoaderObjExt::splitByChar(char* s, char ch)
 	return ret;
 }
 
-std::unique_ptr<float[]> rcMeshLoaderObjExt::splitVerts(char* s, int nVerts)
+std::unique_ptr<float[]> MeshLoaderObjExt::splitVerts(char* s, int nVerts)
 {
 	//1,2,3:3,4,5:2,2,2
 	char* sprev = s;
@@ -1289,17 +1168,17 @@ std::unique_ptr<float[]> rcMeshLoaderObjExt::splitVerts(char* s, int nVerts)
 	return dat;
 }
 
-uint8_t rcMeshLoaderObjExt::loadMarked(const std::unique_ptr<char[]>& markedData, int size)
+uint8_t MeshLoaderObjExt::loadMarked(const std::unique_ptr<char[]>& markedData, int size)
 {
     return loadMarked(markedData, size, m_markedCnt, m_markedSize, m_marked);
 }
 
-uint8_t rcMeshLoaderObjExt::loadMarked(
+uint8_t MeshLoaderObjExt::loadMarked(
 	const std::unique_ptr<char[]>& markedData,
 	int size,
 	int& markedCnt,
     int& markedSize,
-	std::unique_ptr<MarkedEntry[]>& marked
+	std::unique_ptr<mesh::MarkedArea[]>& marked
 ) {
 	static const int NUM_PARTS = 11;
 	char* src = markedData.get();
@@ -1354,13 +1233,13 @@ uint8_t rcMeshLoaderObjExt::loadMarked(
 
 		if (markedCnt == markedSize) {
 			markedSize = 1 + markedSize * 2;
-            MarkedEntry* markedNew = new(std::nothrow) MarkedEntry[markedSize];
+			mesh::MarkedArea* markedNew = new(std::nothrow) mesh::MarkedArea[markedSize];
 			if (!markedNew) {
 				return 6;
 			}
 			for (int i = 0; i < markedCnt; ++i) {
-				MarkedEntry& mTo = markedNew[i];
-				MarkedEntry& mFrom = marked[i];
+				mesh::MarkedArea& mTo = markedNew[i];
+				mesh::MarkedArea& mFrom = marked[i];
 				mTo.vertsNum = mFrom.vertsNum;
 				mTo.verts = mFrom.verts;
 				mFrom.verts = nullptr;
@@ -1370,7 +1249,7 @@ uint8_t rcMeshLoaderObjExt::loadMarked(
 			}
 			marked.reset(markedNew);
 		}
-		MarkedEntry& mNew = marked[markedCnt];
+		mesh::MarkedArea& mNew = marked[markedCnt];
 		mNew.vertsNum = vertsNum;
 		mNew.verts = verts.release();
 		mNew.minh = minh;
@@ -1383,8 +1262,8 @@ uint8_t rcMeshLoaderObjExt::loadMarked(
 	return 0;
 }
 
-int rcMeshLoaderObjExt::addMarkedAreaToMemory(
-	const MarkedEntry& m, std::unique_ptr<char[]>& data, int& dataSize, int& dataNum
+int MeshLoaderObjExt::addMarkedAreaToMemory(
+	const mesh::MarkedArea& m, std::unique_ptr<char[]>& data, int& dataSize, int& dataNum
 ) {
 	std::ostringstream oss;
 
@@ -1427,21 +1306,19 @@ int rcMeshLoaderObjExt::addMarkedAreaToMemory(
 	return 0;
 }
 
-ErrorCode4 rcMeshLoaderObjExt::load(
+ErrorCode4 MeshLoaderObjExt::load(
 	const char* staticMeshName,
 	const char* vobsMeshName,
 	const char* markedMeshName,
 	float xMinOffsetCut,
 	float xMaxOffsetCut,
 	float zMinOffsetCut,
-	float zMaxOffsetCut,
-	bool enabledRendering
+	float zMaxOffsetCut
 ) {
 	if (m_loaded) {
 		return {1, 0, 0, 0};
 	}
 
-	m_enabledRendering = enabledRendering;
 	int staticSize = 0;
 	int vobsSize = 0;
 	int markedSize = 0;
@@ -1484,16 +1361,4 @@ ErrorCode4 rcMeshLoaderObjExt::load(
 	m_loaded = true;
 
 	return {};
-}
-
-void rcMeshLoaderObjExt::calcBounds(float* bMin, float* bMax) const
-{
-	rcVcopy(bMin, &m_verts[0]);
-	rcVcopy(bMax, &m_verts[0]);
-	for (int i = 3; i < m_vertCount * 3; i += 3)
-	{
-		const float* v = &m_verts[i];
-		rcVmin(bMin, v);
-		rcVmax(bMax, v);
-	}
 }

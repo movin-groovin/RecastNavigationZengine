@@ -51,17 +51,6 @@ solution "recastnavigation"
 	filter "platforms:Win64"
 		architecture "x64"
 
-project "Common"
-	language "C++"
-	kind "StaticLib"
-	includedirs { 
-		"../Common/Include"
-	}
-	files { 
-		"../Common/Include/*.h", 
-		"../Common/Source/*.cpp" 
-	}
-
 project "DebugUtils"
 	language "C++"
 	kind "StaticLib"
@@ -137,16 +126,26 @@ project "Recast"
 		"../Recast/Include/*.h",
 		"../Recast/Source/*.cpp"
 	}
-	links { 
-		"Common"
+	
+project "Common"
+	language "C++"
+	kind "StaticLib"
+	defines { "USAGE_SSE_1_0", "CPP_EXCEPTIONS_ON", "RENDERING_ENABLED", "LOGGING_ENABLED" }
+	exceptionhandling "On"
+	includedirs { 
+		"../Common/Include"
+	}
+	files { 
+		"../Common/Include/*.h",
+		"../Common/Source/*.cpp" 
 	}
 
 project "NavMeshEditor"
 	language "C++"
+	defines { "USAGE_SSE_1_0", "CPP_EXCEPTIONS_ON", "RENDERING_ENABLED", "LOGGING_ENABLED" }
 	-- Catch requires RTTI and exceptions
 	exceptionhandling "On"
 	rtti "On"
-	defines { "USAGE_SSE_1_0", "CPP_EXCEPTIONS_ON" }
 	kind "WindowedApp"
 	includedirs { 
 		"../NavMeshEditor/Include",

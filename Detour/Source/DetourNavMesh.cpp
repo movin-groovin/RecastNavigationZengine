@@ -470,7 +470,15 @@ void dtNavMesh::connectExtOffMeshLinks(dtMeshTile* tile, dtMeshTile* target, int
 		if (targetPoly->firstLink == DT_NULL_LINK)
 			continue;
 		
-		const float halfExtents[3] = { targetCon->rad, target->header->walkableClimb, targetCon->rad };
+		const float halfExtents[3] = {
+			targetCon->rad,
+#ifdef ZENGINE_NAVMESH
+			targetCon->rad * 3,
+#else
+			target->header->walkableClimb,
+#endif //  ZENGINE_NAVMESH
+			targetCon->rad
+		};
 		
 		// Find polygon to connect to.
 		const float* p = &targetCon->pos[3];
@@ -570,7 +578,15 @@ void dtNavMesh::baseOffMeshLinks(dtMeshTile* tile)
 		dtOffMeshConnection* con = &tile->offMeshCons[i];
 		dtPoly* poly = &tile->polys[con->poly];
 	
-		const float halfExtents[3] = { con->rad, tile->header->walkableClimb, con->rad };
+		const float halfExtents[3] = {
+			con->rad,
+#ifdef ZENGINE_NAVMESH
+			con->rad * 3,
+#else
+			tile->header->walkableClimb,
+#endif //  ZENGINE_NAVMESH
+			con->rad
+		};
 		
 		// Find polygon to connect to.
 		const float* p = &con->pos[0]; // First vertex

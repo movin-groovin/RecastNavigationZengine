@@ -184,7 +184,7 @@ static void runProfile() {
         std::printf("Error of InputGeom load\n");
         return;
     }
-    //const Grid2dBvh& space = geom.getSpace();
+    //const mesh::Grid2dBvh& space = geom.getSpace();
     NavMeshTesterTool testerTool(&geom, nullptr);
     dtNavMesh* navMesh = loadAll(navMeshName);
     if (!navMesh) {
@@ -914,7 +914,7 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 					offsetXmax = 0.f;
 					offsetZmin = 0.f;
 					offsetZmax = 0.f;
-					sample->resetDrawers();
+					sample->handleMeshChanged(geom);
 				}
 				imguiSeparator();
 			}
@@ -1059,15 +1059,15 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 				meshName = *levelToLoad;
 				showLevels = false;
 				
-				freeAligned<InputGeom>(geom);
+				common::freeAligned<InputGeom>(geom);
 				geom = 0;
 				
 				string path = meshesFolder + "/" + meshName;
 				
-				geom = allocAligned<InputGeom>(16);
+				geom = common::allocAligned<InputGeom>(16);
 				//if (!geom->load(&ctx, path))
                 if (!geom->loadFromDir(&ctx, path.c_str(), bvhGridSize)) {
-					freeAligned<InputGeom>(geom);
+					common::freeAligned<InputGeom>(geom);
 					geom = 0;
 
 					// Destroy the sample if it already had geometry loaded, as we've just deleted it!
@@ -1178,11 +1178,11 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 					
 					path = meshesFolder + "/" + meshName;
 					
-					freeAligned<InputGeom>(geom);
-					geom = allocAligned<InputGeom>(16);
+					common::freeAligned<InputGeom>(geom);
+					geom = common::allocAligned<InputGeom>(16);
 					if (!geom || !geom->loadFromDir(&ctx, path.c_str(), 0.f))
 					{
-						freeAligned<InputGeom>(geom);
+						common::freeAligned<InputGeom>(geom);
 						geom = 0;
 						delete sample;
 						sample = 0;
@@ -1301,7 +1301,7 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 	SDL_Quit();
 	
 	delete sample;
-	freeAligned<InputGeom>(geom);
+	common::freeAligned<InputGeom>(geom);
 	
 	return 0;
 }

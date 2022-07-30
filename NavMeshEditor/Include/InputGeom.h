@@ -23,8 +23,9 @@
 #include "MeshLoaderObj.h"
 #include "Recast.h"
 #include "Common.h"
+#include "Geometry.h"
+#include "Mesh.h"
 
-#include <vector>
 #include <string>
 #include <utility>
 #include <limits>
@@ -38,557 +39,22 @@
 
 #include <immintrin.h>
 
-#define PRINT_STRUCTURE_STAT
-//#define PRINT_TOTAL_COLLISION_STAT
-#ifdef PRINT_TOTAL_COLLISION_STAT
-static const uint64_t PRINT_PER_N_CALLS = 5;
-#endif // PRINT_TOTAL_COLLISION_STAT
 
-struct BuildSettings
-{
-	// Cell size in world units
-	float cellSize;
-	// Cell height in world units
-	float cellHeight;
-	// Agent height in world units
-	float agentHeight;
-	// Agent radius in world units
-	float agentRadius;
-	// Agent max climb in world units
-	float agentMaxClimb;
-	// Agent max slope in degrees
-	float agentMaxSlope;
-	// Region minimum size in voxels.
-	// regionMinSize = sqrt(regionMinArea)
-	float regionMinSize;
-	// Region merge size in voxels.
-	// regionMergeSize = sqrt(regionMergeArea)
-	float regionMergeSize;
-	// Edge max length in world units
-	float edgeMaxLen;
-	// Edge max error in voxels
-	float edgeMaxError;
-	float vertsPerPoly;
-	// Detail sample distance in voxels
-	float detailSampleDist;
-	// Detail sample max error in voxel heights.
-	float detailSampleMaxError;
-	// Partition type, see SamplePartitionType
-	int partitionType;
-	// Bounds of the area to mesh
-	float navMeshBMin[3];
-	float navMeshBMax[3];
-	// Size of the tiles in voxels
-	float tileSize;
-};
-
-
-class LoggerAdapter: public BaseLogger, private BuildContext
+class LoggerAdapter: public common::BaseLogger
 {
 public:
-	LoggerAdapter(
-		int messageSize = BuildContext::MAX_MESSAGES,
-		int textPoolSize = BuildContext::TEXT_POOL_SIZE
-	) : BuildContext(messageSize, textPoolSize) {}
+	LoggerAdapter(BuildContext* ctx): m_ctx(ctx) {}
 	~LoggerAdapter() = default;
 
 private:
-	void doLogMessage(int category, const char* msg, int len) override;
-};
-
-
-struct Aabb3D
-{
-    float min[3];
-    float max[3];
-    int polyIndex;
-};
-
-struct OBB
-{
-    float dir[9]; // 3 vectors
-    float center[3];
-    float halfWidth[3];
-};
-
-struct OBBExt
-{
-    float verts[3 * 8];
-    OBB b;
-};
-
-class Octree
-{
-private:
-    struct Node
-    {
-        float bmin[3];
-        float bmax[3];
-        Node* childs[8];
-        int m_num = 0;
-        int* m_trianglePolys = nullptr;
-
-        Node() {std::memset(childs, 0, sizeof(childs));}
-        ~Node() {
-            delete [] m_trianglePolys;
-            for (int i = 0; i < 8; ++i) {
-                if (!childs[i]) break;
-                delete childs[i];
-                childs[i] = nullptr;
-            }
-        }
-        bool isLeaf() const {return m_trianglePolys;}
-    };
-
-public:
-    Octree(BaseLogger* log, int maxDepth = 20, int minTrisInLeaf = 101);
-    ~Octree();
-
-    bool Load(rcMeshLoaderObjExt* mesh);
-    bool isMemInsufficient() const {return m_memInsufficient;}
-    bool detectSegmentPolyCollision(
-        const float* start, const float* end, float& t, int n
-    ) const;
-    void printStat() const
-    {
-#ifndef DISABLE_LOGGER
-		m_log->log(RC_LOG_PROGRESS, "Delta x: %f, y: %f, z: %f\n", m_bmax[0] - m_bmin[0],
-               m_bmax[1] - m_bmin[1], m_bmax[2] - m_bmin[2]);
-		m_log->log(RC_LOG_PROGRESS, "Polys num: %d, leafs num: %d, average polys in leaf: %f, "
-               "max polys in leaf: %d, min polys in leaf: %d, current max depth: "
-               "%d", m_polyNum, m_leafNum, m_averPolysInLeaf,
-               m_maxPolysInLeaf, m_minPolysInLeaf, m_curMaxDepthReached
-            );
-    }
-#endif // DISABLE_LOGGER
-    static bool checkOverlapAabb(
-        const float* start, const float* end, const float* bmin, const float* bmax
-    );
+	void doLogMessage(common::LogCategory category, const char* msg, int len) override;
 
 private:
-    Node* LoadDo(
-        int depth, const float* center, const float* span, const float* verts,
-        const int* tris, const Aabb3D* bboxes, int polysNum
-    );
-    bool detectSegmentPolyCollisionDo(
-        const float* start, const float* end, const Node* cur, float& t
-    ) const;
-    static void calcAabb(const float* verts, const int* triangle, Aabb3D* bbox);
-
-private:
-	BaseLogger* m_log;
-    const int m_maxDepth;
-    const int m_minTrisInLeaf;
-    float m_bmin[3];
-    float m_bmax[3];
-    Node m_root;
-	rcMeshLoaderObjExt* m_mesh = nullptr;
-    std::vector<std::vector<int>> m_constrTimeIds;
-    bool m_memInsufficient = false;
-    int m_polyNum = 0;
-    int m_leafNum = 0;
-    float m_averPolysInLeaf = 0.f;
-    int m_maxPolysInLeaf = 0;
-    int m_minPolysInLeaf = std::numeric_limits<int>::max();
-    int m_curMaxDepthReached = 0;
-    const int* m_triIds = nullptr;
-    const float* m_verts = nullptr;
-    // detection cast (metrics)
-    mutable int m_totalNodes;
-    mutable int m_leafNodes;
-    mutable int m_polys;
-};
-
-class BminBmaxSegmentTree;
-
-template <typename T>
-struct ArrayBuffer
-{
-    ArrayBuffer() = default;
-    ~ArrayBuffer() { release(); }
-    void release() {
-        delete [] data;
-        data = nullptr;
-        size = 0;
-        num = 0;
-    }
-
-    int size = 0;
-    int num = 0;
-    T* data = nullptr;
-};
-
-class alignas(__m128) Grid2dBvh
-{
-public:
-	enum: int {
-		SUCCESSFUL,
-		ERROR_NO_MEMORY,
-		ERROR_LOGIC_ERROR,
-		ERROR_PARSING_ERROR
-	};
-
-	struct TrianglesData
-    {
-		TrianglesData() = default;
-		TrianglesData(const TrianglesData&) = delete;
-		const TrianglesData operator=(const TrianglesData&) = delete;
-		// move operators deleted automatically
-		~TrianglesData() { release(); }
-
-		void release() {
-			delete[] verts;
-			verts = nullptr;
-			delete[] tris;
-			tris = nullptr;
-			delete[] triFlags;
-			triFlags = nullptr;
-			delete[] normals;
-			normals = nullptr;
-			vertsNum = 0;
-			trisNum = 0;
-			clearCurrent();
-		}
-
-		void clearCurrent() {
-			vertsNumCurrent = 0;
-			trisNumCurrent = 0;
-		}
-
-		int vertsNum = 0;
-		float* verts = nullptr;
-		int trisNum = 0;
-		int* tris = nullptr;
-		uint8_t* triFlags = nullptr;
-		float* normals = nullptr;
-		int vertsNumCurrent = 0;
-		int trisNumCurrent = 0;
-    };
-	struct OffMeshData
-	{
-        OffMeshData() = default;
-		~OffMeshData() { release(); }
-
-		void release() {
-			delete[] offMeshVerts;
-			offMeshVerts = nullptr;
-			delete[] offMeshRads;
-			offMeshRads = nullptr;
-			delete[] offMeshDirs;
-			offMeshDirs = nullptr;
-			delete[] offMeshAreas;
-			offMeshAreas = nullptr;
-			delete[] offMeshFlags;
-			offMeshFlags = nullptr;
-			delete[] offMeshId;
-			offMeshId = nullptr;
-			offMeshSize = 0;
-			offMeshNum = 0;
-		}
-
-        float* offMeshVerts = nullptr;
-        float* offMeshRads = nullptr;
-        uint8_t* offMeshDirs = nullptr;
-        uint8_t* offMeshAreas = nullptr;
-        uint16_t* offMeshFlags = nullptr;
-        uint32_t* offMeshId = nullptr;
-        int offMeshSize = 0;
-        int offMeshNum = 0;
-	};
-
-private:
-	static const int VOBS_NUM_COLLIDE_CHEKING = 8;
-    // TODO replace to common header (also from MeshLoaderExt)
-    static const int REGULAR_VERTS_BLOCK = 3;
-	static const int SSE_1_VERTS_BLOCK = 4;
-#ifdef USAGE_SSE_1_0
-    static const int CUR_VERTS_BLOCK = SSE_1_VERTS_BLOCK;
-#else
-    static const int CUR_VERTS_BLOCK = REGULAR_VERTS_BLOCK;
-#endif
-    static constexpr float COST_CHECK_BBOX = 0.125f;
-    static constexpr float COST_CHECK_TRI = 1.f;
-    static constexpr int LIMIT_POLYS_STOP = 16; // 8, 1;
-
-    struct CellBoundingPair
-    {
-        float min[3];
-        float max[3];
-    };
-
-	struct XzGridBorders
-	{
-		int xiMin = -1;
-		int xiMax = -1;
-		int ziMin = -1;
-		int ziMax = -1;
-	};
-
-	struct MarkedEntry
-	{
-		MarkedEntry() = default;
-		~MarkedEntry() {
-			delete [] gridIds;
-			gridIds = nullptr;
-		}
-
-		int copy(MarkedEntry& to) {
-			if (!data.copy(to.data)) {
-				return ERROR_NO_MEMORY;
-			}
-			to.idsNum = idsNum;
-			to.idsSize = idsSize;
-            to.gridIds = new(std::nothrow) int[to.idsSize];
-			if (!gridIds) {
-				return ERROR_NO_MEMORY;
-			}
-			std::memcpy(to.gridIds, gridIds, sizeof(int) * to.idsNum);
-			return SUCCESSFUL;
-		}
-
-		rcMeshLoaderObjExt::MarkedEntry data;
-		int idsSize = 0;
-		int idsNum = 0;
-		int* gridIds = nullptr;
-	};
-    struct alignas(__m128) BvhNode
-    {
-        float min[3];
-        float padding; // for sse
-        float max[3];
-        int32_t triId = 0;
-    };
-	static_assert(sizeof(BvhNode) == 32, "Incorrect BvhNode size");
-	struct GridCell
-    {
-		struct VobPosResidence {
-			int vobIndex = -1;
-			//int posIndex = -1;
-		};
-
-		float bmin[3];
-        float bmax[3];
-        int childsNumber = 0;
-        const BvhNode* childs = nullptr;
-		int vobResidencesNum = 0;
-		VobPosResidence* vobResidence = nullptr;
-		int markedNum = 0;
-		int markedSize = 0;
-		int* markedIndices = nullptr;
-
-        ~GridCell() {
-			//delete [] childs;
-			freeAlignedArr<BvhNode>(const_cast<BvhNode*>(childs), 0);
-			childs = nullptr;
-			delete [] vobResidence;
-			vobResidence = nullptr;
-			delete [] markedIndices;
-			markedIndices = nullptr;
-        }
-    };
-	struct MeshEntry
-	{
-        MeshEntry() = default;
-        ~MeshEntry () {
-            //delete [] childs;
-			freeAlignedArr<BvhNode>(const_cast<BvhNode*>(childs), 0);
-            childs = nullptr;
-        }
-
-        rcMeshLoaderObjExt::MeshEntry mesh;
-		int childsNumber = 0;
-		const BvhNode* childs = nullptr;
-	};
-	using VobEntry = rcMeshLoaderObjExt::VobEntry;
-
-public:
-    Grid2dBvh ();
-    ~Grid2dBvh ();
-
-	void release();
-
-    int load(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize);
-	bool isLoaded() const;
-	bool saveBinaryMesh() const;
-
-    int getOverlappingRectCellIds(
-		const float* min, const float* max, int* cellIds, int idsSize
-	) const;
-    int getOverlappingRectMarkedAreaIds(
-        const float* min, const float* max, int* markedAreaIds, int idsSize
-    ) const;
-	const TrianglesData& getEmptyOverlappingRectData() const;
-	const TrianglesData& extractOverlappingRectData(int cellId) const;
-	void extractOverlappingRectData(int cellId, TrianglesData& customData) const;
-	void moverStateUpdate(const char* name, int stateId);
-
-	bool segTriCollisionFirstHit(const float* start, const float* end, float& t) const;
-	bool segTriCollisionNearestHit(const float* start, const float* end, float& t) const;
-	//bool obbTriCollisionFirstHit(const OBB* b) const;
-	bool obbTriCollisionFirstHit(const OBBExt* be) const;
-#ifdef PRINT_STRUCTURE_STAT
-    void printStat(rcContext* ctx) const;
-#endif
-#if (PRINT_TRI_VS_SEG_LATENCY || PRINT_TRI_VS_OBB_LATENCY)
-	int getNodesPerCall() const;
-	int getLeafesPerCall() const;
-	int getPolysPerCall() const;
-	void clearStatPerCall() const;
-#endif
-
-	const TrianglesData& getRenderingData() const;
-	const rcMeshLoaderObjExt::MarkedEntry* getMarkedArea(int i) const;
-	int getMarkedAreaSize() const;
-	int addMarkedArea(
-		const float* verts,
-		const int nverts,
-		const float minh,
-		const float maxh,
-		int area
-	);
-	void deleteMarkedArea(int n);
-	void totalDeleteMarkedAreas();
-	const OffMeshData& getOffMeshData() const;
-	int addOffMeshConn(
-		const float* spos,
-		const float* epos,
-		const float rad,
-		unsigned char bidir,
-		unsigned char area,
-		unsigned short flags
-	);
-	void deleteOffMeshConn(int i);
-    void getBounds(float* bMin, float* bMax) const;
-	void getWorldSize(float* res) const;
-	int getCellSize() const;
-
-private:
-	bool segTriCollisionVobFirstHit(int vobId, const float* start, const float* end, float& t) const;
-	bool segTriCollisionVobNearestHit(int vobId, const float* start, const float* end, float& t) const;
-	bool obbTriCollisionVobFirstHit(int vobId, const OBBExt* be) const;
-
-	void clearState();
-    int loadInternal(rcContext* ctx, rcMeshLoaderObjExt* mesh, int cellSize);
-	int constructVobs(rcMeshLoaderObjExt* mesh);
-	int constructRenderingData(rcMeshLoaderObjExt* mesh);
-	int constructOverlappingRectData(
-		std::unique_ptr<std::pair<int, int>[]> trisVertsPerCellStatic
-	);
-	int constructMarkedAreas(rcMeshLoaderObjExt* mesh);
-	int constructMarkedAreas(int mNum, const rcMeshLoaderObjExt::MarkedEntry* marked);
-	int constructOffmeshesOnLadders();
-	void fillPolyFlags(
-		PolyAreaFlags::FlagType* flagsTo,
-		const PolyAreaFlags::FlagType* flagsFrom,
-		int trisNum
-	);
-    bool checkTriangleBelongAabb (
-        const float* bmin, const float* bmax, const int* triangle
-    ) const;
-    std::pair<BvhNode*, int> makeBvh(
-        const Aabb3D* bboxes, int* boxIds, const int trisNum
-    ) const;
-    void subdivideMedian(
-        const Aabb3D* bboxes, int* boxIds, BvhNode* bnodes, int i, int j, int& curNodeNum
-#ifdef PRINT_STRUCTURE_STAT
-        ,int depth, int& maxBoxesInGridCell
-#endif
-    ) const;
-    void subdivideSah(
-        const Aabb3D* bboxes, int* boxIds, BvhNode* bnodes, int i, int j, int& curNodeNum
-#ifdef PRINT_STRUCTURE_STAT
-        ,int depth, int& maxBoxesInGridCell
-#endif
-    ) const;
-	XzGridBorders calcXzGridBorders(const float* min, const float* max) const;
-	int linkMarkedAreaWithGrid(int vertsNum, const float* verts, int eInd, MarkedEntry& e);
-
-    static void calc3DAabb(const float* verts, const int* triangle, Aabb3D* bbox, int vertsBlock);
-	static void copyDataFromBvh (
-		TrianglesData& resData,
-		int& trisPos,
-		int& vertsPos,
-		const BvhNode* curNode,
-		const BvhNode* endNode,
-		const rcMeshLoaderObjExt::Position* pos,
-		const float* verts,
-		const int* tris,
-		const PolyAreaFlags::FlagType* triFlags
-	);
-    static float calcSah(
-        const BminBmaxSegmentTree& tree,
-        int i,
-        int mid,
-        int j,
-        float* totalMin,
-        float* totalMax
-    );
-    static float calcHalfSurfaceArea(const float* bboxDiff);
-    static float calcPartSahValue(const float* diffTotal, const float* bboxDiff, const int n);
-
-	static void transformVertex(const float* vertex, const float* trafo, float* vertexNew);
-	static void transformDirection(const float* normal, const float* trafo, float* normalNew);
-	static void transformVertex(
-		const float* vertex, const rcMeshLoaderObjExt::Position* pos, float* vertexNew
-	);
-
-private:
-	//BaseLogger* m_log;
-    int m_cellSize = 0;
-    float m_cellSizeInv = 0.f;
-#ifdef USAGE_SSE_1_0
-    __m128 m_cellSizeInvVec;
-#endif
-    int m_cellsNum = 0;
-    GridCell* m_grid = nullptr;
-	int m_trisNum = 0;
-	int* m_tris = nullptr;
-	PolyAreaFlags::FlagType* m_triFlags = nullptr;
-	int m_vertsNum = 0;
-	float* m_verts = nullptr;
-	int m_vobsNum = 0;
-	VobEntry* m_vobs = nullptr;
-	int m_vobsMeshesNum = 0;
-	MeshEntry* m_vobsMeshes = nullptr;
-	LinearHashMultiStrToInt<> m_moverNameToVob;
-#ifdef USAGE_SSE_1_0
-    __m128 m_worldMinVecXzXz;
-#endif
-	float m_worldMin[3];
-    float m_worldMax[3];
-    float m_worldSize[3];
-    int m_wszCellsX;
-    int m_wszCellsY;
-    int m_wszCellsZ;
-	mutable TrianglesData m_overlappingRectData;
-    ArrayBuffer<MarkedEntry> m_markedAreas;
-    OffMeshData m_offMeshConns;
-	TrianglesData m_renderingData;
-    // statisctics per construction
-#ifdef PRINT_STRUCTURE_STAT
-    mutable int m_totalNodes = 0;
-    mutable int m_leafNodes = 0;
-    mutable int m_internalNodes = 0;
-    mutable int m_maxDepth = 0;
-    mutable int m_curDepth = 0;
-    mutable int m_maxTrisInGridCell = 0;
-    mutable int m_maxBoxesInGridCell = 0;
-    mutable int m_bytesPerConstruction = 0;
-    mutable int m_bytesForData = 0;
-#endif
-    // statistics per call
-#if (PRINT_TRI_VS_SEG_LATENCY || PRINT_TRI_VS_OBB_LATENCY)
-    mutable int totalNodesTraversed = 0;
-    mutable int totalLeafesTraversed = 0;
-    mutable int totalPolysTraversed = 0;
-#endif
+	BuildContext* m_ctx;
 };
 
 class alignas(__m128) InputGeom
 {
-private:
-	static const int MAX_VOLUMES = 256;
-
 public:
 	InputGeom();
 	~InputGeom();
@@ -598,11 +64,7 @@ public:
 	void release();
 	void zeroBboxes();
 
-    bool loadFromDir(
-		class rcContext* ctx,
-		const char* filepath,
-		float bvhGridSize
-	);
+    bool loadFromDir(class BuildContext* ctx, const char* filepath, float bvhGridSize);
 	bool saveBinaryMesh() const;
 	void updateOffsets(
 		float xMinOffsetCut,
@@ -620,8 +82,7 @@ public:
 	void cutMesh(float offsetXmin, float offsetXmax, float offsetZmin, float offsetZmax);
 
 	// service calls
-	rcContext& getCtx() { return *m_ctx; }
-	const Grid2dBvh& getSpace() { return m_space; }
+	const mesh::Grid2dBvh& getSpace() { return m_space; }
 	int getVertCount() const;
 	int getTriCount() const;
 	const char* getNavMeshName() const;
@@ -629,19 +90,19 @@ public:
 	const char* getBaseMeshName() const;
 
 	// Method to return static mesh data
-	const rcMeshLoaderObjExt* getMeshExt() const;
+	const MeshLoaderObjExt* getMeshExt() const;
 	const float* getMeshBoundsMin() const;
 	const float* getMeshBoundsMax() const;
 
 	// collisions
     bool raycastMesh(const float* src, const float* dst, float& tmin, bool nearestHit) const;
-    bool obbCollDetect(const OBBExt* be) const;
+    bool obbCollDetect(const geometry::OBBExt* be) const;
 
 	// mesh extracting
     int getOverlappingRectCellIds(
 		const float* min, const float* max, int* cellIds, int idsSize
 	) const;
-	const Grid2dBvh::TrianglesData& extractOverlappingRectData(int cellId) const;
+	const mesh::Grid2dBvh::TrianglesData& extractOverlappingRectData(int cellId) const;
 
 	// Off-Mesh connections.
 	int getOffMeshConnectionCount() const;
@@ -661,7 +122,7 @@ public:
 
 	// Box Volumes.
 	int getConvexVolumeCount() const;
-	const rcMeshLoaderObjExt::MarkedEntry* getConvexVolume(int i) const;
+	const mesh::MarkedArea* getConvexVolume(int i) const;
 	void addConvexVolume(
 		const float* verts,
 		const int nverts,
@@ -675,7 +136,6 @@ public:
 
 private:
 	bool loadMesh(
-		class rcContext* ctx,
 		const char* navMeshName,
 		const char* staticMesh,
 		const char* vobsMesh,
@@ -688,9 +148,9 @@ private:
 	);
 
 private:
-	rcContext* m_ctx;
-	//Octree m_oct;
-	Grid2dBvh m_space;
+	std::unique_ptr<LoggerAdapter> m_log;
+	//mesh::Octree m_oct;
+	mesh::Grid2dBvh m_space;
 	bool m_showOffsetPlanes;
 	float m_xMinOffsetCut;
 	float m_xMaxOffsetCut;
@@ -701,7 +161,7 @@ private:
 	std::string m_markedMeshName;
 	std::string m_navMeshName;
 	std::string m_baseMeshName;
-	std::unique_ptr<rcMeshLoaderObjExt> m_meshExt;
+	std::unique_ptr<MeshLoaderObjExt> m_meshExt;
 	float m_meshBMin[3];
 	float m_meshBMax[3];
 	float m_meshBMinCur[3];

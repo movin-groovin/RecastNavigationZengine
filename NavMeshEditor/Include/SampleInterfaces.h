@@ -68,12 +68,12 @@ public:
 	int getLogCount() const;
 	/// Returns log message text.
 	const char* getLogText(const int i) const;
+	virtual void doLog(const rcLogCategory category, const char* msg, const int len);
 	
 protected:	
 	/// Virtual functions for custom implementations.
 	///@{
 	virtual void doResetLog();
-	virtual void doLog(const rcLogCategory category, const char* msg, const int len);
 	virtual void doResetTimers();
 	virtual void doStartTimer(const rcTimerLabel label);
 	virtual void doStopTimer(const rcTimerLabel label);

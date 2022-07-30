@@ -19,6 +19,7 @@
 #ifndef RECASTSAMPLE_H
 #define RECASTSAMPLE_H
 
+#include "Common.h"
 #include "Recast.h"
 #include "SampleInterfaces.h"
 
@@ -39,38 +40,6 @@ enum SampleToolType
 	TOOL_CONVEX_VOLUME,
 	TOOL_CROWD,
 	MAX_TOOLS
-};
-
-/// These are just sample areas to use consistent values across the samples.
-/// The use should specify these base on his needs.
-enum SamplePolyAreas
-{
-	SAMPLE_POLYAREA_GROUND,
-	SAMPLE_POLYAREA_ROAD,
-    SAMPLE_POLYAREA_FOREST,
-	SAMPLE_POLYAREA_DOOR,
-    SAMPLE_POLYAREA_LADDER,
-    SAMPLE_POLYAREA_WATER,
-    SAMPLE_POLYAREA_WATER_WALKING,
-    SAMPLE_POLYAREA_WATER_FORDING,
-    SAMPLE_POLYAREA_WATER_SWIMMING,
-    SAMPLE_POLYAREA_LAVA,
-
-    SAMPLE_POLYAREA_MAX = 0x3f
-};
-enum SamplePolyFlags
-{
-    SAMPLE_POLYFLAGS_WALK		    = 0x01,		// Ability to walk (ground, grass, road)
-    SAMPLE_POLYFLAGS_WATER_WALKING  = 0x02,
-    SAMPLE_POLYFLAGS_WATER_FORDING  = 0x04,
-    SAMPLE_POLYFLAGS_WATER_SWIMMING = 0x08,		// Ability to swim (water).
-    SAMPLE_POLYFLAGS_ROAD		    = 0x10,		// Ability to move through doors.
-    SAMPLE_POLYFLAGS_FOREST		    = 0x20,
-    SAMPLE_POLYFLAGS_DOOR		    = 0x40,		// Ability to move through doors.
-    SAMPLE_POLYFLAGS_LADDER		    = 0x80,
-    SAMPLE_POLYFLAGS_INHABITED      = 0x4000,
-    SAMPLE_POLYFLAGS_DISABLED       = 0x8000,	// Disabled polygon
-    SAMPLE_POLYFLAGS_ALL		    = 0xffff     // All abilities.
 };
 
 class SampleDebugDraw : public DebugDrawGL
@@ -217,6 +186,7 @@ public:
 	Sample& operator=(const Sample&) = delete;
 	
 	void setContext(BuildContext* ctx) { m_ctx = ctx; }
+	rcContext* getContext() const { return m_ctx; }
 	
 	void setTool(SampleTool* tool);
 	SampleToolState* getToolState(int type) { return m_toolStates[type]; }
@@ -237,7 +207,6 @@ public:
 	virtual void handleMeshChanged(class InputGeom* geom);
 	virtual bool handleBuild();
 	virtual void handleUpdate(const float dt);
-	virtual void collectSettings(struct BuildSettings& settings);
 	virtual void interruptAsyncBuilding();
 	virtual float getAsyncBuildingProgress() const;
 	virtual bool isAsyncBuilding() const;

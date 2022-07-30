@@ -21,10 +21,6 @@
 
 #include <cstdint>
 
-#ifdef ZENGINE_NAVMESH
-#include "Common.h"
-#endif // ZENGINE_NAVMESH
-
 /// The value of PI used by Recast.
 static const float RC_PI = 3.14159265f;
 
@@ -589,7 +585,9 @@ static const int RC_CONTOUR_REG_MASK = 0xffff;
 /// @see rcPolyMesh::polys
 static const unsigned short RC_MESH_NULL_IDX = 0xffff;
 
-#ifndef ZENGINE_NAVMESH
+#ifdef ZENGINE_NAVMESH
+#include "Common.h"
+#else
 /// Represents the null area.
 /// When a data element is given this value it is considered to no longer be 
 /// assigned to a usable area.  (E.g. It is unwalkable.)

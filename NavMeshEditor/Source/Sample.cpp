@@ -41,25 +41,25 @@ static unsigned int areaToColFunc(unsigned int area)
     switch(area)
     {
     // Ground (0) : light blue
-    case SAMPLE_POLYAREA_GROUND: return duRGBA(0, 192, 255, 255);
+    case common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND: return duRGBA(0, 192, 255, 255);
     // Water : blue
-    case SAMPLE_POLYAREA_WATER: return duRGBA(0, 0, 255, 255);
+    case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER: return duRGBA(0, 0, 255, 255);
     // dodgerblue
-    case SAMPLE_POLYAREA_WATER_WALKING: return duRGBA(128, 128, 255, 255);
+    case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING: return duRGBA(128, 128, 255, 255);
     // mediumblue
-    case SAMPLE_POLYAREA_WATER_FORDING: return duRGBA(0, 128, 128, 255);
+    case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING: return duRGBA(0, 128, 128, 255);
     // blue
-    case SAMPLE_POLYAREA_WATER_SWIMMING: return duRGBA(0, 0, 128, 255);
+    case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING: return duRGBA(0, 0, 128, 255);
     // Road : brown
-    case SAMPLE_POLYAREA_ROAD: return duRGBA(50, 20, 12, 255);
+    case common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD: return duRGBA(50, 20, 12, 255);
     // Forest : green
-    case SAMPLE_POLYAREA_FOREST: return duRGBA(0, 255, 0, 255);
+    case common::SamplePolyAreas::SAMPLE_POLYAREA_FOREST: return duRGBA(0, 255, 0, 255);
     // Door : cyan
-	case SAMPLE_POLYAREA_DOOR: return duRGBA(255, 0, 0, 255);//duRGBA(0, 255, 255, 255);
+	case common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR: return duRGBA(255, 0, 0, 255);//duRGBA(0, 255, 255, 255);
     // Ladder : gray
-    case SAMPLE_POLYAREA_LADDER: return duRGBA(128, 128, 128, 255);
+    case common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER: return duRGBA(128, 128, 128, 255);
     // Lava : orange
-    case SAMPLE_POLYAREA_LAVA: return duRGBA(255, 69, 0, 255);
+    case common::SamplePolyAreas::SAMPLE_POLYAREA_LAVA: return duRGBA(255, 69, 0, 255);
     // Unexpected : red
     default: return duRGBA(255, 0, 0, 255);
     }
@@ -172,24 +172,6 @@ void Sample::resetNavMeshDrawers()
 	m_ddVboNvm.reset();
 	m_ddVboNvmMisc.reset();
 	m_ddVboNvmTile.reset();
-}
-
-void Sample::collectSettings(BuildSettings& settings)
-{
-	settings.cellSize = m_cellSize;
-	settings.cellHeight = m_cellHeight;
-	settings.agentHeight = m_agentHeight;
-	settings.agentRadius = m_agentRadius;
-	settings.agentMaxClimb = m_agentMaxClimb;
-	settings.agentMaxSlope = m_agentMaxSlope;
-	settings.regionMinSize = m_regionMinSize;
-	settings.regionMergeSize = m_regionMergeSize;
-	settings.edgeMaxLen = m_edgeMaxLen;
-	settings.edgeMaxError = m_edgeMaxError;
-	settings.vertsPerPoly = m_vertsPerPoly;
-	settings.detailSampleDist = m_detailSampleDist;
-	settings.detailSampleMaxError = m_detailSampleMaxError;
-	settings.partitionType = m_partitionType;
 }
 
 void Sample::interruptAsyncBuilding()

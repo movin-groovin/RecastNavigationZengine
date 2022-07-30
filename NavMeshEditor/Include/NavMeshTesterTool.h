@@ -68,7 +68,7 @@ public:
         return rcSqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
     }
 
-    static void calcObbPoints(const OBB* b, float* obbPoints);
+    static void calcObbPoints(const geometry::OBB* b, float* obbPoints);
 
     static void calcObbExt(
         const float* src,
@@ -76,7 +76,7 @@ public:
         const float deltaH,
         const float halfWidth,
         const float scale,
-        OBBExt* be
+        geometry::OBBExt* be
     );
 
     bool detectJumpForwardCollisions(

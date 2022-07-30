@@ -29,6 +29,7 @@
 #else
 #	include <GL/glu.h>
 #endif
+#include "Mesh.h"
 #include "imgui.h"
 #include "InputGeom.h"
 #include "Sample.h"
@@ -209,7 +210,7 @@ Sample_TileMesh::~Sample_TileMesh()
 
 void Sample_TileMesh::initAsyncBuildData()
 {
-	const Grid2dBvh& space = m_geom->getSpace();
+	const mesh::Grid2dBvh& space = m_geom->getSpace();
 	auto& dat = space.getEmptyOverlappingRectData();
 	for (int i = 0, n = static_cast<int>(m_threadsMax); i < n; ++i) {
 		m_asyncBuildData[i].cleanup(true);
@@ -538,8 +539,8 @@ void Sample_TileMesh::handleRender(const float* cameraPos)
     // Draw mesh
     if (m_drawMode != DRAWMODE_NAVMESH_TRANS)
     {
-		const Grid2dBvh& space = m_geom->getSpace();
-        const Grid2dBvh::TrianglesData& rndData = space.getRenderingData();
+		const mesh::Grid2dBvh& space = m_geom->getSpace();
+        const mesh::Grid2dBvh::TrianglesData& rndData = space.getRenderingData();
 		if (!m_ddVboMesh)
 		{
 			duDebugDrawTriMeshSlopeFast(
@@ -609,7 +610,7 @@ void Sample_TileMesh::handleRender(const float* cameraPos)
 				duDebugDrawNavMeshNodes(&m_ddVboNvmMisc, *m_navQuery);
 			m_ddVboNvmMisc.draw();
 		}
-		//duDebugDrawNavMeshPolysWithFlags(&m_dd, *m_navMesh, SAMPLE_POLYFLAGS_DISABLED, duRGBA(0,0,0,128));
+		//duDebugDrawNavMeshPolysWithFlags(&m_dd, *m_navMesh, common::SamplePolyFlags::SAMPLE_POLYFLAGS_DISABLED, duRGBA(0,0,0,128));
     }
 
     glDepthMask(GL_TRUE);
@@ -811,8 +812,8 @@ bool Sample_TileMesh::initNavMesh()
 		return false;
 	}
 
-	m_navGenParams = std::make_unique<NavmeshGenParams[]>(1 + m_maxTiles);
-	std::memset(m_navGenParams.get(), 0, sizeof(NavmeshGenParams) * (1 + m_maxTiles));
+	m_navGenParams = std::make_unique<common::NavmeshGenParams[]>(1 + m_maxTiles);
+	std::memset(m_navGenParams.get(), 0, sizeof(common::NavmeshGenParams) * (1 + m_maxTiles));
 
 	return true;
 }
@@ -838,13 +839,6 @@ bool Sample_TileMesh::handleBuild()
     initToolStates(this);
 
     return true;
-}
-
-void Sample_TileMesh::collectSettings(BuildSettings& settings)
-{
-    Sample::collectSettings(settings);
-
-    settings.tileSize = m_tileSize;
 }
 
 void Sample_TileMesh::buildTile(const float* pos)
@@ -1212,7 +1206,7 @@ int Sample_TileMesh::buildTileMesh(
 		while (!atomicVal.compare_exchange_strong(cur, newVal));
 	};
 
-	const Grid2dBvh& space = m_geom->getSpace();
+	const mesh::Grid2dBvh& space = m_geom->getSpace();
 	if (!space.isLoaded())
     {
 		m_ctx->log(RC_LOG_ERROR, "buildNavigation: Input mesh is not specified");
@@ -1321,7 +1315,7 @@ int Sample_TileMesh::buildTileMesh(
 	int tileTriCount = 0;
 	for (int i = 0; i < n; ++i)
     {
-		Grid2dBvh::TrianglesData& dat = genCtx.meshData;
+		mesh::Grid2dBvh::TrianglesData& dat = genCtx.meshData;
         space.extractOverlappingRectData(genCtx.cellIds.data[i], dat);
 		tileTriCount += dat.trisNumCurrent;
 
@@ -1408,7 +1402,7 @@ int Sample_TileMesh::buildTileMesh(
         int* end = std::unique(genCtx.markedAreaIds.data, genCtx.markedAreaIds.data + n);
         n = static_cast<int>(end - genCtx.markedAreaIds.data);
         for (int i = 0; i < n; ++i) {
-            const rcMeshLoaderObjExt::MarkedEntry& area =
+            const mesh::MarkedArea& area =
                 *space.getMarkedArea(genCtx.markedAreaIds.data[i]);
             rcMarkConvexPolyArea(
                 m_ctx, area.verts, area.vertsNum, area.minh,
@@ -1558,53 +1552,53 @@ int Sample_TileMesh::buildTileMesh(
 		for (int i = 0; i < genCtx.pmesh->npolys; ++i)
         {
 			if (genCtx.pmesh->areas[i] == RC_WALKABLE_AREA) {
-				genCtx.pmesh->areas[i] = SAMPLE_POLYAREA_GROUND;
-				genCtx.pmesh->flags[i] = SAMPLE_POLYFLAGS_WALK;
+				genCtx.pmesh->areas[i] = common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND;
+				genCtx.pmesh->flags[i] = common::SamplePolyFlags::SAMPLE_POLYFLAGS_WALK;
                 continue;
             }
             bool inhabited = PolyAreaFlags::isInhabitedFlag(genCtx.pmesh->areas[i]);
             unsigned char area = PolyAreaFlags::clearInhabitedFlag(genCtx.pmesh->areas[i]);
 			//assert(genCtx.pmesh->areas[i] != PolyAreaFlags::WATER_COMMON);
-			genCtx.pmesh->flags[i] = SAMPLE_POLYFLAGS_INHABITED & (uint16_t(0) - inhabited);
+			genCtx.pmesh->flags[i] = common::SamplePolyFlags::SAMPLE_POLYFLAGS_INHABITED & (uint16_t(0) - inhabited);
             if (area == PolyAreaFlags::WATER_COMMON) {
-				genCtx.pmesh->areas[i] = SAMPLE_POLYAREA_WATER;
-				genCtx.pmesh->flags[i] |= SAMPLE_POLYFLAGS_DISABLED;
+				genCtx.pmesh->areas[i] = common::SamplePolyAreas::SAMPLE_POLYAREA_WATER;
+				genCtx.pmesh->flags[i] |= common::SamplePolyFlags::SAMPLE_POLYFLAGS_DISABLED;
             }
             else if (area == PolyAreaFlags::WATER_SHALLOW) {
-				genCtx.pmesh->areas[i] = SAMPLE_POLYAREA_WATER_WALKING;
-				genCtx.pmesh->flags[i] |= SAMPLE_POLYFLAGS_WATER_WALKING;
+				genCtx.pmesh->areas[i] = common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING;
+				genCtx.pmesh->flags[i] |= common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_WALKING;
             }
             else if (area == PolyAreaFlags::WATER_MIDDLE) {
-				genCtx.pmesh->areas[i] = SAMPLE_POLYAREA_WATER_FORDING;
-				genCtx.pmesh->flags[i] |= SAMPLE_POLYFLAGS_WATER_FORDING;
+				genCtx.pmesh->areas[i] = common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING;
+				genCtx.pmesh->flags[i] |= common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_FORDING;
             }
             else if (area == PolyAreaFlags::WATER_DEEP) {
-				genCtx.pmesh->areas[i] = SAMPLE_POLYAREA_WATER_SWIMMING;
-				genCtx.pmesh->flags[i] |= SAMPLE_POLYFLAGS_WATER_SWIMMING;
+				genCtx.pmesh->areas[i] = common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING;
+				genCtx.pmesh->flags[i] |= common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_SWIMMING;
             }
             else if (area == PolyAreaFlags::GROUND) {
-				genCtx.pmesh->areas[i] = SAMPLE_POLYAREA_GROUND;
-				genCtx.pmesh->flags[i] |= SAMPLE_POLYFLAGS_WALK;
+				genCtx.pmesh->areas[i] = common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND;
+				genCtx.pmesh->flags[i] |= common::SamplePolyFlags::SAMPLE_POLYFLAGS_WALK;
             }
             else if (area == PolyAreaFlags::LAVA) {
-				genCtx.pmesh->areas[i] = SAMPLE_POLYAREA_LAVA;
-				genCtx.pmesh->flags[i] |= SAMPLE_POLYFLAGS_DISABLED;
+				genCtx.pmesh->areas[i] = common::SamplePolyAreas::SAMPLE_POLYAREA_LAVA;
+				genCtx.pmesh->flags[i] |= common::SamplePolyFlags::SAMPLE_POLYFLAGS_DISABLED;
             }
             else if (area == PolyAreaFlags::ROAD) {
-				genCtx.pmesh->areas[i] = SAMPLE_POLYAREA_ROAD;
-				genCtx.pmesh->flags[i] |= SAMPLE_POLYFLAGS_ROAD | SAMPLE_POLYFLAGS_WALK;
+				genCtx.pmesh->areas[i] = common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD;
+				genCtx.pmesh->flags[i] |= common::SamplePolyFlags::SAMPLE_POLYFLAGS_ROAD | common::SamplePolyFlags::SAMPLE_POLYFLAGS_WALK;
             }
             else if (area == PolyAreaFlags::FOREST) {
-				genCtx.pmesh->areas[i] = SAMPLE_POLYAREA_FOREST;
-				genCtx.pmesh->flags[i] |= SAMPLE_POLYFLAGS_FOREST | SAMPLE_POLYFLAGS_WALK;
+				genCtx.pmesh->areas[i] = common::SamplePolyAreas::SAMPLE_POLYAREA_FOREST;
+				genCtx.pmesh->flags[i] |= common::SamplePolyFlags::SAMPLE_POLYFLAGS_FOREST | common::SamplePolyFlags::SAMPLE_POLYFLAGS_WALK;
             }
             else if (area == PolyAreaFlags::DOOR) {
-				genCtx.pmesh->areas[i] = SAMPLE_POLYAREA_DOOR;
-				genCtx.pmesh->flags[i] |= SAMPLE_POLYFLAGS_DOOR | SAMPLE_POLYFLAGS_WALK;
+				genCtx.pmesh->areas[i] = common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR;
+				genCtx.pmesh->flags[i] |= common::SamplePolyFlags::SAMPLE_POLYFLAGS_DOOR | common::SamplePolyFlags::SAMPLE_POLYFLAGS_WALK;
             }
             else if (area == PolyAreaFlags::LADDER) {
-				genCtx.pmesh->areas[i] = SAMPLE_POLYAREA_LADDER;
-				genCtx.pmesh->flags[i] |= SAMPLE_POLYFLAGS_LADDER | SAMPLE_POLYFLAGS_WALK;
+				genCtx.pmesh->areas[i] = common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER;
+				genCtx.pmesh->flags[i] |= common::SamplePolyFlags::SAMPLE_POLYFLAGS_LADDER | common::SamplePolyFlags::SAMPLE_POLYFLAGS_WALK;
             }
             else {
                 assert(false);
@@ -1683,7 +1677,7 @@ void Sample_TileMesh::printNavmeshInfo(const dtNavMesh* mesh) const
 	);
 }
 
-void Sample_TileMesh::collectNavmeshGenParams(NavmeshGenParams& params) const
+void Sample_TileMesh::collectNavmeshGenParams(common::NavmeshGenParams& params) const
 {
 	params.cellSize = m_cellSize;
 	params.cellHeight = m_cellHeight;
@@ -1723,7 +1717,7 @@ void Sample_TileMesh::saveAll(const char* path, const dtNavMesh* mesh)
 	Sample::saveAll(fp, mesh);
 	uint32_t numTiles = 1 + m_maxTiles;
 	fwrite(&numTiles, sizeof(numTiles), 1, fp);
-	fwrite(m_navGenParams.get(), sizeof(NavmeshGenParams), numTiles, fp);
+	fwrite(m_navGenParams.get(), sizeof(common::NavmeshGenParams), numTiles, fp);
 	fclose(fp);
 }
 
@@ -1750,10 +1744,10 @@ dtNavMesh* Sample_TileMesh::loadAll(const char* path)
 		return 0;
 	}
 	m_maxTiles = rcMax(numTiles, 1 + m_maxTiles);
-	m_navGenParams = std::make_unique<NavmeshGenParams[]>(m_maxTiles);
-	std::memset(m_navGenParams.get(), 0, sizeof(NavmeshGenParams) * m_maxTiles);
-	fread(m_navGenParams.get(), sizeof(NavmeshGenParams), numTiles, fp);
-	const NavmeshGenParams& params = m_navGenParams[0];
+	m_navGenParams = std::make_unique<common::NavmeshGenParams[]>(m_maxTiles);
+	std::memset(m_navGenParams.get(), 0, sizeof(common::NavmeshGenParams) * m_maxTiles);
+	fread(m_navGenParams.get(), sizeof(common::NavmeshGenParams), numTiles, fp);
+	const common::NavmeshGenParams& params = m_navGenParams[0];
 	m_cellSize = params.cellSize;
 	m_cellHeight = params.cellHeight;
 	m_agentHeight = params.agentHeight;

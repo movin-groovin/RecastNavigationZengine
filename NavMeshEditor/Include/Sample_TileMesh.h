@@ -23,7 +23,7 @@
 #include "DetourNavMesh.h"
 #include "Recast.h"
 #include "InputGeom.h"
-#include "Common.h"
+#include "Mesh.h"
 
 #include <unordered_map>
 #include <string>
@@ -63,14 +63,7 @@ protected:
 			if (cleanIds) {
                 cellIds.release();
                 markedAreaIds.release();
-				delete [] meshData.verts;
-				meshData.verts = nullptr;
-				delete [] meshData.tris;
-				meshData.tris = nullptr;
-				delete [] meshData.triFlags;
-				meshData.triFlags = nullptr;
-				meshData.vertsNum = 0;
-				meshData.trisNum = 0;
+				meshData.release();
 			}
 			rcFreeHeightField(solid);
 			solid = 0;
@@ -102,9 +95,9 @@ protected:
 			meshData.trisNum = trisNum;
 		}
 
-		Grid2dBvh::TrianglesData meshData;
-        ArrayBuffer<int> cellIds;
-        ArrayBuffer<int> markedAreaIds;
+		mesh::Grid2dBvh::TrianglesData meshData;
+		common::ArrayBuffer<int> cellIds;
+		common::ArrayBuffer<int> markedAreaIds;
 		rcHeightfield* solid = nullptr;
 		rcCompactHeightfield* chf = nullptr;
 		rcContourSet* cset = nullptr;
@@ -120,7 +113,7 @@ protected:
 	std::unique_ptr<ThreadContext[]> m_asyncBuildData;
 	std::thread m_asyncBuild;
 	bool m_collected;
-	std::unique_ptr<NavmeshGenParams[]> m_navGenParams;
+	std::unique_ptr<common::NavmeshGenParams[]> m_navGenParams;
 	
 	enum DrawMode
 	{
@@ -194,7 +187,6 @@ public:
 	virtual void handleRenderOverlay(double* proj, double* model, int* view);
 	virtual void handleMeshChanged(class InputGeom* geom);
 	virtual bool handleBuild();
-	virtual void collectSettings(struct BuildSettings& settings);
 	virtual void interruptAsyncBuilding();
 	virtual float getAsyncBuildingProgress() const;
 	virtual bool isAsyncBuilding() const;
@@ -210,7 +202,7 @@ private:
 	bool initNavMesh();
 	void initAsyncBuildData();
 	void buildAllTilesDo(const float* bmin, const float* bmax, int tw, int th, float tcs);
-	void collectNavmeshGenParams(NavmeshGenParams& params) const;
+	void collectNavmeshGenParams(common::NavmeshGenParams& params) const;
 	void handleRenderOverlayOffsetPlanes(double* proj, double* model, int* view);
 };
 

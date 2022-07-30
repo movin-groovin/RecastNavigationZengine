@@ -25,9 +25,6 @@
 #include "DebugDraw.h"
 #include "RecastDebugDraw.h"
 #include "Recast.h"
-#ifdef ZENGINE_NAVMESH
-#include "Common.h"
-#endif // ZENGINE_NAVMESH
 
 void duDebugDrawTriMesh(duDebugDraw* dd, const float* verts, int /*nverts*/,
 						const int* tris, const float* normals, int ntris,

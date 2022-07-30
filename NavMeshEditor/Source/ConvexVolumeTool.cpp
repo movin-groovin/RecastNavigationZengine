@@ -106,7 +106,7 @@ static int pointInPoly(int nvert, const float* verts, const float* p)
 }
 
 
-ConvexVolumeTool::ConvexVolumeTool() :
+ConvexVolumeTool::ConvexVolumeTool():
 	m_sample(0),
 	m_areaType(PolyAreaFlags::GROUND),
     m_visualize(true),
@@ -133,7 +133,9 @@ void ConvexVolumeTool::reset()
 
 void ConvexVolumeTool::handleMenu()
 {
-    if (imguiCheck("Visualize", m_visualize)) {
+	rcContext& ctx = *m_sample->getContext();
+	
+	if (imguiCheck("Visualize", m_visualize)) {
         m_visualize = !m_visualize;
     }
     imguiSeparator();
@@ -179,17 +181,17 @@ void ConvexVolumeTool::handleMenu()
 		int dataSize = 0;
 		int dataNum = 0;
 		for (int i = 0, n = geom->getConvexVolumeCount(); i < n; ++i) {
-			const rcMeshLoaderObjExt::MarkedEntry& m = *geom->getConvexVolume(i);
-			if (int ret = rcMeshLoaderObjExt::addMarkedAreaToMemory(m, data, dataSize, dataNum))
+			const mesh::MarkedArea& m = *geom->getConvexVolume(i);
+			if (int ret = MeshLoaderObjExt::addMarkedAreaToMemory(m, data, dataSize, dataNum))
 			{
-				geom->getCtx().log(
+				ctx.log(
 					RC_LOG_ERROR, "Error of addMarkedAreaToMemory, code: %d", ret
 				);
 				return;
 			}
 		}
-		if (int ret = rcMeshLoaderObjExt::saveFile(geom->getMarkedMeshName(), data, dataNum)) {
-			geom->getCtx().log(
+		if (int ret = MeshLoaderObjExt::saveFile(geom->getMarkedMeshName(), data, dataNum)) {
+			ctx.log(
 				RC_LOG_ERROR, "Error of saveFile with marked area, code: %d", ret
 			);
 			return;
@@ -198,25 +200,25 @@ void ConvexVolumeTool::handleMenu()
 	if (imguiButton("Load marked areas"))
 	{
 		InputGeom* geom = m_sample->getInputGeom();
-		auto fileData = rcMeshLoaderObjExt::loadFile(geom->getMarkedMeshName());
+		auto fileData = MeshLoaderObjExt::loadFile(geom->getMarkedMeshName());
 		if (!fileData.first) {
-			geom->getCtx().log(RC_LOG_ERROR, "Error of loadFile while marked mesh loading");
+			ctx.log(RC_LOG_ERROR, "Error of loadFile while marked mesh loading");
 			return;
 		}
         int nMarked = 0, markedSize = 0;
-		std::unique_ptr<rcMeshLoaderObjExt::MarkedEntry[]> marked;
-		uint8_t ret = rcMeshLoaderObjExt::loadMarked(
+		std::unique_ptr<mesh::MarkedArea[]> marked;
+		uint8_t ret = MeshLoaderObjExt::loadMarked(
             fileData.first, fileData.second, nMarked, markedSize, marked
 		);
 		if (ret) {
-			geom->getCtx().log(RC_LOG_ERROR, "Error of loadMarked while marked mesh loading");
+			ctx.log(RC_LOG_ERROR, "Error of loadMarked while marked mesh loading");
 			return;
 		}
         m_volumeIdVisualization = INVALID_VISUAL_ID;
         m_visualize = false;
 		geom->totalDeleteMarkedAreas();
 		for (int i = 0; i < nMarked; ++i) {
-			const rcMeshLoaderObjExt::MarkedEntry& m = marked[i];
+			const mesh::MarkedArea& m = marked[i];
 			geom->addConvexVolume(
 				m.verts, m.vertsNum, m.minh, m.maxh, static_cast<uint8_t>(m.area)
 			);
@@ -406,7 +408,7 @@ void ConvexVolumeTool::handleRenderOverlay(double* proj, double* model, int* vie
         InputGeom* geom = m_sample->getInputGeom();
         if (!geom)
             return;
-        const rcMeshLoaderObjExt::MarkedEntry* m = geom->getConvexVolume(m_volumeIdVisualization);
+        const mesh::MarkedArea* m = geom->getConvexVolume(m_volumeIdVisualization);
         if (!m)
             return;
 

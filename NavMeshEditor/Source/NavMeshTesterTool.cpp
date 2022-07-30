@@ -236,7 +236,7 @@ static bool getSteerTarget(dtNavMeshQuery* navQuery, const float* startPos, cons
 
 // ======================================================
 
-//void collisionDetectorGeometryWorld::calcObbPoints(const OBB* b, float* obbPoints)
+//void collisionDetectorGeometryWorld::calcObbPoints(const geometry::OBB* b, float* obbPoints)
 //{
 //    // forward, left, up
 //    rcVadd(obbPoints, b->center, b->dir);
@@ -277,7 +277,7 @@ static bool getSteerTarget(dtNavMeshQuery* navQuery, const float* startPos, cons
 //    const float deltaH,
 //    const float halfWidth,
 //    const float scale,
-//    OBBExt* be
+//    geometry::OBBExt* be
 //) {
 //    rcVsub(be->b.dir + 0, dst, src);
 //    Vmul(be->b.dir + 0, 0.5f);
@@ -311,7 +311,7 @@ static bool getSteerTarget(dtNavMeshQuery* navQuery, const float* startPos, cons
 //    float end[3] = {dst[0], dst[1] + deltaH * 0.5f, dst[2]};
 //    bool res = m_inGeom->raycastMesh(start, end, tmin);
 //    if (res) return true;
-//    OBBExt be;
+//    geometry::OBBExt be;
 //    calcObbExt(src, dst, deltaH, HALF_WIDTH, 0.95f, &be);
 //    return m_inGeom->obbCollDetect(&be);
 //}
@@ -338,7 +338,7 @@ static bool getSteerTarget(dtNavMeshQuery* navQuery, const float* startPos, cons
 //    float end[3] = {src[0], src[1] + 5.f,/*deltaH * 0.5f,*/ src[2]};
 //    res = m_inGeom->raycastMesh(mid, end, tmin);
 //    if (res) return true;
-//    OBBExt be;
+//    geometry::OBBExt be;
 //    calcObbExt(start, mid, deltaH, HALF_WIDTH, 0.95f, &be);
 //    res = m_inGeom->obbCollDetect(&be);
 //    if (res) return true;
@@ -369,7 +369,7 @@ static bool getSteerTarget(dtNavMeshQuery* navQuery, const float* startPos, cons
 //    float end[3] = {dst[0], dst[1] + 5.f,/*deltaH * 0.5f,*/dst[2]};
 //    res = m_inGeom->raycastMesh(mid, end, tmin);
 //    if (res) return true;
-//    OBBExt be;
+//    geometry::OBBExt be;
 //    calcObbExt(start, mid, deltaH, HALF_WIDTH, 1.f, &be);
 //    res = m_inGeom->obbCollDetect(&be);
 //    if (res) return true;
@@ -393,35 +393,35 @@ static bool canTransfer(const uint8_t from, const uint8_t to)
 {
     switch(from)
     {
-		case SAMPLE_POLYAREA_WATER: {
+		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER: {
 			//assert(1 != 1);
 			//return false; // technical flag of water, normaly we can't meet it at this stage
 			return true;
 		}
-		case SAMPLE_POLYAREA_GROUND:
-		case SAMPLE_POLYAREA_ROAD:
-		case SAMPLE_POLYAREA_FOREST:
-		case SAMPLE_POLYAREA_DOOR:
-		case SAMPLE_POLYAREA_LADDER:
-		case SAMPLE_POLYAREA_WATER_WALKING: {
+		case common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND:
+		case common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD:
+		case common::SamplePolyAreas::SAMPLE_POLYAREA_FOREST:
+		case common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR:
+		case common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER:
+		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING: {
 			return true;
 		}
-		case SAMPLE_POLYAREA_WATER_FORDING: {
+		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING: {
 			switch(to)
 			{
-				case SAMPLE_POLYAREA_WATER_WALKING:
-				case SAMPLE_POLYAREA_WATER_FORDING:
-				case SAMPLE_POLYAREA_WATER_SWIMMING:
+				case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING:
+				case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING:
+				case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING:
 					return true;
 				default:
 					return false;
 			}
 		}
-		case SAMPLE_POLYAREA_WATER_SWIMMING: {
+		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING: {
 			switch(to)
 			{
-				case SAMPLE_POLYAREA_WATER_FORDING:
-				case SAMPLE_POLYAREA_WATER_SWIMMING:
+				case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING:
+				case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING:
 					return true;
 				default:
 					return false;
@@ -443,17 +443,17 @@ static bool canTransferJumping(const int /*jumpingType*/, const uint8_t /*from*/
 		//case JUMP_FORWARD: {
 		//	switch(from)
 		//	{
-		//		case SAMPLE_POLYAREA_WATER: {
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER: {
 		//			//assert(1 != 1);
 		//			// technical flag of water, normaly we can't meet it at this stage
 		//			return false;
 		//		}
-		//		case SAMPLE_POLYAREA_GROUND:
-		//		case SAMPLE_POLYAREA_ROAD:
-		//		case SAMPLE_POLYAREA_FOREST:
-		//		case SAMPLE_POLYAREA_DOOR:
-		//		case SAMPLE_POLYAREA_LADDER:
-		//		case SAMPLE_POLYAREA_WATER_WALKING: {
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND:
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD:
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_FOREST:
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR:
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER:
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING: {
 		//			return true;
 		//		}
 		//		default: {
@@ -465,18 +465,18 @@ static bool canTransferJumping(const int /*jumpingType*/, const uint8_t /*from*/
 		//case CLIMB_OVERLAPPED_POLYS: {
 		//	switch(from)
 		//	{
-		//		case SAMPLE_POLYAREA_WATER: {
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER: {
 		//			//assert(1 != 1);
 		//			return false; // technical flag of water, normaly we can't meet it at this stage
 		//		}
-		//		case SAMPLE_POLYAREA_GROUND:
-		//		case SAMPLE_POLYAREA_ROAD:
-		//		case SAMPLE_POLYAREA_FOREST:
-		//		case SAMPLE_POLYAREA_DOOR:
-		//		case SAMPLE_POLYAREA_LADDER:
-		//		case SAMPLE_POLYAREA_WATER_WALKING:
-		//		case SAMPLE_POLYAREA_WATER_FORDING: {
-		//			return to == SAMPLE_POLYAREA_GROUND;
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND:
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD:
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_FOREST:
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR:
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER:
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING:
+		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING: {
+		//			return to == common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND;
 		//		}
 		//		default: {
 		//			return false;
@@ -516,7 +516,7 @@ NavMeshTesterTool::NavMeshTesterTool(InputGeom *inGeom, BuildContext* ctx):
 	m_pathIterPolyCount(0),
     m_steerPointCount(0)
 {
-	m_filter.setIncludeFlags(SAMPLE_POLYFLAGS_ALL ^ SAMPLE_POLYFLAGS_DISABLED);
+	m_filter.setIncludeFlags(common::SamplePolyFlags::SAMPLE_POLYFLAGS_ALL ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_DISABLED);
 	m_filter.setExcludeFlags(0);
 
 	m_polyPickExt[0] = 2;
@@ -545,15 +545,15 @@ void NavMeshTesterTool::init(Sample* sample)
 	if (m_navQuery)
 	{
 		// Change costs.
-        m_filter.setAreaCost(SAMPLE_POLYAREA_GROUND, 1.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_ROAD, 1.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_DOOR, 1.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_LADDER, 1.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_WATER, 5.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_WATER_WALKING, 1.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_WATER_FORDING, 3.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_WATER_SWIMMING, 5.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_LAVA, 100000.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND, 1.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD, 1.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR, 1.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER, 1.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER, 5.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING, 1.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING, 3.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING, 5.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_LAVA, 100000.0f);
 	}
 	
 	m_neighbourhoodRadius = sample->getAgentRadius() * 20.0f;
@@ -572,15 +572,15 @@ void NavMeshTesterTool::init(dtNavMesh* navMesh, dtNavMeshQuery* navQuery)
     if (m_navQuery)
     {
         // Change costs.
-        m_filter.setAreaCost(SAMPLE_POLYAREA_GROUND, 1.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_ROAD, 1.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_DOOR, 1.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_LADDER, 1.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_WATER, 5.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_WATER_WALKING, 1.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_WATER_FORDING, 3.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_WATER_SWIMMING, 5.0f);
-        m_filter.setAreaCost(SAMPLE_POLYAREA_LAVA, 100000.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND, 1.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD, 1.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR, 1.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER, 1.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER, 5.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING, 1.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING, 3.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING, 5.0f);
+        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_LAVA, 100000.0f);
     }
 
     m_neighbourhoodRadius = 1.f;
@@ -770,44 +770,44 @@ void NavMeshTesterTool::handleMenu()
     imguiLabel("Include Flags");
 
 	imguiIndent();
-	if (imguiCheck("Walk", (m_filter.getIncludeFlags() & SAMPLE_POLYFLAGS_WALK) != 0))
+	if (imguiCheck("Walk", (m_filter.getIncludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_WALK) != 0))
 	{
-		m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ SAMPLE_POLYFLAGS_WALK);
+		m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_WALK);
 		recalc();
 	}
-    if (imguiCheck("Water walking", (m_filter.getIncludeFlags() & SAMPLE_POLYFLAGS_WATER_WALKING) != 0))
+    if (imguiCheck("Water walking", (m_filter.getIncludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_WALKING) != 0))
 	{
-        m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ SAMPLE_POLYFLAGS_WATER_WALKING);
+        m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_WALKING);
 		recalc();
 	}
-    if (imguiCheck("Water fording", (m_filter.getIncludeFlags() & SAMPLE_POLYFLAGS_WATER_FORDING) != 0))
+    if (imguiCheck("Water fording", (m_filter.getIncludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_FORDING) != 0))
     {
-        m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ SAMPLE_POLYFLAGS_WATER_FORDING);
+        m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_FORDING);
         recalc();
     }
-    if (imguiCheck("Water swimming", (m_filter.getIncludeFlags() & SAMPLE_POLYFLAGS_WATER_SWIMMING) != 0))
+    if (imguiCheck("Water swimming", (m_filter.getIncludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_SWIMMING) != 0))
     {
-        m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ SAMPLE_POLYFLAGS_WATER_SWIMMING);
+        m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_SWIMMING);
         recalc();
     }
-    if (imguiCheck("Road", (m_filter.getIncludeFlags() & SAMPLE_POLYFLAGS_ROAD) != 0))
+    if (imguiCheck("Road", (m_filter.getIncludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_ROAD) != 0))
     {
-        m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ SAMPLE_POLYFLAGS_ROAD);
+        m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_ROAD);
         recalc();
     }
-    if (imguiCheck("Forest", (m_filter.getIncludeFlags() & SAMPLE_POLYFLAGS_FOREST) != 0))
+    if (imguiCheck("Forest", (m_filter.getIncludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_FOREST) != 0))
     {
-        m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ SAMPLE_POLYFLAGS_FOREST);
+        m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_FOREST);
         recalc();
     }
-	if (imguiCheck("Door", (m_filter.getIncludeFlags() & SAMPLE_POLYFLAGS_DOOR) != 0))
+	if (imguiCheck("Door", (m_filter.getIncludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_DOOR) != 0))
 	{
-		m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ SAMPLE_POLYFLAGS_DOOR);
+		m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_DOOR);
 		recalc();
 	}
-    if (imguiCheck("Ladder", (m_filter.getIncludeFlags() & SAMPLE_POLYFLAGS_LADDER) != 0))
+    if (imguiCheck("Ladder", (m_filter.getIncludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_LADDER) != 0))
     {
-        m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ SAMPLE_POLYFLAGS_LADDER);
+        m_filter.setIncludeFlags(m_filter.getIncludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_LADDER);
         recalc();
     }
 	imguiUnindent();
@@ -816,44 +816,44 @@ void NavMeshTesterTool::handleMenu()
 	imguiLabel("Exclude Flags");
 	
     imguiIndent();
-    if (imguiCheck("Walk", (m_filter.getExcludeFlags() & SAMPLE_POLYFLAGS_WALK) != 0))
+    if (imguiCheck("Walk", (m_filter.getExcludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_WALK) != 0))
     {
-        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ SAMPLE_POLYFLAGS_WALK);
+        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_WALK);
         recalc();
     }
-    if (imguiCheck("Water walking", (m_filter.getExcludeFlags() & SAMPLE_POLYFLAGS_WATER_WALKING) != 0))
+    if (imguiCheck("Water walking", (m_filter.getExcludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_WALKING) != 0))
     {
-        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ SAMPLE_POLYFLAGS_WATER_WALKING);
+        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_WALKING);
         recalc();
     }
-    if (imguiCheck("Water fording", (m_filter.getExcludeFlags() & SAMPLE_POLYFLAGS_WATER_FORDING) != 0))
+    if (imguiCheck("Water fording", (m_filter.getExcludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_FORDING) != 0))
     {
-        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ SAMPLE_POLYFLAGS_WATER_FORDING);
+        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_FORDING);
         recalc();
     }
-    if (imguiCheck("Water swimming", (m_filter.getExcludeFlags() & SAMPLE_POLYFLAGS_WATER_SWIMMING) != 0))
+    if (imguiCheck("Water swimming", (m_filter.getExcludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_SWIMMING) != 0))
     {
-        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ SAMPLE_POLYFLAGS_WATER_SWIMMING);
+        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_SWIMMING);
         recalc();
     }
-    if (imguiCheck("Road", (m_filter.getExcludeFlags() & SAMPLE_POLYFLAGS_ROAD) != 0))
+    if (imguiCheck("Road", (m_filter.getExcludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_ROAD) != 0))
     {
-        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ SAMPLE_POLYFLAGS_ROAD);
+        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_ROAD);
         recalc();
     }
-    if (imguiCheck("Forest", (m_filter.getExcludeFlags() & SAMPLE_POLYFLAGS_FOREST) != 0))
+    if (imguiCheck("Forest", (m_filter.getExcludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_FOREST) != 0))
     {
-        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ SAMPLE_POLYFLAGS_FOREST);
+        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_FOREST);
         recalc();
     }
-    if (imguiCheck("Door", (m_filter.getExcludeFlags() & SAMPLE_POLYFLAGS_DOOR) != 0))
+    if (imguiCheck("Door", (m_filter.getExcludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_DOOR) != 0))
     {
-        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ SAMPLE_POLYFLAGS_DOOR);
+        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_DOOR);
         recalc();
     }
-    if (imguiCheck("Ladder", (m_filter.getExcludeFlags() & SAMPLE_POLYFLAGS_LADDER) != 0))
+    if (imguiCheck("Ladder", (m_filter.getExcludeFlags() & common::SamplePolyFlags::SAMPLE_POLYFLAGS_LADDER) != 0))
     {
-        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ SAMPLE_POLYFLAGS_LADDER);
+        m_filter.setExcludeFlags(m_filter.getExcludeFlags() ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_LADDER);
         recalc();
     }
 	imguiUnindent();
