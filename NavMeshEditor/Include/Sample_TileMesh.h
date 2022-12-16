@@ -143,6 +143,7 @@ protected:
 	DrawMode m_drawMode;
     bool m_showNonTriPolys;
     bool m_highlightLiquidPolys;
+	bool m_showAverageNavmeshPolys;
 	bool m_displayRefIdsInPath;
 	
 	bool m_continueMeshGenWhileTileError;

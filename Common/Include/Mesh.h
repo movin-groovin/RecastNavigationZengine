@@ -468,6 +468,22 @@ private:
 			int vobIndex = -1;
 		};
 
+		GridCell() = default;
+		~GridCell() { release(); }
+
+		void release() {
+			common::freeAlignedArr<BvhNode>(const_cast<BvhNode*>(childs), 0);
+			childs = nullptr;
+			delete [] vobResidence;
+			vobResidence = nullptr;
+			delete [] markedIndices;
+			markedIndices = nullptr;
+			childsNumber = 0;
+			vobResidencesNum = 0;
+			markedNum = 0;
+			markedSize = 0;
+		}
+
 		float bmin[3];
 		float bmax[3];
 		int childsNumber = 0;
@@ -477,15 +493,6 @@ private:
 		int markedNum = 0;
 		int markedSize = 0;
 		int* markedIndices = nullptr;
-
-		~GridCell() {
-			common::freeAlignedArr<BvhNode>(const_cast<BvhNode*>(childs), 0);
-			childs = nullptr;
-			delete [] vobResidence;
-			vobResidence = nullptr;
-			delete [] markedIndices;
-			markedIndices = nullptr;
-		}
 	};
 	struct BvhVobMeshEntry
 	{
@@ -579,6 +586,7 @@ public:
 	int load(MeshLoaderInterface* mesh, int cellSize);
 	bool isLoaded() const;
 	bool saveBinaryMesh() const;
+	bool loadBinaryMesh() const;
 
 	int getOverlappingRectCellIds(
 		const float* min, const float* max, int* cellIds, int idsSize

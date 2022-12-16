@@ -248,11 +248,52 @@ void duDebugDrawNavMesh(duDebugDraw* dd, const dtNavMesh& mesh, unsigned char fl
 }
 
 #ifdef ZENGINE_NAVMESH
+static void drawAverageNavmeshPolysTile(
+	duDebugDraw* dd,
+	const dtNavMesh& mesh,
+	const dtMeshTile* tile
+) {
+	dd->depthMask(false);
+	dd->begin(DU_DRAW_TRIS);
+
+	float vDat[DT_VERTS_PER_POLYGON * 3];
+	for (int i = 0; i < tile->header->polyCount; ++i)
+	{
+		const dtPoly* p = &tile->polys[i];
+		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip off-mesh links.
+			continue;
+		if (p->norm[0] == FLT_MAX || p->dist == FLT_MAX) // not initialized 
+			continue;
+
+		int n = p->vertCount;
+		for (int j = 0; j < n; ++j)
+		{
+			const float* v = &tile->verts[p->verts[j] * 3];
+			geometry::calcVerticalVertexProjectionOnPlane(v, p->norm, p->dist, vDat + j * 3);
+		}
+		
+		unsigned int col = duRGBA(0xFF, 0xFF, 0xFF, 92);
+		dd->vertex(vDat, col);
+		dd->vertex(vDat + 3, col);
+		dd->vertex(vDat + 6, col);
+		for (int j = 2; j < n - 1; ++j)
+		{
+			dd->vertex(vDat, col);
+			dd->vertex(vDat + j * 3, col);
+			dd->vertex(vDat + (j + 1) * 3, col);
+		}
+	}
+
+	dd->end();
+	dd->depthMask(true);
+}
+
 void duDebugDrawNavMeshWithClosedListFast(
 	duDebugDraw* dd,
 	const dtNavMesh& mesh,
 	const dtNavMeshQuery& query,
-	unsigned char flags
+	unsigned char flags,
+	bool showAverageNavmeshPolys
 ) {
     if (!dd) return;
     const dtNavMeshQuery* q = (flags & DU_DRAWNAVMESH_CLOSEDLIST) ? &query : 0;
@@ -261,6 +302,10 @@ void duDebugDrawNavMeshWithClosedListFast(
         const dtMeshTile* tile = mesh.getTile(i);
         if (!tile->header) continue;
         drawMeshTile(dd, mesh, q, tile, flags);
+		if (showAverageNavmeshPolys)
+		{
+			drawAverageNavmeshPolysTile(dd, mesh, tile);
+		}
     }
 }
 #endif // ZENGINE_NAVMESH

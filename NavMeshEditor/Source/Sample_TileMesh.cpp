@@ -181,6 +181,7 @@ Sample_TileMesh::Sample_TileMesh() :
     m_drawMode(DRAWMODE_NAVMESH),
     m_showNonTriPolys(false),
     m_highlightLiquidPolys(false),
+	m_showAverageNavmeshPolys(false),
 	m_displayRefIdsInPath(false),
 	m_continueMeshGenWhileTileError(true),
     m_maxTiles(0),
@@ -397,6 +398,12 @@ void Sample_TileMesh::handleDebugMode()
 		}
 		m_drawMode = DRAWMODE_NAVMESH;
 	}
+	if (imguiCheck("Show average navmesh polys", m_showAverageNavmeshPolys))
+	{
+		m_showAverageNavmeshPolys = !m_showAverageNavmeshPolys;
+		m_ddVboNvm.reset();
+		m_ddVboNvmTile.reset();
+	}
 	if (imguiCheck("Navmesh Invis", m_drawMode == DRAWMODE_NAVMESH_INVIS, valid[DRAWMODE_NAVMESH_INVIS]))
 	{
 		if (m_drawMode != DRAWMODE_NAVMESH_INVIS)
@@ -587,7 +594,7 @@ void Sample_TileMesh::handleRender(const float* cameraPos)
 			if (!m_ddVboNvm)
 			{
 				duDebugDrawNavMeshWithClosedListFast(
-					&m_ddVboNvm, *m_navMesh, *m_navQuery, m_navMeshDrawFlags
+					&m_ddVboNvm, *m_navMesh, *m_navQuery, m_navMeshDrawFlags, m_showAverageNavmeshPolys
 				);
 			}
 			m_ddVboNvm.draw();
@@ -905,11 +912,26 @@ void Sample_TileMesh::buildTile(const float* pos)
 			dtFree(data);
 		}
 		else {
-			int tIdx = m_navMesh->getTileIndex(tile) + 1;
-			collectNavmeshGenParams(m_navGenParams[tIdx]);
-			if (!m_collected) {
-				collectNavmeshGenParams(m_navGenParams[0]);
-				m_collected = true;
+			status = m_navMesh->calcAveragePolyPlanes(tile);
+			if (dtStatusSucceed(status))
+			{
+				status = m_navMesh->calcPreliminaryJumpData(tile);
+				if (dtStatusFailed(status)) {
+					m_ctx->log(RC_LOG_ERROR, "Error of calculating preliminary jump data for tile, x: %d, y: %d):", tx, ty);
+					m_navMesh->removeTile(m_navMesh->getTileRefAt(tx, ty, 0), 0, 0);
+				}
+				else {
+					int tIdx = m_navMesh->getTileIndex(tile) + 1;
+					collectNavmeshGenParams(m_navGenParams[tIdx]);
+					if (!m_collected) {
+						collectNavmeshGenParams(m_navGenParams[0]);
+						m_collected = true;
+					}
+				}
+			}
+			else {
+				m_ctx->log(RC_LOG_ERROR, "Error of calculating average navmesh planes for tile, x: %d, y: %d):", tx, ty);
+				m_navMesh->removeTile(m_navMesh->getTileRefAt(tx, ty, 0), 0, 0);
 			}
 		}
     }

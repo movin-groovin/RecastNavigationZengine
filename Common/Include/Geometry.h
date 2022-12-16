@@ -135,6 +135,8 @@ void calcProjection(
 	const float* points, int n, const float* axis, float(&minMax)[2]
 );
 
+void calcVerticalVertexProjectionOnPlane(const float* v, const float* n, const float d, float* vProj);
+
 void makeAabbPoints(float* aabbPoints, const float* bmin, const float* bmax);
 
 bool intersectionAabbVsTriangle(

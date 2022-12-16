@@ -520,6 +520,9 @@ bool dtCreateNavMeshData(dtNavMeshCreateParams* params, unsigned char** outData,
 		p->flags = params->polyFlags[i];
 		p->setArea(params->polyAreas[i]);
 		p->setType(DT_POLYTYPE_GROUND);
+		p->norm[0] = p->norm[1] = p->norm[2] = FLT_MAX;
+		p->dist = FLT_MAX;
+		p->miny = p->maxy = FLT_MAX;
 		for (int j = 0; j < nvp; ++j)
 		{
 			if (src[j] == MESH_NULL_IDX) break;

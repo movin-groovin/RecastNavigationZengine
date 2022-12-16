@@ -26,7 +26,9 @@
 #include "DetourAlloc.h"
 #include "DetourAssert.h"
 #include <new>
-
+#include <memory>
+#include <algorithm>
+#include <cmath>
 
 inline bool overlapSlabs(const float* amin, const float* amax,
 						 const float* bmin, const float* bmax,
@@ -1069,6 +1071,544 @@ dtStatus dtNavMesh::addTile(unsigned char* data, int dataSize, int flags,
 	
 	return DT_SUCCESS;
 }
+
+#ifdef ZENGINE_NAVMESH
+namespace
+{
+template <typename T>
+class Matrix
+{
+public:
+	static constexpr T EPS = 1e-6;
+
+	static const int OK = 0;
+	static const int ERROR_NO_MEMORY = 1;
+	static const int ERROR_INVERSION = 2;
+	static const int ERROR_INVALID_ARGUMENT = 3;
+	static const int ERROR_INVALID_OPERATION = 4;
+	static const int ERROR_INVALID_POS = -1;
+
+	using type = T;
+
+public:
+	explicit Matrix(int nRows, int nColumns): m_nRows(nRows), m_nColumns(nColumns) {}
+	int init()
+	{
+		m_dat.reset(new(std::nothrow) T[m_nRows * m_nColumns]);
+		if (!m_dat.get()) return ERROR_NO_MEMORY;
+		return OK;
+	}
+	Matrix(const Matrix& ref) = delete;
+	Matrix& operator=(const Matrix& ref) = delete;
+	int copy(const Matrix& ref)
+	{
+		m_dat.reset(new(std::nothrow) T[ref.m_nRows * ref.m_nColumns]);
+		if (!m_dat.get()) return ERROR_NO_MEMORY;
+		m_nRows = ref.m_nRows;
+		m_nColumns = ref.m_nColumns;
+		std::memcpy(m_dat.get(), ref.m_dat.get(), sizeof(T) * m_nRows * m_nColumns);
+		return OK;
+	}
+
+	int multiply(const Matrix& ref)
+	{
+		if (m_nColumns != ref.m_nRows)
+		{
+			return ERROR_INVALID_ARGUMENT;
+		}
+		T* newData = new(std::nothrow) T[m_nRows * ref.m_nColumns];
+		if (!newData) return ERROR_NO_MEMORY;
+
+		for (int i = 0; i < m_nRows; ++i) {
+			for (int j = 0; j < ref.m_nColumns; ++j) {
+				T tmp = T();
+				for (int k = 0; k < m_nColumns; ++k)
+				{
+					tmp += m_dat[i * m_nColumns + k] * ref.m_dat[k * ref.m_nColumns + j];
+				}
+				newData[i * ref.m_nColumns + j] = tmp;
+			}
+		}
+		m_dat.reset(newData);
+		//m_nRows = m_nRows; // no changing
+		m_nColumns = ref.m_nColumns;
+
+		return OK;
+	}
+
+	int transpose()
+	{
+		T* newData = new(std::nothrow) T[m_nRows * m_nColumns];
+		if (!newData) return ERROR_NO_MEMORY;
+
+		for (int i = 0; i < m_nRows; ++i)
+		{
+			for (int j = 0; j < m_nColumns; ++j)
+			{
+				newData[j * m_nRows + i] = m_dat[i * m_nColumns + j];
+			}
+		}
+		m_dat.reset(newData);
+		std::swap(m_nRows, m_nColumns);
+
+		return OK;
+	}
+
+	int inverse3x3()
+	{
+		if (m_nRows != m_nColumns && m_nRows != 3)
+		{
+			return ERROR_INVALID_OPERATION;
+		}
+
+		T det = m_dat[0] * m_dat[4] * m_dat[8] + m_dat[1] * m_dat[5] * m_dat[6] + m_dat[3] * m_dat[7] * m_dat[2]
+			- m_dat[2] * m_dat[4] * m_dat[6] - m_dat[3] * m_dat[1] * m_dat[8] - m_dat[7] * m_dat[5] * m_dat[0];
+		if (det != det || std::isinf(det) || std::fabs(det) < EPS)
+		{
+			return ERROR_INVERSION;
+		}
+		T* newData = new(std::nothrow) T[m_nRows * m_nColumns];
+		if (!newData) return ERROR_NO_MEMORY;
+
+		//const T invDet = 1.f / det;
+		newData[0] = (m_dat[4] * m_dat[8] - m_dat[5] * m_dat[7]) / det;
+		newData[1] = -(m_dat[3] * m_dat[8] - m_dat[5] * m_dat[6]) / det;
+		newData[2] = (m_dat[3] * m_dat[7] - m_dat[4] * m_dat[6]) / det;
+		newData[3] = -(m_dat[1] * m_dat[8] - m_dat[2] * m_dat[7]) / det;
+		newData[4] = (m_dat[0] * m_dat[8] - m_dat[2] * m_dat[6]) / det;
+		newData[5] = -(m_dat[0] * m_dat[7] - m_dat[1] * m_dat[6]) / det;
+		newData[6] = (m_dat[1] * m_dat[5] - m_dat[2] * m_dat[4]) / det;
+		newData[7] = -(m_dat[0] * m_dat[5] - m_dat[2] * m_dat[3]) / det;
+		newData[8] = (m_dat[0] * m_dat[4] - m_dat[1] * m_dat[3]) / det;
+		m_dat.reset(newData);
+
+		return OK;
+	}
+
+	int add(const Matrix& ref)
+	{
+		if (m_nRows != ref.m_nRows && m_nColumns != ref.m_nColumns)
+		{
+			return ERROR_INVALID_ARGUMENT;
+		}
+
+		return binaryOpApplay([](const T v1, const T v2) { return v1 + v2 }, ref);
+	}
+
+	int subtract(const Matrix& ref)
+	{
+		if (m_nRows != ref.m_nRows && m_nColumns != ref.m_nColumns)
+		{
+			return ERROR_INVALID_ARGUMENT;
+		}
+
+		return binaryOpApplay([](const T v1, const T v2) { return v1 - v2; }, ref);
+	}
+
+	T sumSquared() const
+	{
+		return std::accumulate(
+			m_dat.get(),
+			m_dat.get() + m_nRows * m_nColumns,
+			T(),
+			[] (const T v1, const T v2) { return v1 + v2 * v2; }
+		);
+	}
+
+	int appendData(const T* data, int num, int pos)
+	{
+		assert(m_nColumns == num);
+		if (m_nRows * m_nColumns < pos + num) {
+			return ERROR_INVALID_POS;
+		}
+		std::memcpy(m_dat.get() + pos, data, sizeof(T) * num);
+		return pos + num;
+	}
+
+	int getnRows() const { return m_nRows; }
+	int getnColumns() const { return m_nColumns; }
+	const T* getData() const { return m_dat.get(); }
+	T* getData() { return m_dat.get(); }
+
+private:
+	template <typename F>
+	int binaryOpApplay(const F& f, const Matrix& ref)
+	{
+		for (int i = 0; i < m_nRows; ++i)
+		{
+			for (int j = 0; j < m_nColumns; ++j)
+			{
+				m_dat[i * m_nColumns + j] = f(m_dat[i * m_nColumns + j], ref.m_dat[i * m_nColumns + j]);
+			}
+		}
+
+		return OK;
+	}
+
+private:
+	int m_nRows;
+	int m_nColumns;
+	std::unique_ptr<T[]> m_dat;
+};
+
+enum class CoordId: int
+{
+	X = 0, Y, Z, Empty
+};
+
+using MatrixType = Matrix<double>;
+
+struct TriEntry
+{
+	float absSquareSize;
+	float center[3];
+
+	bool operator < (const TriEntry& ref) const { return absSquareSize < ref.absSquareSize; }
+};
+
+bool calcBestFit(const float* verts, const int vertsNum, MatrixType& C, CoordId& cid)
+{
+	MatrixType A(vertsNum, 3);
+	MatrixType B(vertsNum, 1);
+	//MatrixType C(3, 1);
+	if ((A.init() + B.init()/* + C.init()*/) != MatrixType::OK) {
+		return false;
+	}
+
+	static const int COORD_LEN = 1; // 3;
+	CoordId coords[COORD_LEN] = { CoordId::Y };// {CoordId::X, CoordId::Y, CoordId::Z};
+	double minErr = FLT_MAX;
+	cid = CoordId::Empty;
+	for (int i = 0; i < COORD_LEN; ++i)
+	{
+		CoordId coord = coords[i];
+		int posA = 0, posB = 0;
+		double bufA[3];
+		double bufB[1];
+		for (int j = 0; j < vertsNum; ++j)
+		{
+			const float* v = verts + j * 3;
+			if (coord == CoordId::X) {
+				bufA[0] = v[1];
+				bufA[1] = v[2];
+				bufA[2] = 1.f;
+				bufB[0] = v[0];
+			}
+			else if (coord == CoordId::Y) {
+				bufA[0] = v[0];
+				bufA[1] = v[2];
+				bufA[2] = 1.f;
+				bufB[0] = v[1];
+			}
+			else /*if (coord == CoordId::Z)*/ {
+				bufA[0] = v[0];
+				bufA[1] = v[1];
+				bufA[2] = 1.f;
+				bufB[0] = v[2];
+			}
+			posA = A.appendData(bufA, 3, posA);
+			posB = B.appendData(bufB, 1, posB);
+		}
+
+		MatrixType AT(0, 0);
+		MatrixType RES(0, 0);
+		if ((AT.copy(A) + AT.transpose()) != MatrixType::OK) return false;
+		if (RES.copy(AT) != MatrixType::OK) return false;
+		if (RES.multiply(A) != MatrixType::OK) return false;
+		int invRes = RES.inverse3x3();
+		if (invRes != MatrixType::OK) {
+			if (invRes == MatrixType::ERROR_INVERSION) {
+				continue;
+			}
+			return false;
+		}
+		if (RES.multiply(AT) != MatrixType::OK) return false;
+		if (RES.multiply(B) != MatrixType::OK) return false;
+		assert(RES.getnRows() == 3);
+		assert(RES.getnColumns() == 1);
+
+		MatrixType Acp(0, 0);
+		if (Acp.copy(A) != MatrixType::OK) return false;
+		if (Acp.multiply(RES) != MatrixType::OK) return false;
+		assert(Acp.getnRows() == B.getnRows());
+		assert(Acp.getnColumns() == B.getnColumns());
+		Acp.subtract(B);
+		volatile double err = Acp.sumSquared();
+		if (err < minErr) {
+			if (C.copy(RES) != MatrixType::OK) return false;
+			minErr = err;
+			cid = coord;
+		}
+	}
+	//assert(cid != CoordId::Empty);
+
+	return true;
+}
+
+bool calcAveragePlane(
+	const dtMeshTile* ctile,
+	const dtPoly* p,
+	const MatrixType& C,
+	const CoordId cid,
+	float* norm,
+	float* dist
+) {
+	if (!C.getData()) {
+		// error of calculating equation, use ordinary vertices
+		float p1[3], p2[3];
+		const float* v0 = &ctile->verts[p->verts[0]];
+		for (int i = 1, n = p->vertCount - 1; i < n; ++i)
+		{
+			const float* v1 = &ctile->verts[p->verts[i]];
+			const float* v2 = &ctile->verts[p->verts[i + 1]];
+			dtVsub(p1, v1, v0);
+			dtVsub(p2, v2, v0);
+			dtVcross(norm, p1, p2);
+			if (dtVlen(norm) > MatrixType::EPS)
+			{
+				break;
+			}
+		}
+		dtVnormalize(norm);
+		*dist = -dtVdot(norm, v0);
+		
+		return true;
+	}
+	
+	static const float DIFF = 1000.f;
+	float v1[3], v2[3], v3[3];
+	const float a = static_cast<float>(C.getData()[0]);
+	const float b = static_cast<float>(C.getData()[1]);
+	const float c = static_cast<float>(C.getData()[2]);
+
+	if (cid == CoordId::X) {
+		// v[1] * a + v[2] * b + c = v[0]
+		v1[1] = DIFF;
+		v1[2] = DIFF;
+		v1[0] = v1[1] * a + v1[2] * b + c;
+		v2[1] = -DIFF;
+		v2[2] = DIFF;
+		v2[0] = v2[1] * a + v2[2] * b + c;
+		v3[1] = 0.f;
+		v3[2] = 0.f;
+		v3[0] = v3[1] * a + v3[2] * b + c;
+	}
+	else if (cid == CoordId::Y) {
+		// v[0] * a + v[2] * b + c = v[1]
+		v1[0] = DIFF;
+		v1[2] = DIFF;
+		v1[1] = v1[0] * a + v1[2] * b + c;
+		v2[0] = -DIFF;
+		v2[2] = DIFF;
+		v2[1] = v2[0] * a + v2[2] * b + c;
+		v3[0] = 0.f;
+		v3[2] = 0.f;
+		v3[1] = v3[0] * a + v3[2] * b + c;
+	}
+	else /*if (cid == CoordId::Z)*/ {
+		// v[0] * a + v[1] * b + c = v[2]
+		v1[0] = DIFF;
+		v1[1] = DIFF;
+		v1[2] = v1[0] * a + v1[1] * b + c;
+		v2[0] = -DIFF;
+		v2[1] = DIFF;
+		v2[2] = v2[0] * a + v2[1] * b + c;
+		v3[0] = 0.f;
+		v3[1] = 0.f;
+		v3[2] = v3[0] * a + v3[1] * b + c;
+	}
+
+	float p1[3], p2[3];
+	dtVsub(p1, v2, v1);
+	dtVsub(p2, v3, v1);
+	dtVcross(norm, p1, p2);
+	assert(dtVlen(norm) > MatrixType::EPS);
+	dtVnormalize(norm);
+	*dist = -dtVdot(norm, v2);
+
+	return true;
+}
+
+bool calcMinMaxY(
+	const dtMeshTile* tile, const dtPoly* p, const dtPolyDetail* pd, float* miny, float* maxy
+) {
+	*miny = FLT_MAX;
+	*maxy = -FLT_MAX;
+	for (int j = 0; j < pd->triCount; ++j)
+	{
+		const unsigned char* t = &tile->detailTris[(pd->triBase + j) * 4];
+		for (int k = 0; k < 3; ++k)
+		{
+			const float* v;
+			if (t[k] < p->vertCount)
+				v = &tile->verts[p->verts[t[k]] * 3];
+			else
+				v = &tile->detailVerts[(pd->vertBase + t[k] - p->vertCount) * 3];
+			if (v[1] < *miny) *miny = v[1];
+			if (v[1] > * maxy) *maxy = v[1];
+		}
+	}
+
+	return true;
+}
+
+} // namespace
+
+dtStatus dtNavMesh::calcAveragePolyPlanes(const dtTileRef refTile)
+{
+	return calcAveragePolyPlanes(getTileByRef(refTile));
+}
+
+dtStatus dtNavMesh::calcAveragePolyPlanes(const dtMeshTile* ctile)
+{
+	if (!ctile || static_cast<int>(ctile - m_tiles) >= m_maxTiles)
+	{
+		return DT_FAILURE | DT_INVALID_PARAM;
+	}
+	dtMeshTile* tile = const_cast<dtMeshTile*>(ctile);
+	int size = 3;
+	int triEntriesSize = 1;
+	std::unique_ptr<float[]> verts(new(std::nothrow) float[size]);
+	std::unique_ptr<TriEntry[]> triEntries(new(std::nothrow) TriEntry[triEntriesSize]);
+	if (!verts || !triEntries)
+	{
+		return DT_FAILURE | DT_OUT_OF_MEMORY;
+	}
+
+	for (int i = 0; i < tile->header->polyCount; ++i)
+	{
+		dtPoly* p = &tile->polys[i];
+		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip off-mesh links.
+			continue;
+
+		const dtPolyDetail* pd = &tile->detailMeshes[i];
+		//assert(pd->vertCount >= 3);
+		int pos = 0;
+		int triEntriesPos = 0;
+		int nDetailTris = pd->triCount;
+		static const int MIN_TRIS_NUM = 5;
+		if (nDetailTris < MIN_TRIS_NUM) {
+			for (int j = 0; j < nDetailTris; ++j)
+			{
+				const unsigned char* t = &tile->detailTris[(pd->triBase + j) * 4];
+				for (int k = 0; k < 3; ++k)
+				{
+					const float* v;
+					if (t[k] < p->vertCount)
+						v = &tile->verts[p->verts[t[k]] * 3];
+					else
+						v = &tile->detailVerts[(pd->vertBase + t[k] - p->vertCount) * 3];
+					if (pos == size)
+					{
+						size *= 2;
+						float* newDat = new(std::nothrow) float[size];
+						if (!newDat)
+						{
+							return DT_FAILURE | DT_OUT_OF_MEMORY;
+						}
+						std::memcpy(newDat, verts.get(), pos * sizeof(float));
+						verts.reset(newDat);
+					}
+					dtVcopy(verts.get() + pos, v);
+					pos += 3;
+				}
+			}
+		}
+		else {
+			for (int j = 0; j < nDetailTris; ++j)
+			{
+				const unsigned char* t = &tile->detailTris[(pd->triBase + j) * 4];
+				float triCenter[3] = { 0.f, 0.f, 0.f };
+				const float* vPtrs[3];
+				for (int k = 0; k < 3; ++k)
+				{
+					const float* v;
+					if (t[k] < p->vertCount)
+						v = &tile->verts[p->verts[t[k]] * 3];
+					else
+						v = &tile->detailVerts[(pd->vertBase + t[k] - p->vertCount) * 3];
+					dtVadd(triCenter, triCenter, v);
+					vPtrs[k] = v;
+				}
+				triCenter[0] /= 3.f;
+				triCenter[1] /= 3.f;
+				triCenter[2] /= 3.f;
+
+				if (triEntriesPos == triEntriesSize)
+				{
+					triEntriesSize *= 2;
+					TriEntry* newDat = new(std::nothrow) TriEntry[triEntriesSize];
+					if (!newDat)
+					{
+						return DT_FAILURE | DT_OUT_OF_MEMORY;
+					}
+					std::memcpy(newDat, triEntries.get(), triEntriesPos * sizeof(TriEntry));
+					triEntries.reset(newDat);
+				}
+				float p1[3], p2[3], norm[3];
+				dtVsub(p1, vPtrs[1], vPtrs[0]);
+				dtVsub(p2, vPtrs[2], vPtrs[0]);
+				dtVcross(norm, p1, p2);
+				TriEntry* place = triEntries.get() + triEntriesPos;
+				place->absSquareSize = dtVlen(norm);
+				dtVcopy(place->center, triCenter);
+				++triEntriesPos;
+			}
+
+			static const int LIMIT = 10;
+			std::sort(triEntries.get(), triEntries.get() + triEntriesPos);
+			const float minSize = triEntries[0].absSquareSize;
+			for (int j = 0; j < triEntriesPos; ++j)
+			{
+				int cpNum = static_cast<int>( std::ceil(triEntries[j].absSquareSize / minSize) );
+				if (cpNum > LIMIT) cpNum = LIMIT;
+				const float* center = triEntries[j].center;
+				for (int k = 0; k < cpNum; ++k)
+				{
+					if (pos == size)
+					{
+						size *= 2;
+						float* newDat = new(std::nothrow) float[size];
+						if (!newDat)
+						{
+							return DT_FAILURE | DT_OUT_OF_MEMORY;
+						}
+						std::memcpy(newDat, verts.get(), pos * sizeof(float));
+						verts.reset(newDat);
+					}
+					dtVcopy(verts.get() + pos, center);
+					pos += 3;
+				}
+			}
+		}
+		
+		MatrixType C(3, 1);
+		CoordId cid = CoordId::Empty;
+		if (!calcBestFit(verts.get(), pos / 3, C, cid)) {
+			return DT_FAILURE | DT_PARTIAL_RESULT;
+		}
+		if (!calcAveragePlane(ctile, p, C, cid, p->norm, &p->dist)) {
+			return DT_FAILURE | DT_PARTIAL_RESULT;
+		}
+		if (!calcMinMaxY(tile, p, pd, &p->miny, &p->maxy)) {
+			return DT_FAILURE | DT_PARTIAL_RESULT;
+		}
+	}
+
+	return DT_SUCCESS;
+}
+
+dtStatus dtNavMesh::calcPreliminaryJumpData(const dtTileRef refTile)
+{
+	return calcPreliminaryJumpData(getTileByRef(refTile));
+}
+
+dtStatus dtNavMesh::calcPreliminaryJumpData(const dtMeshTile* ctile)
+{
+	return DT_SUCCESS;
+}
+
+#endif // ZENGINE_NAVMESH
 
 const dtMeshTile* dtNavMesh::getTileAt(const int x, const int y, const int layer) const
 {

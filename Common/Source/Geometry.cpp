@@ -90,6 +90,14 @@ void calcProjection(
 	}
 }
 
+void calcVerticalVertexProjectionOnPlane(
+	const float* v, const float* n, const float d, float* vProj
+) {
+	float dir[3] = {0.f, -1.f, 0.f};
+	float t = (-d - vdot(v, n)) / vdot(dir, n);
+	vmad(vProj, v, dir, t);
+}
+
 void makeAabbPoints(float* aabbPoints, const float* bmin, const float* bmax)
 {
 	float dx = bmax[0] - bmin[0];

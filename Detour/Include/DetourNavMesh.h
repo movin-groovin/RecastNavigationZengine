@@ -22,6 +22,13 @@
 #include "DetourAlloc.h"
 #include "DetourStatus.h"
 
+#ifdef ZENGINE_NAVMESH
+#include <cmath>
+#include <cassert>
+#include <memory>
+#include <numeric>
+#endif // ZENGINE_NAVMESH
+
 // Undefine (or define in a build cofnig) the following line to use 64bit polyref.
 // Generally not needed, useful for very large worlds.
 // Note: tiles build using 32bit refs are not compatible with 64bit refs!
@@ -173,6 +180,15 @@ struct dtPoly
 	/// The bit packed area id and polygon type.
 	/// @note Use the structure's set and get methods to acess this value.
 	unsigned char areaAndtype;
+
+#ifdef ZENGINE_NAVMESH
+	/// average plane of poly
+	float norm[3];
+	float dist;
+	float miny;
+	float maxy;
+	// poly's projected vertices
+#endif // ZENGINE_NAVMESH
 
 	/// Sets the user defined area id. [Limit: < #DT_MAX_AREAS]
 	inline void setArea(unsigned char a) { areaAndtype = (areaAndtype & 0xc0) | (a & 0x3f); }
@@ -368,6 +384,13 @@ public:
 	///  @param[out]	result		The tile reference. (If the tile was succesfully added.) [opt]
 	/// @return The status flags for the operation.
 	dtStatus addTile(unsigned char* data, int dataSize, int flags, dtTileRef lastRef, dtTileRef* result);
+
+#ifdef ZENGINE_NAVMESH
+	dtStatus calcAveragePolyPlanes(const dtTileRef refTile);
+	dtStatus calcAveragePolyPlanes(const dtMeshTile* ctile);
+	dtStatus calcPreliminaryJumpData(const dtTileRef refTile);
+	dtStatus calcPreliminaryJumpData(const dtMeshTile* ctile);
+#endif // ZENGINE_NAVMESH
 	
 	/// Removes the specified tile from the navigation mesh.
 	///  @param[in]		ref			The reference of the tile to remove.

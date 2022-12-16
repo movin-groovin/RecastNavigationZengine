@@ -22,6 +22,9 @@
 #include "DetourNavMesh.h"
 #include "DetourNavMeshQuery.h"
 #include "DetourTileCacheBuilder.h"
+#ifdef ZENGINE_NAVMESH
+#include "Geometry.h"
+#endif // ZENGINE_NAVMESH
 
 enum DrawNavMeshFlags
 {
@@ -40,7 +43,8 @@ void duDebugDrawNavMeshWithClosedListFast(
 	struct duDebugDraw* dd,
 	const dtNavMesh& mesh,
     const dtNavMeshQuery& query,
-	unsigned char flags
+	unsigned char flags,
+	bool showAverageNavmeshPolys
 );
 #endif // ZENGINE_NAVMESH
 void duDebugDrawNavMeshNodes(struct duDebugDraw* dd, const dtNavMeshQuery& query);

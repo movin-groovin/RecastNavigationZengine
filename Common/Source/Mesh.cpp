@@ -1330,6 +1330,11 @@ bool Grid2dBvh::saveBinaryMesh() const
 	return false;
 }
 
+bool Grid2dBvh::loadBinaryMesh() const
+{
+	return false;
+}
+
 int Grid2dBvh::load(MeshLoaderInterface* mesh, int cellSize)
 {
 	int ret = loadInternal(mesh, cellSize);
