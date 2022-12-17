@@ -27,6 +27,7 @@
 #include <cassert>
 #include <memory>
 #include <numeric>
+#include <cstdint>
 #endif // ZENGINE_NAVMESH
 
 // Undefine (or define in a build cofnig) the following line to use 64bit polyref.
@@ -187,6 +188,14 @@ struct dtPoly
 	float dist;
 	float miny;
 	float maxy;
+
+	static_assert(DT_VERTS_PER_POLYGON == 6, "Change size of availabilityFlags for constant increasing");
+	static const uint32_t IDX_JMP_DOWN = 1;
+	static const uint32_t IDX_JMP_FWD = 2;
+	static const uint32_t IDX_CLIMB = 4;
+	static const uint32_t IDX_CLIMB_OVERLAPPED = 24;
+	static const uint32_t EDGE_BITS_SIZE = 4;
+	uint32_t jmpAbilityFlags;
 	// poly's projected vertices
 #endif // ZENGINE_NAVMESH
 
@@ -201,6 +210,24 @@ struct dtPoly
 
 	/// Gets the polygon type. (See: #dtPolyTypes)
 	inline unsigned char getType() const { return areaAndtype >> 6; }
+
+#ifdef ZENGINE_NAVMESH
+	inline bool isAveragePolyInited() const { return norm[0] != FLT_MAX; }
+	inline uint32_t getJmpAbilityFlags() const { return jmpAbilityFlags; }
+	inline void setJmpAbilityFlags(const uint32_t v) { jmpAbilityFlags = v; }
+	inline uint32_t getEdgeJmpFlags(int edgeIdx) const {
+		assert(edgeIdx >= 0 && edgeIdx <= 6);
+		return (jmpAbilityFlags >> edgeIdx * EDGE_BITS_SIZE) & 0xF;
+	}
+	inline void setEdgeJmpFlags(int edgeIdx, bool jmpDown, bool jmpFwd, bool climb)
+	{
+		assert(edgeIdx >= 0 && edgeIdx <= 6);
+		jmpAbilityFlags = ((IDX_JMP_DOWN & (uint32_t)jmpDown) | (IDX_JMP_FWD & (uint32_t)jmpFwd) |
+							(IDX_CLIMB & (uint32_t)climb)) << edgeIdx * EDGE_BITS_SIZE;
+	}
+	inline bool getClimbOverlappedFlag() const { return jmpAbilityFlags & IDX_CLIMB_OVERLAPPED; }
+	inline void setClimbOverlappedFlag(bool v) { jmpAbilityFlags |= IDX_CLIMB_OVERLAPPED & (uint32_t)v; }
+#endif // ZENGINE_NAVMESH
 };
 
 /// Defines the location of detail sub-mesh data within a dtMeshTile.
@@ -388,6 +415,8 @@ public:
 #ifdef ZENGINE_NAVMESH
 	dtStatus calcAveragePolyPlanes(const dtTileRef refTile);
 	dtStatus calcAveragePolyPlanes(const dtMeshTile* ctile);
+	dtStatus doCalcAveragePolyPlanes_v1(const dtMeshTile* ctile);
+	dtStatus doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile);
 	dtStatus calcPreliminaryJumpData(const dtTileRef refTile);
 	dtStatus calcPreliminaryJumpData(const dtMeshTile* ctile);
 #endif // ZENGINE_NAVMESH

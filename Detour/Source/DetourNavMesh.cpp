@@ -1229,6 +1229,7 @@ public:
 	int getnColumns() const { return m_nColumns; }
 	const T* getData() const { return m_dat.get(); }
 	T* getData() { return m_dat.get(); }
+	operator bool() const { return m_dat.get(); }
 
 private:
 	template <typename F>
@@ -1353,28 +1354,6 @@ bool calcAveragePlane(
 	float* norm,
 	float* dist
 ) {
-	if (!C.getData()) {
-		// error of calculating equation, use ordinary vertices
-		float p1[3], p2[3];
-		const float* v0 = &ctile->verts[p->verts[0]];
-		for (int i = 1, n = p->vertCount - 1; i < n; ++i)
-		{
-			const float* v1 = &ctile->verts[p->verts[i]];
-			const float* v2 = &ctile->verts[p->verts[i + 1]];
-			dtVsub(p1, v1, v0);
-			dtVsub(p2, v2, v0);
-			dtVcross(norm, p1, p2);
-			if (dtVlen(norm) > MatrixType::EPS)
-			{
-				break;
-			}
-		}
-		dtVnormalize(norm);
-		*dist = -dtVdot(norm, v0);
-		
-		return true;
-	}
-	
 	static const float DIFF = 1000.f;
 	float v1[3], v2[3], v3[3];
 	const float a = static_cast<float>(C.getData()[0]);
@@ -1445,7 +1424,7 @@ bool calcMinMaxY(
 			else
 				v = &tile->detailVerts[(pd->vertBase + t[k] - p->vertCount) * 3];
 			if (v[1] < *miny) *miny = v[1];
-			if (v[1] > * maxy) *maxy = v[1];
+			if (v[1] > *maxy) *maxy = v[1];
 		}
 	}
 
@@ -1460,6 +1439,11 @@ dtStatus dtNavMesh::calcAveragePolyPlanes(const dtTileRef refTile)
 }
 
 dtStatus dtNavMesh::calcAveragePolyPlanes(const dtMeshTile* ctile)
+{
+	return doCalcAveragePolyPlanes_v2(ctile);
+}
+
+dtStatus dtNavMesh::doCalcAveragePolyPlanes_v1(const dtMeshTile* ctile)
 {
 	if (!ctile || static_cast<int>(ctile - m_tiles) >= m_maxTiles)
 	{
@@ -1587,12 +1571,83 @@ dtStatus dtNavMesh::calcAveragePolyPlanes(const dtMeshTile* ctile)
 		if (!calcBestFit(verts.get(), pos / 3, C, cid)) {
 			return DT_FAILURE | DT_PARTIAL_RESULT;
 		}
-		if (!calcAveragePlane(ctile, p, C, cid, p->norm, &p->dist)) {
+		if (C) {
+			if (!calcAveragePlane(ctile, p, C, cid, p->norm, &p->dist)) {
+				return DT_FAILURE | DT_PARTIAL_RESULT;
+			}
+			if (!calcMinMaxY(tile, p, pd, &p->miny, &p->maxy)) {
+				return DT_FAILURE | DT_PARTIAL_RESULT;
+			}
+		}
+		//else - error of calc equation (little poly), we don't use such polygons while path finding
+	}
+
+	return DT_SUCCESS;
+}
+
+dtStatus dtNavMesh::doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile)
+{
+	if (!ctile || static_cast<int>(ctile - m_tiles) >= m_maxTiles)
+	{
+		return DT_FAILURE | DT_INVALID_PARAM;
+	}
+	dtMeshTile* tile = const_cast<dtMeshTile*>(ctile);
+	int size = 3;
+	std::unique_ptr<float[]> verts(new(std::nothrow) float[size]);
+	if (!verts)
+	{
+		return DT_FAILURE | DT_OUT_OF_MEMORY;
+	}
+
+	for (int i = 0; i < tile->header->polyCount; ++i)
+	{
+		dtPoly* p = &tile->polys[i];
+		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip off-mesh links.
+			continue;
+
+		const dtPolyDetail* pd = &tile->detailMeshes[i];
+		//assert(pd->vertCount >= 3);
+		int pos = 0;
+		for (int j = 0; j < pd->triCount; ++j)
+		{
+			const unsigned char* t = &tile->detailTris[(pd->triBase + j) * 4];
+			for (int k = 0; k < 3; ++k)
+			{
+				const float* v;
+				if (t[k] < p->vertCount)
+					v = &tile->verts[p->verts[t[k]] * 3];
+				else
+					v = &tile->detailVerts[(pd->vertBase + t[k] - p->vertCount) * 3];
+				if (pos == size)
+				{
+					size *= 2;
+					float* newDat = new(std::nothrow) float[size];
+					if (!newDat)
+					{
+						return DT_FAILURE | DT_OUT_OF_MEMORY;
+					}
+					std::memcpy(newDat, verts.get(), pos * sizeof(float));
+					verts.reset(newDat);
+				}
+				dtVcopy(verts.get() + pos, v);
+				pos += 3;
+			}
+		}
+
+		MatrixType C(3, 1);
+		CoordId cid = CoordId::Empty;
+		if (!calcBestFit(verts.get(), pos / 3, C, cid)) {
 			return DT_FAILURE | DT_PARTIAL_RESULT;
 		}
-		if (!calcMinMaxY(tile, p, pd, &p->miny, &p->maxy)) {
-			return DT_FAILURE | DT_PARTIAL_RESULT;
+		if (C) {
+			if (!calcAveragePlane(ctile, p, C, cid, p->norm, &p->dist)) {
+				return DT_FAILURE | DT_PARTIAL_RESULT;
+			}
+			if (!calcMinMaxY(tile, p, pd, &p->miny, &p->maxy)) {
+				return DT_FAILURE | DT_PARTIAL_RESULT;
+			}
 		}
+		//else - error of calc equation (little poly), we don't use such polygons while path finding
 	}
 
 	return DT_SUCCESS;

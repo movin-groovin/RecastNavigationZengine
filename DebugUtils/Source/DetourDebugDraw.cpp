@@ -262,7 +262,7 @@ static void drawAverageNavmeshPolysTile(
 		const dtPoly* p = &tile->polys[i];
 		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip off-mesh links.
 			continue;
-		if (p->norm[0] == FLT_MAX || p->dist == FLT_MAX) // not initialized 
+		if (!p->isAveragePolyInited())
 			continue;
 
 		int n = p->vertCount;
