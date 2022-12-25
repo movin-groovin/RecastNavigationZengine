@@ -195,8 +195,10 @@ struct dtPoly
 	static const uint32_t IDX_CLIMB = 4;
 	static const uint32_t IDX_CLIMB_OVERLAPPED = 24;
 	static const uint32_t EDGE_BITS_SIZE = 4;
+	// 0000000|x|edge5|edge4|edge3|edge2|edge1|edge0|
+	// x - climb overlapped bit
+	// edge - 4 bits, |reserved|jmp_down|jmp_fwd|climb|
 	uint32_t jmpAbilityFlags;
-	// poly's projected vertices
 #endif // ZENGINE_NAVMESH
 
 	/// Sets the user defined area id. [Limit: < #DT_MAX_AREAS]

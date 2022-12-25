@@ -1267,81 +1267,151 @@ struct TriEntry
 	bool operator < (const TriEntry& ref) const { return absSquareSize < ref.absSquareSize; }
 };
 
-bool calcBestFit(const float* verts, const int vertsNum, MatrixType& C, CoordId& cid)
-{
-	MatrixType A(vertsNum, 3);
-	MatrixType B(vertsNum, 1);
-	//MatrixType C(3, 1);
-	if ((A.init() + B.init()/* + C.init()*/) != MatrixType::OK) {
-		return false;
-	}
-
+bool calcBestFit(
+	const float* baseVerts,
+	const int baseVertsNum,
+	std::unique_ptr<float[]>& verts,
+	int& vertsSize,
+	int vertsNum,
+	MatrixType& C,
+	CoordId& cid
+) {
+	static const float VERT_DIFF = 0.35f;
+	static const float VERTS_NUM_FACTOR = 1.5f;
 	static const int COORD_LEN = 1; // 3;
-	CoordId coords[COORD_LEN] = { CoordId::Y };// {CoordId::X, CoordId::Y, CoordId::Z};
-	double minErr = FLT_MAX;
-	cid = CoordId::Empty;
-	for (int i = 0; i < COORD_LEN; ++i)
-	{
-		CoordId coord = coords[i];
-		int posA = 0, posB = 0;
-		double bufA[3];
-		double bufB[1];
-		for (int j = 0; j < vertsNum; ++j)
-		{
-			const float* v = verts + j * 3;
-			if (coord == CoordId::X) {
-				bufA[0] = v[1];
-				bufA[1] = v[2];
-				bufA[2] = 1.f;
-				bufB[0] = v[0];
-			}
-			else if (coord == CoordId::Y) {
-				bufA[0] = v[0];
-				bufA[1] = v[2];
-				bufA[2] = 1.f;
-				bufB[0] = v[1];
-			}
-			else /*if (coord == CoordId::Z)*/ {
-				bufA[0] = v[0];
-				bufA[1] = v[1];
-				bufA[2] = 1.f;
-				bufB[0] = v[2];
-			}
-			posA = A.appendData(bufA, 3, posA);
-			posB = B.appendData(bufB, 1, posB);
-		}
 
-		MatrixType AT(0, 0);
-		MatrixType RES(0, 0);
-		if ((AT.copy(A) + AT.transpose()) != MatrixType::OK) return false;
-		if (RES.copy(AT) != MatrixType::OK) return false;
-		if (RES.multiply(A) != MatrixType::OK) return false;
-		int invRes = RES.inverse3x3();
-		if (invRes != MatrixType::OK) {
-			if (invRes == MatrixType::ERROR_INVERSION) {
-				continue;
-			}
+	int maxIdx = -1;
+	while (true)
+	{
+		CoordId coords[COORD_LEN] = { CoordId::Y };// {CoordId::X, CoordId::Y, CoordId::Z};
+		double minErr = FLT_MAX;
+		cid = CoordId::Empty;
+		MatrixType A(vertsNum, 3);
+		MatrixType B(vertsNum, 1);
+		//MatrixType C(3, 1);
+		if ((A.init() + B.init()/* + C.init()*/) != MatrixType::OK) {
 			return false;
 		}
-		if (RES.multiply(AT) != MatrixType::OK) return false;
-		if (RES.multiply(B) != MatrixType::OK) return false;
-		assert(RES.getnRows() == 3);
-		assert(RES.getnColumns() == 1);
 
-		MatrixType Acp(0, 0);
-		if (Acp.copy(A) != MatrixType::OK) return false;
-		if (Acp.multiply(RES) != MatrixType::OK) return false;
-		assert(Acp.getnRows() == B.getnRows());
-		assert(Acp.getnColumns() == B.getnColumns());
-		Acp.subtract(B);
-		volatile double err = Acp.sumSquared();
-		if (err < minErr) {
-			if (C.copy(RES) != MatrixType::OK) return false;
-			minErr = err;
-			cid = coord;
+		for (int i = 0; i < COORD_LEN; ++i)
+		{
+			CoordId coord = coords[i];
+			int posA = 0, posB = 0;
+			double bufA[3];
+			double bufB[1];
+			for (int j = 0; j < vertsNum; ++j)
+			{
+				const float* v = verts.get() + j * 3;
+				if (coord == CoordId::X) {
+					bufA[0] = v[1];
+					bufA[1] = v[2];
+					bufA[2] = 1.f;
+					bufB[0] = v[0];
+				}
+				else if (coord == CoordId::Y) {
+					bufA[0] = v[0];
+					bufA[1] = v[2];
+					bufA[2] = 1.f;
+					bufB[0] = v[1];
+				}
+				else /*if (coord == CoordId::Z)*/ {
+					bufA[0] = v[0];
+					bufA[1] = v[1];
+					bufA[2] = 1.f;
+					bufB[0] = v[2];
+				}
+				posA = A.appendData(bufA, 3, posA);
+				posB = B.appendData(bufB, 1, posB);
+			}
+
+			MatrixType AT(0, 0);
+			MatrixType RES(0, 0);
+			if ((AT.copy(A) + AT.transpose()) != MatrixType::OK) return false;
+			if (RES.copy(AT) != MatrixType::OK) return false;
+			if (RES.multiply(A) != MatrixType::OK) return false;
+			int invRes = RES.inverse3x3();
+			if (invRes != MatrixType::OK) {
+				if (invRes == MatrixType::ERROR_INVERSION) {
+					continue;
+				}
+				return false;
+			}
+			if (RES.multiply(AT) != MatrixType::OK) return false;
+			if (RES.multiply(B) != MatrixType::OK) return false;
+			assert(RES.getnRows() == 3);
+			assert(RES.getnColumns() == 1);
+
+			MatrixType Acp(0, 0);
+			if (Acp.copy(A) != MatrixType::OK) return false;
+			if (Acp.multiply(RES) != MatrixType::OK) return false;
+			assert(Acp.getnRows() == B.getnRows());
+			assert(Acp.getnColumns() == B.getnColumns());
+			Acp.subtract(B);
+			volatile double err = Acp.sumSquared();
+			if (err < minErr) {
+				if (C.copy(RES) != MatrixType::OK) return false;
+				minErr = err;
+				cid = coord;
+			}
 		}
+		// degenerated calculation
+		if (!C)
+			break;
+
+		const float a = static_cast<float>(C.getData()[0]);
+		const float b = static_cast<float>(C.getData()[1]);
+		const float c = static_cast<float>(C.getData()[2]);
+		float minMax[2] = {FLT_MAX, -FLT_MAX };
+		int newMaxIdx = -1;
+		// TODO check case with average diff by everything verts insted of min diff
+		for (int i = 0; i < baseVertsNum; ++i)
+		{
+			const float* v = baseVerts + i * 3;
+			float diff;
+			if (cid == CoordId::X) {
+				diff = std::fabs((v[1] * a + v[2] * b + c) - v[0]);
+			}
+			else if (cid == CoordId::Y) {
+				diff = std::fabs((v[0] * a + v[2] * b + c) - v[1]);
+			}
+			else /*if (cid == CoordId::Z)*/ {
+				diff = std::fabs((v[0] * a + v[1] * b + c) - v[2]);
+			}
+			minMax[0] = std::min(minMax[0], diff);
+			if (diff > minMax[1]) {
+				minMax[1] = diff;
+				newMaxIdx = i;
+			}
+		}
+		if (static_cast<float>(minMax[1] - minMax[0]) / minMax[0] < VERT_DIFF) {
+			break;
+		}
+		// to suppress infinite loop
+		if (maxIdx != -1 && newMaxIdx != maxIdx) {
+			break;
+		}
+		maxIdx = newMaxIdx;
+
+		int pos = vertsNum * 3;
+		for (int i = 0, n = static_cast<int>(baseVertsNum * VERTS_NUM_FACTOR); i < n; ++i)
+		{
+			if (pos == vertsSize)
+			{
+				vertsSize *= 2;
+				float* newDat = new(std::nothrow) float[vertsSize];
+				if (!newDat)
+				{
+					return false;
+				}
+				std::memcpy(newDat, verts.get(), pos * sizeof(float));
+				verts.reset(newDat);
+			}
+
+			dtVcopy(verts.get() + pos, baseVerts + maxIdx * 3);
+			pos += 3;
+		}
+		vertsNum = pos / 3;
 	}
-	//assert(cid != CoordId::Empty);
 
 	return true;
 }
@@ -1443,6 +1513,7 @@ dtStatus dtNavMesh::calcAveragePolyPlanes(const dtMeshTile* ctile)
 	return doCalcAveragePolyPlanes_v2(ctile);
 }
 
+// by center points of detailed triangles
 dtStatus dtNavMesh::doCalcAveragePolyPlanes_v1(const dtMeshTile* ctile)
 {
 	if (!ctile || static_cast<int>(ctile - m_tiles) >= m_maxTiles)
@@ -1458,6 +1529,7 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes_v1(const dtMeshTile* ctile)
 	{
 		return DT_FAILURE | DT_OUT_OF_MEMORY;
 	}
+	float baseVerts[3 * DT_VERTS_PER_POLYGON];
 
 	for (int i = 0; i < tile->header->polyCount; ++i)
 	{
@@ -1465,6 +1537,10 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes_v1(const dtMeshTile* ctile)
 		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip off-mesh links.
 			continue;
 
+		for (int j = 0; j < p->vertCount; ++j)
+		{
+			dtVcopy(baseVerts + j * 3, &tile->verts[p->verts[j] * 3]);
+		}
 		const dtPolyDetail* pd = &tile->detailMeshes[i];
 		//assert(pd->vertCount >= 3);
 		int pos = 0;
@@ -1568,7 +1644,7 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes_v1(const dtMeshTile* ctile)
 		
 		MatrixType C(3, 1);
 		CoordId cid = CoordId::Empty;
-		if (!calcBestFit(verts.get(), pos / 3, C, cid)) {
+		if (!calcBestFit(baseVerts, p->vertCount, verts, size, pos / 3, C, cid)) {
 			return DT_FAILURE | DT_PARTIAL_RESULT;
 		}
 		if (C) {
@@ -1585,6 +1661,7 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes_v1(const dtMeshTile* ctile)
 	return DT_SUCCESS;
 }
 
+// by points of detailed triangles
 dtStatus dtNavMesh::doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile)
 {
 	if (!ctile || static_cast<int>(ctile - m_tiles) >= m_maxTiles)
@@ -1598,6 +1675,7 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile)
 	{
 		return DT_FAILURE | DT_OUT_OF_MEMORY;
 	}
+	float baseVerts[3 * DT_VERTS_PER_POLYGON];
 
 	for (int i = 0; i < tile->header->polyCount; ++i)
 	{
@@ -1605,6 +1683,10 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile)
 		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip off-mesh links.
 			continue;
 
+		for (int j = 0; j < p->vertCount; ++j)
+		{
+			dtVcopy(baseVerts + j * 3, &tile->verts[p->verts[j] * 3]);
+		}
 		const dtPolyDetail* pd = &tile->detailMeshes[i];
 		//assert(pd->vertCount >= 3);
 		int pos = 0;
@@ -1636,7 +1718,7 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile)
 
 		MatrixType C(3, 1);
 		CoordId cid = CoordId::Empty;
-		if (!calcBestFit(verts.get(), pos / 3, C, cid)) {
+		if (!calcBestFit(baseVerts, p->vertCount, verts, size, pos / 3, C, cid)) {
 			return DT_FAILURE | DT_PARTIAL_RESULT;
 		}
 		if (C) {
@@ -1647,7 +1729,7 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile)
 				return DT_FAILURE | DT_PARTIAL_RESULT;
 			}
 		}
-		//else - error of calc equation (little poly), we don't use such polygons while path finding
+		//else - error of calc equation (little poly), we don't use such polygons while path finding with jumps
 	}
 
 	return DT_SUCCESS;
