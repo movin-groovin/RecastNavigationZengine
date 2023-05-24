@@ -65,23 +65,6 @@ inline bool inRange(const float* v1, const float* v2, const float r, const float
 	return (dx*dx + dz*dz) < r*r && fabsf(dy) < h;
 }
 
-static void calcPolyCenter(const dtMeshTile* tile, const dtPoly* poly, float* center)
-{
-    center[0] = center[1] = center[2] = 0.f;
-    const int n = (int)poly->vertCount;
-    for (int i = 0; i < n; ++i)
-    {
-        const float* v = &tile->verts[poly->verts[i] * 3];
-        center[0] += v[0];
-        center[1] += v[1];
-        center[2] += v[2];
-    }
-    const float mul = 1.0f / n;
-    center[0] *= mul;
-    center[1] *= mul;
-    center[2] *= mul;
-}
-
 static int fixupCorridor(dtPolyRef* path, const int npath, const int maxPath,
 						 const dtPolyRef* visited, const int nvisited)
 {
@@ -234,161 +217,6 @@ static bool getSteerTarget(dtNavMeshQuery* navQuery, const float* startPos, cons
 	return true;
 }
 
-// ======================================================
-
-//void collisionDetectorGeometryWorld::calcObbPoints(const geometry::OBB* b, float* obbPoints)
-//{
-//    // forward, left, up
-//    rcVadd(obbPoints, b->center, b->dir);
-//    Vadd(obbPoints, b->dir + 3);
-//    Vadd(obbPoints, b->dir + 6);
-//
-//    rcVadd(obbPoints + 3, b->center, b->dir);
-//    Vadd(obbPoints + 3, b->dir + 3);
-//    Vsub(obbPoints + 3, b->dir + 6);
-//
-//    rcVadd(obbPoints + 6, b->center, b->dir);
-//    Vsub(obbPoints + 6, b->dir + 3);
-//    Vadd(obbPoints + 6, b->dir + 6);
-//
-//    rcVadd(obbPoints + 9, b->center, b->dir);
-//    Vsub(obbPoints + 9, b->dir + 3);
-//    Vsub(obbPoints + 9, b->dir + 6);
-//
-//    rcVsub(obbPoints + 12, b->center, b->dir);
-//    Vadd(obbPoints + 12, b->dir + 3);
-//    Vadd(obbPoints + 12, b->dir + 6);
-//
-//    rcVsub(obbPoints + 15, b->center, b->dir);
-//    Vadd(obbPoints + 15, b->dir + 3);
-//    Vsub(obbPoints + 15, b->dir + 6);
-//
-//    rcVsub(obbPoints + 18, b->center, b->dir);
-//    Vsub(obbPoints + 18, b->dir + 3);
-//    Vadd(obbPoints + 18, b->dir + 6);
-//
-//    rcVsub(obbPoints + 21, b->center, b->dir);
-//    Vsub(obbPoints + 21, b->dir + 3);
-//    Vsub(obbPoints + 21, b->dir + 6);
-//}
-//
-//void collisionDetectorGeometryWorld::calcObbExt(const float* src,
-//    const float* dst,
-//    const float deltaH,
-//    const float halfWidth,
-//    const float scale,
-//    geometry::OBBExt* be
-//) {
-//    rcVsub(be->b.dir + 0, dst, src);
-//    Vmul(be->b.dir + 0, 0.5f);
-//    (be->b.dir + 3)[0] = be->b.dir[2];
-//    (be->b.dir + 3)[1] = 0.f;
-//    (be->b.dir + 3)[2] = -1.f * be->b.dir[0];
-//    rcVnormalize(be->b.dir + 3);
-//    Vmul(be->b.dir + 3, halfWidth);
-//    (be->b.dir + 6)[0] = 0.f;
-//    (be->b.dir + 6)[1] = deltaH;
-//    (be->b.dir + 6)[2] = 0.f;
-//    rcVadd(be->b.center, src, be->b.dir);
-//    rcVadd(be->b.center, be->b.center, be->b.dir + 6);
-//    Vmul(be->b.dir + 3, scale); // 0.95 ?
-//    Vmul(be->b.dir + 6, scale); // 0.95 ?
-//    be->b.halfWidth[0] = Vlen(be->b.dir + 0);
-//    be->b.halfWidth[1] = deltaH;
-//    be->b.halfWidth[2] = Vlen(be->b.dir + 3);
-//    calcObbPoints(&be->b, be->verts);
-//}
-//
-//bool collisionDetectorGeometryWorld::detectJumpForwardCollisions(
-//    const float* src, const float* dst, float deltaH
-//) const {
-//    static const float HALF_WIDTH = 30.f;
-//    if (!m_active)
-//        return false;
-//    ++m_callsNum;
-//    float tmin{};
-//    float start[3] = {src[0], src[1] + deltaH * 0.5f, src[2]};
-//    float end[3] = {dst[0], dst[1] + deltaH * 0.5f, dst[2]};
-//    bool res = m_inGeom->raycastMesh(start, end, tmin);
-//    if (res) return true;
-//    geometry::OBBExt be;
-//    calcObbExt(src, dst, deltaH, HALF_WIDTH, 0.95f, &be);
-//    return m_inGeom->obbCollDetect(&be);
-//}
-//
-//bool collisionDetectorGeometryWorld::detectClimbCollisions(
-//    const float* src, const float* dst, float xzDist, float deltaH
-//) const {
-//    static const float HALF_WIDTH = 30.f;
-//    if (!m_active)
-//        return false;
-//    ++m_callsNum;
-//    float dir[3] = {src[0] - dst[0], 0, src[2] - dst[2]};
-//    //rcVsub(dir, src, dst);
-//    dtVnormalize(dir);
-//    float start[3] = {dst[0], dst[1] + 5.f,/*deltaH * 0.5f,*/ dst[2]};
-//    float mid[3] = {
-//        dst[0] + dir[0] * xzDist,
-//        dst[1] + 5.f,//deltaH * 0.5f,
-//        dst[2] + dir[2] * xzDist
-//    };
-//    float tmin{};
-//    bool res = m_inGeom->raycastMesh(start, mid, tmin);
-//    if (res) return true;
-//    float end[3] = {src[0], src[1] + 5.f,/*deltaH * 0.5f,*/ src[2]};
-//    res = m_inGeom->raycastMesh(mid, end, tmin);
-//    if (res) return true;
-//    geometry::OBBExt be;
-//    calcObbExt(start, mid, deltaH, HALF_WIDTH, 0.95f, &be);
-//    res = m_inGeom->obbCollDetect(&be);
-//    if (res) return true;
-//    calcObbExt(mid, end, deltaH, HALF_WIDTH, 0.95f, &be);
-//    return m_inGeom->obbCollDetect(&be);
-//
-//}
-//
-//bool collisionDetectorGeometryWorld::detectJumpDownCollisions(
-//    const float* src, const float* dst, float deltaH
-//) const {
-//    static const float HALF_WIDTH = 30.f;
-//    if (!m_active)
-//        return false;
-//    ++m_callsNum;
-//    float dir[3] = {dst[0] - src[0], 0, dst[2] - src[2]};
-//    //rcVsub(dir, dst, src);
-//    dtVnormalize(dir);
-//    float start[3] = {src[0], src[1] + 5.f,/*deltaH * 0.5f,*/ src[2]};
-//    float mid[3] = {
-//        src[0] + dir[0] * 100.f,
-//        src[1] + 5.f,//deltaH * 0.5f,
-//        src[2] + dir[2] * 100.f
-//    };
-//    float tmin{};
-//    bool res = m_inGeom->raycastMesh(start, mid, tmin);
-//    if (res) return true;
-//    float end[3] = {dst[0], dst[1] + 5.f,/*deltaH * 0.5f,*/dst[2]};
-//    res = m_inGeom->raycastMesh(mid, end, tmin);
-//    if (res) return true;
-//    geometry::OBBExt be;
-//    calcObbExt(start, mid, deltaH, HALF_WIDTH, 1.f, &be);
-//    res = m_inGeom->obbCollDetect(&be);
-//    if (res) return true;
-//    calcObbExt(mid, end, deltaH, HALF_WIDTH, 1.f, &be);
-//    return m_inGeom->obbCollDetect(&be);
-//}
-//
-//bool collisionDetectorGeometryWorld::detectCollision(const float* src, const float* dst) const {
-//    if (!m_active)
-//        return false;
-//    ++m_callsNum;
-//    float tmin{};
-//    float start[3] = {src[0], src[1], src[2]};
-//    float end[3] = {dst[0], dst[1], dst[2]};
-//    return m_inGeom->raycastMesh(start, end, tmin);
-//}
-
-// ======================================================
-
 static bool canTransfer(const uint8_t from, const uint8_t to)
 {
     switch(from)
@@ -499,7 +327,7 @@ NavMeshTesterTool::NavMeshTesterTool(InputGeom *inGeom, BuildContext* ctx):
 	m_toolMode(TOOLMODE_PATHFIND_FOLLOW),
 	m_straightPathOptions(0),
 	m_displayRefIdsInPath(false),
-    m_straightWithJumpsPathOptions(false),
+    //m_straightWithJumpsPathOptions(false),
     //m_collDet(inGeom, m_straightWithJumpsPathOptions),
 	m_startRef(0),
 	m_endRef(0),
@@ -531,8 +359,7 @@ NavMeshTesterTool::NavMeshTesterTool(InputGeom *inGeom, BuildContext* ctx):
 }
 
 NavMeshTesterTool::~NavMeshTesterTool() {
-    //clearPolyRawDataHolder<StdPolyRawDataHolder>();
-    //clearNonConnectedTransfersHolder<TransfersCache>();
+	;
 }
 
 void NavMeshTesterTool::init(Sample* sample)
@@ -558,9 +385,6 @@ void NavMeshTesterTool::init(Sample* sample)
 	
 	m_neighbourhoodRadius = sample->getAgentRadius() * 20.0f;
 	m_randomRadius = sample->getAgentRadius() * 30.0f;
-
-    //if (!initPathfindingSubsystem())
-    //    m_initError = true;
 }
 
 void NavMeshTesterTool::init(dtNavMesh* navMesh, dtNavMeshQuery* navQuery)
@@ -585,9 +409,6 @@ void NavMeshTesterTool::init(dtNavMesh* navMesh, dtNavMeshQuery* navQuery)
 
     m_neighbourhoodRadius = 1.f;
     m_randomRadius = 1.f;
-
-    //if (!initPathfindingSubsystem())
-    //    m_initError = true;
 }
 
 void NavMeshTesterTool::handleMenu()
@@ -624,34 +445,29 @@ void NavMeshTesterTool::handleMenu()
 
 		imguiUnindent();
 	}
-    //if (imguiCheck(
-    //    "Pathfind Straight with jumps",
-    //    m_toolMode == TOOLMODE_PATHFIND_STRAIGHT_WITH_JUMPS
-    //)) {
-    //    m_collDet.disable();
-    //    m_toolMode = TOOLMODE_PATHFIND_STRAIGHT_WITH_JUMPS;
-    //    recalc();
-    //}
-    //if (m_toolMode == TOOLMODE_PATHFIND_STRAIGHT_WITH_JUMPS)
-    //{
+    if (imguiCheck(
+        "Pathfind Straight with jumps",
+        m_toolMode == TOOLMODE_PATHFIND_STRAIGHT_WITH_JUMPS
+    )) {
+        m_toolMode = TOOLMODE_PATHFIND_STRAIGHT_WITH_JUMPS;
+        recalc();
+    }
+    if (m_toolMode == TOOLMODE_PATHFIND_STRAIGHT_WITH_JUMPS)
+    {
     //    imguiIndent();
     //    imguiLabel("Use world geometry collision detections");
     //    if (imguiCheck("No", m_straightWithJumpsPathOptions == 0))
     //    {
     //        m_straightWithJumpsPathOptions = 0;
-    //        m_collDet.disable();
-    //        m_toolMode = TOOLMODE_PATHFIND_STRAIGHT_WITH_JUMPS;
     //        recalc();
     //    }
     //    if (imguiCheck("Yes", m_straightWithJumpsPathOptions == 1))
     //    {
     //        m_straightWithJumpsPathOptions = 1;
-    //        m_collDet.enable();
-    //        m_toolMode = TOOLMODE_PATHFIND_STRAIGHT_WITH_JUMPS;
     //        recalc();
     //    }
     //    imguiUnindent();
-    //}
+    }
 	if (imguiCheck("Pathfind Sliced", m_toolMode == TOOLMODE_PATHFIND_SLICED))
 	{
 		m_toolMode = TOOLMODE_PATHFIND_SLICED;
@@ -1273,22 +1089,24 @@ void NavMeshTesterTool::recalc()
 	}
     else if (m_toolMode == TOOLMODE_PATHFIND_STRAIGHT_WITH_JUMPS)
     {
-    //    if (m_sposSet && m_eposSet && m_startRef && m_endRef)
-    //    {
-    //        m_ctx->log(RC_LOG_PROGRESS, "Pathfinding with jumps start point: %f, %f, %f; end point: %f, %f, %f",
-    //            m_spos[0], m_spos[1], m_spos[2], m_epos[0], m_epos[1], m_epos[2]);
-    //        m_ctx->log(RC_LOG_PROGRESS, "Pathfinding with jumps poly start ref: %llu, poly end ref: %llu", m_startRef, m_endRef);
-    //        auto tp1 = std::chrono::steady_clock::now();
-    //        if (!findPathWithJumps(m_startRef, m_endRef, m_spos, m_epos)) {
-    //            m_npolys = 0;
-    //            m_nstraightPath = 0;
-    //            m_ctx->log(RC_LOG_PROGRESS, "Error of pathfinding with jumps\n");
-    //        } else {
-    //            auto tp2 = std::chrono::steady_clock::now();
-	//			  uint32_t diffVal = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::microseconds>(tp2 - tp1).count());
-    //            m_ctx->log(RC_LOG_PROGRESS, "Pathfinding with jumps, time delta microseconds: %u", diffVal);
-    //        }
-    //    }
+        if (m_sposSet && m_eposSet && m_startRef && m_endRef)
+        {
+            m_ctx->log(RC_LOG_PROGRESS, "Pathfinding with jumps start point: [%f; %f; %f], end point: [%f; %f; %f]",
+                m_spos[0], m_spos[1], m_spos[2], m_epos[0], m_epos[1], m_epos[2]);
+			m_ctx->log(RC_LOG_PROGRESS, "Distance: %f, XZ distance: %f, Y distance: %f",
+				dtVdist(m_spos, m_epos), dtVdist2D(m_spos, m_epos), (float)(m_spos[1] - m_epos[1]));
+            m_ctx->log(RC_LOG_PROGRESS, "Pathfinding with jumps poly start ref: %llu, poly end ref: %llu", m_startRef, m_endRef);
+            auto tp1 = std::chrono::steady_clock::now();
+            if (!findPathWithJumps(m_startRef, m_endRef, m_spos, m_epos)) {
+                m_npolys = 0;
+                m_nstraightPath = 0;
+                m_ctx->log(RC_LOG_PROGRESS, "Error of pathfinding with jumps\n");
+            } else {
+                auto tp2 = std::chrono::steady_clock::now();
+				  uint32_t diffVal = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::microseconds>(tp2 - tp1).count());
+                m_ctx->log(RC_LOG_PROGRESS, "Pathfinding with jumps, time delta microseconds: %u", diffVal);
+            }
+        }
     }
 	else if (m_toolMode == TOOLMODE_PATHFIND_SLICED)
 	{
@@ -1437,141 +1255,140 @@ void NavMeshTesterTool::recalc()
 		}
 	}
 }
-/*
+
 bool NavMeshTesterTool::findPathWithJumps(
     dtPolyRef startRef, dtPolyRef endRef, const float* spos, const float* epos
 ) {
-    if (m_initError) {
-        m_ctx->log(RC_LOG_PROGRESS, "Can't run findPathWithJumps, error of initialization");
-        return false;
-    }
-    //m_collDet.disable();
-    m_navQuery->findPathWithJumps(
-        &m_collDet, startRef, endRef, spos, epos, &m_filter, JUMPING_SIZE,
-        m_polysJumping, &m_infoPolysJumping, &m_npolys
-    );
-    if (!m_npolys) {
-        m_ctx->log(RC_LOG_PROGRESS, "Error of pathfinding, dtNavMeshQuery::findPathWithJumps");
-        return false;
-    }
-    m_collDet.clearCallsNum();
+    //if (m_initError) {
+    //    m_ctx->log(RC_LOG_PROGRESS, "Can't run findPathWithJumps, error of initialization");
+    //    return false;
+    //}
+    ////m_collDet.disable();
+    //m_navQuery->findPathWithJumps(
+    //    &m_collDet, startRef, endRef, spos, epos, &m_filter, JUMPING_SIZE,
+    //    m_polysJumping, &m_infoPolysJumping, &m_npolys
+    //);
+    //if (!m_npolys) {
+    //    m_ctx->log(RC_LOG_PROGRESS, "Error of pathfinding, dtNavMeshQuery::findPathWithJumps");
+    //    return false;
+    //}
+    //m_collDet.clearCallsNum();
 
-    float spos_coords[3];
-    float epos_coords[3];
-    int current_max_size = MAX_POLYS;
-    int current_size = 0;
-    m_nstraightPath = 0;
-    m_npolys = 0;
-    for (int i = 0, sz = m_infoPolysJumping.size(); i < sz; ++i)
-    {
-        InfoPathEntry& info = m_infoPolysJumping[i];
-        if (MAX_POLYS - m_npolys <= 0)
-            break;
-        if (info.normal) {
-            auto dat = (const NormalPathEntry*)info.data;
-            assert(dat->actionType == NO_ACTION);
-            dtPolyRef firstPolyRef = 0, endPolyRef = 0;
-            if (i != 0) {
-                dtVcopy(spos_coords, m_straightPathJumping[m_nstraightPath - 1].point);
-                InfoPathEntry& prev_info = m_infoPolysJumping[i - 1];
-                auto prev_dat = ((const JumpingPathEntry*)prev_info.data + prev_info.size - 1);
-                firstPolyRef = prev_dat->polyRefTo;
-                m_polys[m_npolys] = firstPolyRef;
-                if (i + 1 != sz) {
-                    auto next_dat = (const JumpingPathEntry*)m_infoPolysJumping[i + 1].data;
-                    dtVcopy(epos_coords, next_dat->posFrom);
-                    endPolyRef = next_dat->polyRefFrom;
-                    m_polys[m_npolys + info.size + 1] = endPolyRef;
-                } else {
-                    dtVcopy(epos_coords, epos);
-                }
-            } else {
-                dtVcopy(spos_coords, spos);
-                if (sz == 1) {
-                    dtVcopy(epos_coords, epos);
-                } else {
-                    auto next_dat = (const JumpingPathEntry*)m_infoPolysJumping[i + 1].data;
-                    dtVcopy(epos_coords, next_dat->posFrom);
-                    endPolyRef = next_dat->polyRefFrom;
-                    m_polys[m_npolys + info.size] = endPolyRef;
-                }
-            }
+    //float spos_coords[3];
+    //float epos_coords[3];
+    //int current_max_size = MAX_POLYS;
+    //int current_size = 0;
+    //m_nstraightPath = 0;
+    //m_npolys = 0;
+    //for (int i = 0, sz = m_infoPolysJumping.size(); i < sz; ++i)
+    //{
+    //    InfoPathEntry& info = m_infoPolysJumping[i];
+    //    if (MAX_POLYS - m_npolys <= 0)
+    //        break;
+    //    if (info.normal) {
+    //        auto dat = (const NormalPathEntry*)info.data;
+    //        assert(dat->actionType == NO_ACTION);
+    //        dtPolyRef firstPolyRef = 0, endPolyRef = 0;
+    //        if (i != 0) {
+    //            dtVcopy(spos_coords, m_straightPathJumping[m_nstraightPath - 1].point);
+    //            InfoPathEntry& prev_info = m_infoPolysJumping[i - 1];
+    //            auto prev_dat = ((const JumpingPathEntry*)prev_info.data + prev_info.size - 1);
+    //            firstPolyRef = prev_dat->polyRefTo;
+    //            m_polys[m_npolys] = firstPolyRef;
+    //            if (i + 1 != sz) {
+    //                auto next_dat = (const JumpingPathEntry*)m_infoPolysJumping[i + 1].data;
+    //                dtVcopy(epos_coords, next_dat->posFrom);
+    //                endPolyRef = next_dat->polyRefFrom;
+    //                m_polys[m_npolys + info.size + 1] = endPolyRef;
+    //            } else {
+    //                dtVcopy(epos_coords, epos);
+    //            }
+    //        } else {
+    //            dtVcopy(spos_coords, spos);
+    //            if (sz == 1) {
+    //                dtVcopy(epos_coords, epos);
+    //            } else {
+    //                auto next_dat = (const JumpingPathEntry*)m_infoPolysJumping[i + 1].data;
+    //                dtVcopy(epos_coords, next_dat->posFrom);
+    //                endPolyRef = next_dat->polyRefFrom;
+    //                m_polys[m_npolys + info.size] = endPolyRef;
+    //            }
+    //        }
 
-            std::transform(
-                dat,
-                dat + info.size,
-                m_polys + m_npolys + static_cast<bool>(firstPolyRef),
-                [] (const NormalPathEntry& ref) {return ref.polyRef;}
-            );
-            if (endPolyRef == m_polys[m_npolys + info.size])
-                endPolyRef = 0;
-            m_navQuery->findStraightPath(
-                spos_coords,
-                epos_coords,
-                m_polys + m_npolys,
-                info.size + static_cast<bool>(firstPolyRef) + static_cast<bool>(endPolyRef),
-                m_straightPath + m_nstraightPath * NCOORDS,
-                m_straightPathFlags + m_nstraightPath,
-                m_straightPathPolys + m_nstraightPath,
-                &current_size,
-                current_max_size,
-                m_straightPathOptions
-            );
+    //        std::transform(
+    //            dat,
+    //            dat + info.size,
+    //            m_polys + m_npolys + static_cast<bool>(firstPolyRef),
+    //            [] (const NormalPathEntry& ref) {return ref.polyRef;}
+    //        );
+    //        if (endPolyRef == m_polys[m_npolys + info.size])
+    //            endPolyRef = 0;
+    //        m_navQuery->findStraightPath(
+    //            spos_coords,
+    //            epos_coords,
+    //            m_polys + m_npolys,
+    //            info.size + static_cast<bool>(firstPolyRef) + static_cast<bool>(endPolyRef),
+    //            m_straightPath + m_nstraightPath * NCOORDS,
+    //            m_straightPathFlags + m_nstraightPath,
+    //            m_straightPathPolys + m_nstraightPath,
+    //            &current_size,
+    //            current_max_size,
+    //            m_straightPathOptions
+    //        );
 
-            for (int j = 0; j < current_size; ++j) {
-                m_straightPathJumping[m_nstraightPath + j].actionType = NO_ACTION;
-                dtVcopy(
-                    m_straightPathJumping[m_nstraightPath + j].point,
-                    m_straightPath + (m_nstraightPath + j) * NCOORDS
-                );
-            }
-            current_max_size -= current_size;
-            m_nstraightPath += current_size;
-            m_npolys += info.size + static_cast<bool>(firstPolyRef) + static_cast<bool>(endPolyRef);
-            if (current_max_size < 2)
-                break;
-        } else {
-            bool first = true;
-            for (int j = 0; j < info.size; ++j) {
-                auto dat = (const JumpingPathEntry*)info.data + j;
-                assert(dat->actionType != NO_ACTION);
-                if (!first) {
-                    m_straightPathJumping[m_nstraightPath].actionType = dat->actionType;
-                    dtVcopy(m_straightPathJumping[m_nstraightPath].point, dat->posFrom);
-                    ++m_nstraightPath;
-                    m_straightPathJumping[m_nstraightPath].actionType = NO_ACTION;
-                    dtVcopy(m_straightPathJumping[m_nstraightPath].point, dat->posTo);
-                    ++m_nstraightPath;
-                    m_polys[m_npolys] = dat->polyRefFrom;
-                    ++m_npolys;
-                    current_max_size -= 2;
-                } else {
-                    m_straightPathJumping[m_nstraightPath - 1].actionType = dat->actionType;
-                    dtVcopy(m_straightPathJumping[m_nstraightPath - 1].point, dat->posFrom);
-                    m_straightPathJumping[m_nstraightPath].actionType = NO_ACTION;
-                    dtVcopy(m_straightPathJumping[m_nstraightPath].point, dat->posTo);
-                    ++m_nstraightPath;
-                    first = false;
-                    current_max_size -= 1;
-                }
-                if (current_max_size < 2)
-                    break;
-            }
-            if (i + 1 == sz) {
-                auto dat = (const JumpingPathEntry*)info.data + (info.size - 1);
-                m_straightPathJumping[m_nstraightPath].actionType = NO_ACTION;
-                dtVcopy(m_straightPathJumping[m_nstraightPath].point, epos);
-                ++m_nstraightPath;
-                m_polys[m_npolys] = dat->polyRefTo;
-                ++m_npolys;
-            }
-        }
-    }
-    assert(m_straightPathJumping[m_nstraightPath - 1].actionType == NO_ACTION);
+    //        for (int j = 0; j < current_size; ++j) {
+    //            m_straightPathJumping[m_nstraightPath + j].actionType = NO_ACTION;
+    //            dtVcopy(
+    //                m_straightPathJumping[m_nstraightPath + j].point,
+    //                m_straightPath + (m_nstraightPath + j) * NCOORDS
+    //            );
+    //        }
+    //        current_max_size -= current_size;
+    //        m_nstraightPath += current_size;
+    //        m_npolys += info.size + static_cast<bool>(firstPolyRef) + static_cast<bool>(endPolyRef);
+    //        if (current_max_size < 2)
+    //            break;
+    //    } else {
+    //        bool first = true;
+    //        for (int j = 0; j < info.size; ++j) {
+    //            auto dat = (const JumpingPathEntry*)info.data + j;
+    //            assert(dat->actionType != NO_ACTION);
+    //            if (!first) {
+    //                m_straightPathJumping[m_nstraightPath].actionType = dat->actionType;
+    //                dtVcopy(m_straightPathJumping[m_nstraightPath].point, dat->posFrom);
+    //                ++m_nstraightPath;
+    //                m_straightPathJumping[m_nstraightPath].actionType = NO_ACTION;
+    //                dtVcopy(m_straightPathJumping[m_nstraightPath].point, dat->posTo);
+    //                ++m_nstraightPath;
+    //                m_polys[m_npolys] = dat->polyRefFrom;
+    //                ++m_npolys;
+    //                current_max_size -= 2;
+    //            } else {
+    //                m_straightPathJumping[m_nstraightPath - 1].actionType = dat->actionType;
+    //                dtVcopy(m_straightPathJumping[m_nstraightPath - 1].point, dat->posFrom);
+    //                m_straightPathJumping[m_nstraightPath].actionType = NO_ACTION;
+    //                dtVcopy(m_straightPathJumping[m_nstraightPath].point, dat->posTo);
+    //                ++m_nstraightPath;
+    //                first = false;
+    //                current_max_size -= 1;
+    //            }
+    //            if (current_max_size < 2)
+    //                break;
+    //        }
+    //        if (i + 1 == sz) {
+    //            auto dat = (const JumpingPathEntry*)info.data + (info.size - 1);
+    //            m_straightPathJumping[m_nstraightPath].actionType = NO_ACTION;
+    //            dtVcopy(m_straightPathJumping[m_nstraightPath].point, epos);
+    //            ++m_nstraightPath;
+    //            m_polys[m_npolys] = dat->polyRefTo;
+    //            ++m_npolys;
+    //        }
+    //    }
+    //}
+    //assert(m_straightPathJumping[m_nstraightPath - 1].actionType == NO_ACTION);
 
     return true;
 }
-*/
 
 static void getPolyCenter(dtNavMesh* navMesh, dtPolyRef ref, float* center)
 {

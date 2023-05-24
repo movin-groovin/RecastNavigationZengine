@@ -95,11 +95,15 @@ project "DetourCrowd"
 	includedirs {
 		"../DetourCrowd/Include",
 		"../Detour/Include",
-		"../Recast/Include"
+		"../Recast/Include",
+		"../Common/Include"
 	}
 	files {
 		"../DetourCrowd/Include/*.h",
 		"../DetourCrowd/Source/*.cpp"
+	}
+	links { 
+		"Common"
 	}
 
 project "DetourTileCache"

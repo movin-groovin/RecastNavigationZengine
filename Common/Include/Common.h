@@ -22,7 +22,7 @@ static const unsigned char RC_WALKABLE_AREA = 63;
 namespace PolyAreaFlags
 {
 // extended behavior flags
-enum : uint8_t
+enum: uint8_t
 {
 	TECHNICAL_LOW = RC_NULL_AREA,
 
@@ -51,6 +51,22 @@ inline uint32_t appendInhabitedFlag(uint32_t val) { return val | INHABITED_AREA;
 inline bool isInhabitedFlag(uint32_t val) { return val & INHABITED_AREA; }
 inline uint32_t clearIsTriFlag(uint32_t val) { return val & ~(1 << IS_TRI_POS); }
 inline uint32_t setIsTriFlag(uint32_t val) { return val | (1 << IS_TRI_POS); }
+}
+
+namespace NavmeshPolyTransferFlags
+{
+enum TransferType: uint32_t
+{
+	NO_ACTION,
+
+	WALKING,
+	JUMP_DOWN,
+	JUMP_FORWARD,
+	CLIMB,
+	CLIMB_OVERLAPPED_POLYS,
+
+	MAX_ACTION
+};
 }
 
 namespace common
@@ -447,6 +463,15 @@ public:
 private:
 	F m_f;
 	mutable bool m_active = true;
+};
+
+struct NonCopyable
+{
+public:
+	NonCopyable() = default;
+	~NonCopyable() = default;
+	NonCopyable(const NonCopyable&) = delete;
+	NonCopyable& operator= (const NonCopyable&) = delete;
 };
 
 } // namespace common

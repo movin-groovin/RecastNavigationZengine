@@ -2224,11 +2224,11 @@ bool Grid2dBvh::obbTriCollisionFirstHit(const geometry::OBBExt* be) const // TOD
 {
 	float triPoints[3 * 3];
 	float min[3], max[3];
-	geometry::vcopy(min, be->verts);
-	geometry::vcopy(max, be->verts);
+	geometry::vcopy(min, be->getVerts());
+	geometry::vcopy(max, be->getVerts());
 	for (int i = 1; i < 8; ++i) {
-		geometry::vmin(min, be->verts + i * 3);
-		geometry::vmax(max, be->verts + i * 3);
+		geometry::vmin(min, be->getVerts() + i * 3);
+		geometry::vmax(max, be->getVerts() + i * 3);
 	}
 	XzGridBorders ret = calcXzGridBorders(min, max);
 
@@ -2249,7 +2249,7 @@ bool Grid2dBvh::obbTriCollisionFirstHit(const geometry::OBBExt* be) const // TOD
 					geometry::vcopy(triPoints, m_verts + vIds[0]);
 					geometry::vcopy(triPoints + 3, m_verts + vIds[1]);
 					geometry::vcopy(triPoints + 6, m_verts + vIds[2]);
-					ret = geometry::intersectObbTriangle(be, triPoints);
+					ret = geometry::intersectionObbVsTriangle(be, triPoints);
 					if (ret) { // TODO last collide id checking
 						FlagType flag = m_triFlags[curNode->triId / 3];
 						if (flag.isVobPos) {
@@ -2283,23 +2283,26 @@ bool Grid2dBvh::obbTriCollisionVobFirstHit(int vobId, const geometry::OBBExt* be
 	const auto& vobPos = vob.positions[vob.activePosIndex];
 	geometry::OBBExt* beMut = const_cast<geometry::OBBExt*>(be);
 	float vertex[3];
-	for (int i = 0; i < 3 * 8; i += 3) {
-		transformVertex(&be->verts[i], vobPos.invTrafo, vertex);
-		geometry::vcopy(&beMut->verts[i], vertex);
+	for (int i = 0; i < 8; ++i) {
+		transformVertex(&be->getVerts()[i * 3], vobPos.invTrafo, vertex);
+		//geometry::vcopy(&beMut->getVerts()[i], vertex);
+		beMut->setVert(i, vertex);
 	}
-	transformVertex(be->b.center, vobPos.invTrafo, vertex);
-	geometry::vcopy(beMut->b.center, vertex);
-	for (int i = 0; i < 3 * 3; i += 3) {
-		transformDirection(&be->b.dir[i], vobPos.invTrafo, vertex);
-		geometry::vcopy(&beMut->b.dir[i], vertex);
+	transformVertex(be->getCenter(), vobPos.invTrafo, vertex);
+	//geometry::vcopy(beMut->b.center, vertex);
+	beMut->setCenter(vertex);
+	for (int i = 0; i < 3; ++i) {
+		transformDirection(&be->getDir()[i * 3], vobPos.invTrafo, vertex);
+		//geometry::vcopy(&beMut->b.dir[i], vertex);
+		beMut->setDir(i, vertex);
 	}
 	float triPoints[3 * 3];
 	float min[3], max[3];
-	geometry::vcopy(min, be->verts);
-	geometry::vcopy(max, be->verts);
+	geometry::vcopy(min, be->getVerts());
+	geometry::vcopy(max, be->getVerts());
 	for (int i = 1; i < 8; ++i) {
-		geometry::vmin(min, be->verts + i * 3);
-		geometry::vmax(max, be->verts + i * 3);
+		geometry::vmin(min, be->getVerts() + i * 3);
+		geometry::vmax(max, be->getVerts() + i * 3);
 	}
 	const float* verts = vobMesh.verts;
 	const int* tris = vobMesh.tris;
@@ -2315,7 +2318,7 @@ bool Grid2dBvh::obbTriCollisionVobFirstHit(int vobId, const geometry::OBBExt* be
 			geometry::vcopy(triPoints, verts + vIds[0]);
 			geometry::vcopy(triPoints + 3, verts + vIds[1]);
 			geometry::vcopy(triPoints + 6, verts + vIds[2]);
-			bool ret = geometry::intersectObbTriangle(be, triPoints);
+			bool ret = geometry::intersectionObbVsTriangle(be, triPoints);
 			if (ret) {
 				return true;
 			}

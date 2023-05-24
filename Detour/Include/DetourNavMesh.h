@@ -66,7 +66,11 @@ typedef unsigned int dtTileRef;
 
 /// The maximum number of vertices per navigation polygon.
 /// @ingroup detour
-static const int DT_VERTS_PER_POLYGON = 6;
+static const int DT_VERTS_PER_POLYGON = 6; // max verts per navmesh polygon
+#ifdef ZENGINE_NAVMESH
+static const int DT_MAX_PLANES_PER_BOUNDING_POLYHEDRON = DT_VERTS_PER_POLYGON + 1;
+static const float MAX_FWD_DST_FOR_CLIMB_BBOX = 50.f;
+#endif // ZENGINE_NAVMESH
 
 /// @{
 /// @name Tile Serialization Constants
@@ -199,6 +203,18 @@ struct dtPoly
 	// x - climb overlapped bit
 	// edge - 4 bits, |reserved|jmp_down|jmp_fwd|climb|
 	uint32_t jmpAbilityFlags;
+
+	struct JmpAbilityInfoEdge
+	{
+		bool jmpDown;
+		bool jmpFwd;
+		bool climb;
+	};
+	struct JmpAbilityInfoPoly
+	{
+		JmpAbilityInfoEdge edges[DT_VERTS_PER_POLYGON];
+		bool climbOverlapped;
+	};
 #endif // ZENGINE_NAVMESH
 
 	/// Sets the user defined area id. [Limit: < #DT_MAX_AREAS]
@@ -217,14 +233,14 @@ struct dtPoly
 	inline bool isAveragePolyInited() const { return norm[0] != FLT_MAX; }
 	inline uint32_t getJmpAbilityFlags() const { return jmpAbilityFlags; }
 	inline void setJmpAbilityFlags(const uint32_t v) { jmpAbilityFlags = v; }
-	inline uint32_t getEdgeJmpFlags(int edgeIdx) const {
+	inline uint32_t getEdgeJmpClimbFlags(int edgeIdx) const {
 		assert(edgeIdx >= 0 && edgeIdx <= 6);
 		return (jmpAbilityFlags >> edgeIdx * EDGE_BITS_SIZE) & 0xF;
 	}
-	inline void setEdgeJmpFlags(int edgeIdx, bool jmpDown, bool jmpFwd, bool climb)
+	inline void setEdgeJmpClimbFlags(int edgeIdx, bool jmpDown, bool jmpFwd, bool climb)
 	{
-		assert(edgeIdx >= 0 && edgeIdx <= 6);
-		jmpAbilityFlags = ((IDX_JMP_DOWN & (uint32_t)jmpDown) | (IDX_JMP_FWD & (uint32_t)jmpFwd) |
+		assert(edgeIdx >= 0 && edgeIdx <= 5);
+		jmpAbilityFlags |= ((IDX_JMP_DOWN & (uint32_t)jmpDown) | (IDX_JMP_FWD & (uint32_t)jmpFwd) |
 							(IDX_CLIMB & (uint32_t)climb)) << edgeIdx * EDGE_BITS_SIZE;
 	}
 	inline bool getClimbOverlappedFlag() const { return jmpAbilityFlags & IDX_CLIMB_OVERLAPPED; }
@@ -419,8 +435,7 @@ public:
 	dtStatus calcAveragePolyPlanes(const dtMeshTile* ctile);
 	dtStatus doCalcAveragePolyPlanes_v1(const dtMeshTile* ctile);
 	dtStatus doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile);
-	dtStatus calcPreliminaryJumpData(const dtTileRef refTile);
-	dtStatus calcPreliminaryJumpData(const dtMeshTile* ctile);
+	void setPreliminaryJumpData(const dtMeshTile* ctile, std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]>& data, const int polyCount);
 #endif // ZENGINE_NAVMESH
 	
 	/// Removes the specified tile from the navigation mesh.
@@ -746,6 +761,10 @@ dtNavMesh* dtAllocNavMesh();
 ///  @param[in]	navmesh		A navigation mesh allocated using #dtAllocNavMesh
 ///  @ingroup detour
 void dtFreeNavMesh(dtNavMesh* navmesh);
+
+#ifdef ZENGINE_NAVMESH
+void calcPolyCenter(const dtMeshTile* tile, const dtPoly* poly, float* center);
+#endif // ZENGINE_NAVMESH
 
 #endif // DETOURNAVMESH_H
 

@@ -194,7 +194,7 @@ bool intersectionAabbVsTriangle(
 	return true;
 }
 
-bool intersectObbTriangle(const OBBExt* be, const float* triPoints)
+bool intersectionObbVsTriangle(const OBBExt* be, const float* triPoints)
 {
 	float minMaxObb[2], minMaxTri[2];
 	float cross[3];
@@ -205,32 +205,32 @@ bool intersectObbTriangle(const OBBExt* be, const float* triPoints)
 
 	// edges
 	for (int i = 0; i < 3; ++i) {
-		vcross(cross, e + i * 3, be->b.dir);
-		calcProjection(be->verts, 8, cross, minMaxObb);
+		vcross(cross, e + i * 3, be->getDir());
+		calcProjection(be->getVerts(), 8, cross, minMaxObb);
 		calcProjection(triPoints, 3, cross, minMaxTri);
 		if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
-		vcross(cross, e + i * 3, be->b.dir + 3);
-		calcProjection(be->verts, 8, cross, minMaxObb);
+		vcross(cross, e + i * 3, be->getDir() + 3);
+		calcProjection(be->getVerts(), 8, cross, minMaxObb);
 		calcProjection(triPoints, 3, cross, minMaxTri);
 		if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
-		vcross(cross, e + i * 3, be->b.dir + 6);
-		calcProjection(be->verts, 8, cross, minMaxObb);
+		vcross(cross, e + i * 3, be->getDir() + 6);
+		calcProjection(be->getVerts(), 8, cross, minMaxObb);
 		calcProjection(triPoints, 3, cross, minMaxTri);
 		if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
 	}
 	// obb faces
-	calcProjection(be->verts, 8, be->b.dir, minMaxObb);
-	calcProjection(triPoints, 3, be->b.dir, minMaxTri);
+	calcProjection(be->getVerts(), 8, be->getDir(), minMaxObb);
+	calcProjection(triPoints, 3, be->getDir(), minMaxTri);
 	if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
-	calcProjection(be->verts, 8, be->b.dir + 3, minMaxObb);
-	calcProjection(triPoints, 3, be->b.dir + 3, minMaxTri);
+	calcProjection(be->getVerts(), 8, be->getDir() + 3, minMaxObb);
+	calcProjection(triPoints, 3, be->getDir() + 3, minMaxTri);
 	if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
-	calcProjection(be->verts, 8, be->b.dir + 6, minMaxObb);
-	calcProjection(triPoints, 3, be->b.dir + 6, minMaxTri);
+	calcProjection(be->getVerts(), 8, be->getDir() + 6, minMaxObb);
+	calcProjection(triPoints, 3, be->getDir() + 6, minMaxTri);
 	if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
 	// tri
 	vcross(cross, e + 0, e + 3);
-	calcProjection(be->verts, 8, cross, minMaxObb);
+	calcProjection(be->getVerts(), 8, cross, minMaxObb);
 	calcProjection(triPoints, 3, cross, minMaxTri);
 	if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
 
@@ -275,10 +275,10 @@ void calcProjectionXz(
 	const float* points, int n, const float* axis, float(&minMax)[2]
 ) {
 	assert(n >= 1);
-	minMax[0] = rcVdotXz(points, axis);
+	minMax[0] = vdotXz(points, axis);
 	minMax[1] = minMax[0];
 	for (int i = 1; i < n; ++i) {
-		float val = rcVdotXz(points + i * 3, axis);
+		float val = vdotXz(points + i * 3, axis);
 		minMax[0] = scalarMin(minMax[0], val);
 		minMax[1] = scalarMax(minMax[1], val);
 	}
@@ -576,6 +576,93 @@ bool checkPolyVsPolyXz(
 	}
 
 	return true;
+}
+
+bool calcDirOutOfPolyXz(const float* v1, const float* v2, const float* vThird, float* dir)
+{
+	static const float EPS = 1e-4;
+	float p[3];
+	//float ep1[3], ep2[3];
+
+	vsub(dir, v2, v1);
+	if (vlen(dir) < EPS) {
+		std::memset(dir, 0, sizeof(float) * 3);
+		return false;
+	}
+	dir[1] = 0.f;
+	float tmp = dir[0];
+	dir[0] = dir[2];
+	dir[2] = -tmp;
+	vadd(p, v1, dir);
+	// points are on one side, change direction of perp
+	tmp = vdotXz(dir, vThird);
+	if (std::abs(tmp) < EPS) {
+		std::memset(dir, 0, sizeof(float) * 3);
+		return false;
+	}
+	if (vdotXz(dir, p) * tmp > 0)
+	{
+		dir[0] *= -1.f;
+		dir[2] *= -1.f;
+	}
+	vnormalize(dir);
+	return true;
+}
+
+void calcObbDirsAndPoints(
+	const float* v1,
+	const float* v2,
+	const float* fwdDirNorm,
+	const float fwdDst,
+	const float height,
+	float* dirs,
+	const float dirsSize,
+	float* points,
+	const float pointsSize
+) {
+	static const float EPS = 1e-4;
+	assert(dirsSize >= 3);
+	assert(pointsSize >= 8);
+	assert(vlen(fwdDirNorm) > EPS); // TODO disable
+
+	vsub(dirs, v2, v1);
+	const float dstSide = vlen(dirs);
+	vnormalize(dirs);
+	vcopy(dirs + 3, fwdDirNorm);
+	dirs[6] = 0.f;
+	dirs[7] = 1.f;
+	dirs[8] = 0.f;
+
+	const float* dirSide = dirs;
+	const float* dirFwd = dirs + 3;
+	const float* dirUp = dirs + 6;
+	vcopy(points, v1);
+	vcopy(points + 3, v2);
+	vmad(points + 6, v1, dirFwd, fwdDst);
+	vmad(points + 9, v2, dirFwd, fwdDst);
+	float* v5 = points + 12;
+	vmad(v5, v1, dirUp, height);
+	vmad(points + 15, v5, dirSide, dstSide);
+	vmad(points + 18, v5, dirFwd, fwdDst);
+	vmad(points + 21, points + 15, dirFwd, fwdDst);
+}
+
+void calcCenterAndHalfExtents(const float* verts, const int vertsSize, float* center, float* halfExtents)
+{
+	float min[3] = {FLT_MAX, FLT_MAX, FLT_MAX};
+	float max[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+
+	const float* p = verts;
+	const float* pe = verts + vertsSize * 3;
+	for (; p < pe; p += 3)
+	{
+		vmin(min, p);
+		vmax(max, p);
+	}
+	vsub(halfExtents, max, min);
+	vadd(center, min, max);
+	vmul(center, 0.5f);
+	vmul(halfExtents, 0.5f);
 }
 
 } // namespace geometry

@@ -62,6 +62,47 @@ inline void vsub(float* dest, const float* v1, const float* v2)
 	dest[2] = v1[2] - v2[2];
 }
 
+inline void vsub(float* res, const float* v)
+{
+	res[0] -= v[0];
+	res[1] -= v[1];
+	res[2] -= v[2];
+}
+
+inline void vadd(float* dest, const float* v1, const float* v2)
+{
+	dest[0] = v1[0] + v2[0];
+	dest[1] = v1[1] + v2[1];
+	dest[2] = v1[2] + v2[2];
+}
+
+inline void vadd(float* res, const float* v)
+{
+	res[0] += v[0];
+	res[1] += v[1];
+	res[2] += v[2];
+}
+
+inline void vmul(float* res, const float m)
+{
+	res[0] *= m;
+	res[1] *= m;
+	res[2] *= m;
+}
+
+inline float vlen(const float* v)
+{
+	return std::sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
+
+inline float vdist(const float* v1, const float* v2)
+{
+	float dx = v2[0] - v1[0];
+	float dy = v2[1] - v1[1];
+	float dz = v2[2] - v1[2];
+	return std::sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
 inline void vcross(float* dest, const float* v1, const float* v2)
 {
 	dest[0] = v1[1] * v2[2] - v1[2] * v2[1];
@@ -98,9 +139,17 @@ inline bool checkAabbsCollisionXZ(
 	return true;
 }
 
-inline float rcVdotXz(const float* v1, const float* v2)
+inline float vdotXz(const float* v1, const float* v2)
 {
 	return v1[0] * v2[0] + v1[2] * v2[2];
+}
+
+inline void vnormalize(float* v)
+{
+	float d = 1.0f / vlen(v);
+	v[0] *= d;
+	v[1] *= d;
+	v[2] *= d;
 }
 
 #ifdef USAGE_SSE_1_0
@@ -143,7 +192,7 @@ bool intersectionAabbVsTriangle(
 	const float* bmin, const float* bmax, const float* v0, const float* v1, const float* v2
 );
 
-bool intersectObbTriangle(const struct OBBExt* be, const float* triPoints);
+bool intersectionObbVsTriangle(const struct OBBExt* be, const float* triPoints);
 
 bool intersectionSegmentVsPlane(
 	const float* n, const float d, const float* A, const float* B, float* P
@@ -209,16 +258,254 @@ struct Aabb3D
 
 struct OBB
 {
+protected:
 	float dir[9]; // 3 vectors
 	float center[3];
-	float halfWidth[3];
+	float _halfWidth[3];
+
+public:
+	void Init(
+		const float* src,
+		const float* dst,
+		const float* sideDir,
+		const float halfWidth,
+		const float deltaH,
+		const float scale
+	) {
+		vsub(dir, dst, src);
+		vmul(dir, 0.5f);
+		float* dir_3 = dir + 3;
+		if (sideDir) {
+			vcopy(dir_3, sideDir);
+		}
+		else {
+			dir_3[0] = dir[2];
+			dir_3[1] = 0.f;
+			dir_3[2] = -dir[0];
+		}
+		vnormalize(dir_3);
+		vmul(dir_3, halfWidth);
+		float* dir_6 = dir + 6;
+		dir_6[0] = 0.f;
+		dir_6[1] = deltaH;
+		dir_6[2] = 0.f;
+		vadd(center, src, dir);
+		vadd(center, dir_6);
+		// shrink relatively center
+		vmul(dir, scale); // 0.95 ?
+		vmul(dir_3, scale); // 0.95 ?
+		vmul(dir_6, scale); // 0.95 ?
+		_halfWidth[0] = vlen(dir);
+		_halfWidth[1] = vlen(dir_3);
+		_halfWidth[2] = deltaH;
+	}
+
+	void Clear()
+	{
+		std::memset(dir, 0, sizeof(dir));
+		std::memset(center, 0, sizeof(center));
+		std::memset(_halfWidth, 0, sizeof(_halfWidth));
+	}
+
+	const float* getDir() const { return dir; }
+	const float* getDir(const int idx) const { assert(idx >= 0 && idx < 3); return &dir[idx * 3]; }
+	void setDir(const int idx, const float* dat)
+	{
+		assert(idx >= 0 && idx < 3);
+		vcopy(dir + std::ptrdiff_t(idx) * 3, dat);
+	}
+	const float* getCenter() const { return center; }
+	void setCenter(const float* v) { vcopy(center, v); }
+	const float* getHalfWidth() const { return _halfWidth; }
+	void setHalfWidth(const float* dat) { std::memcpy(_halfWidth, dat, sizeof(_halfWidth)); }
 };
 
-struct OBBExt
+struct OBBExt: private OBB
 {
+private:
 	float verts[3 * 8];
-	OBB b;
+
+public:
+	void Init(
+		const float* src,
+		const float* dst,
+		const float halfWidth,
+		const float deltaH,
+		const float scale
+	) {
+		OBB::Init(src, dst, nullptr, halfWidth, deltaH, scale);
+		calcObbPoints();
+	}
+
+	void Init(
+		const float* src,
+		const float* dst,
+		const float* sideDir,
+		const float halfWidth,
+		const float deltaH,
+		const float scale
+	) {
+		OBB::Init(src, dst, sideDir, halfWidth, deltaH, scale);
+		calcObbPoints();
+	}
+
+	void Clear()
+	{
+		OBB::Clear();
+		std::memset(verts, 0, sizeof(verts));
+	}
+
+	const float* getVerts() const { return verts; }
+	const float* getVert(const int idx) const { assert(idx >= 0 && idx < 8); return &verts[idx * 3]; }
+	void setVert(const int idx, const float* v)
+	{
+		assert(idx >= 0 && idx < 8);
+		vcopy(verts + std::ptrdiff_t(idx) * 3, v);
+	}
+	void setVerts(const float* dat) { std::memcpy(verts, dat, sizeof(verts)); }
+
+	using OBB::getDir;
+	using OBB::getCenter;
+	using OBB::getHalfWidth;
+	using OBB::setCenter;
+	using OBB::setDir;
+	using OBB::setHalfWidth;
+
+private:
+	void calcObbPoints()
+	{
+		// forward, left, up
+		vadd(verts, center, dir);
+		vadd(verts, dir + 3);
+		vadd(verts, dir + 6);
+
+		vadd(verts + 3, center, dir);
+		vadd(verts + 3, dir + 3);
+		vsub(verts + 3, dir + 6);
+
+		vadd(verts + 6, center, dir);
+		vsub(verts + 6, dir + 3);
+		vadd(verts + 6, dir + 6);
+
+		vadd(verts + 9, center, dir);
+		vsub(verts + 9, dir + 3);
+		vsub(verts + 9, dir + 6);
+
+		vsub(verts + 12, center, dir);
+		vadd(verts + 12, dir + 3);
+		vadd(verts + 12, dir + 6);
+
+		vsub(verts + 15, center, dir);
+		vadd(verts + 15, dir + 3);
+		vsub(verts + 15, dir + 6);
+
+		vsub(verts + 18, center, dir);
+		vsub(verts + 18, dir + 3);
+		vadd(verts + 18, dir + 6);
+
+		vsub(verts + 21, center, dir);
+		vsub(verts + 21, dir + 3);
+		vsub(verts + 21, dir + 6);
+	}
 };
+
+template <int PLANES_NUM>
+struct YAlignedOBP // oriented bounding polyhedron
+{
+public:
+	static const int MAX_PLANES_NUM = PLANES_NUM;
+	static const int MAX_VERTS_NUM = MAX_PLANES_NUM * 2;
+
+public:
+	void init(const float* dirs, const int numDirs, const float* verts, const int numVerts)
+	{
+		m_numDirs = numDirs;
+		std::memcpy(m_dirs, dirs, sizeof(float) * 3 * MAX_PLANES_NUM);
+		m_numVerts = numVerts;
+		std::memcpy(m_verts, verts, sizeof(float) * 3 * MAX_VERTS_NUM);
+	}
+
+	void clear()
+	{
+		std::memset(m_dirs, 0, sizeof(float) * 3 * MAX_PLANES_NUM);
+		std::memset(m_verts, 0, sizeof(float) * 3 * MAX_VERTS_NUM);
+	}
+
+	const float* getDir() const { return m_dirs; }
+	const float* getDir(const int idx) const { assert(idx >= 0 && idx < MAX_PLANES_NUM); return &m_dirs[idx * 3]; }
+	const float* getVerts() const { return m_verts; }
+	const float* getVert(const int idx) const { assert(idx >= 0 && idx < MAX_VERTS_NUM); return &m_verts[idx * 3]; }
+	constexpr int getDirsNum() const { return m_numDirs; }
+	constexpr int getVertsNum() const { return m_numVerts; }
+
+private:
+	int m_numDirs;
+	float m_dirs[3 * MAX_PLANES_NUM]; // last dir is y parallel, from less y to higher y
+	int m_numVerts;
+	float m_verts[3 * MAX_VERTS_NUM];
+};
+
+template <typename OBP, int MAX_POLY_VERTS_NUM>
+bool intersectionYAOBPVsPolygon(
+	const OBP* bp, const float* polyNorm, const float* polyPoints, const int polyPointsNum
+) {
+	float minMaxBp[2], minMaxPoly[2];
+	float polyEdges[3 * MAX_POLY_VERTS_NUM];
+	for (int i = 0; i < polyPointsNum * 3 - 3; i += 3)
+		vsub(polyEdges + i, polyPoints + i, polyPoints + i + 3);
+	vsub(polyEdges + polyPointsNum * 3 - 3, polyPoints + polyPointsNum * 3 - 3, polyPoints);
+
+	// perps to faces
+	for (int i = 0, n = bp->getDirsNum(); i < n; ++i) {
+		calcProjection(bp->getVerts(), bp->getVertsNum(), bp->getDir(i), minMaxBp);
+		calcProjection(polyPoints, polyPointsNum, bp->getDir(i), minMaxPoly);
+		if (minMaxBp[1] < minMaxPoly[0] || minMaxBp[0] > minMaxPoly[1]) return false;
+	}
+
+	// poly norm
+	calcProjection(bp->getVerts(), bp->getVertsNum(), polyNorm, minMaxBp);
+	calcProjection(polyPoints, polyPointsNum, polyNorm, minMaxPoly);
+	if (minMaxBp[1] < minMaxPoly[0] || minMaxBp[0] > minMaxPoly[1]) return false;
+
+	// edges
+	float cross[3];
+	for (int i = 0, n = bp->getDirsNum(); i < n; ++i) {
+		for (int j = 0, n = polyPointsNum * 3; j < n; j += 3) {
+			vcross(cross, polyEdges + j, bp->getDir(i));
+			calcProjection(bp->getVerts(), bp->getVertsNum(), cross, minMaxBp);
+			calcProjection(polyPoints, polyPointsNum, cross, minMaxPoly);
+			if (minMaxBp[1] < minMaxPoly[0] || minMaxBp[0] > minMaxPoly[1]) return false;
+		}
+	}
+
+	return true;
+}
+
+bool calcDirOutOfPolyXz(const float* v1, const float* v2, const float* vThird, float* dir);
+
+void calcObbDirsAndPoints(
+	const float* v1,
+	const float* v2,
+	const float* fwdDirNorm,
+	const float fwdDst,
+	const float height,
+	float* dirs,
+	const float dirsSize,
+	float* points,
+	const float pointsSize
+);
+
+inline void calcPerpToEdgeXz(const float* v1, const float* v2, float* perp)
+{
+	vsub(perp, v2, v1);
+	perp[1] = 0.f;
+	float tmp = perp[0];
+	perp[0] = perp[2];
+	perp[2] = -tmp;
+	vnormalize(perp);
+}
+
+void calcCenterAndHalfExtents(const float* verts, const int vertsSize, float* center, float* halfExtents);
 
 class BminBmaxSegmentTree
 {

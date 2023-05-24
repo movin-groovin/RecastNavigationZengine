@@ -37,6 +37,12 @@ class Sample_TileMesh : public Sample
 private:
     static const int NAVMESH_QUERY_MAX_NODES = 2048 * 4;
 
+	static constexpr float CHECK_BBOX_FWD_DST = 50.f;
+	static constexpr float CHECK_BBOX_HEIGHT = 250.f;
+	static constexpr float MIN_CLIMB_HEIGHT = 50.f;
+	static constexpr float MAX_CLIMB_HEIGHT = 400.f;
+	static constexpr float SHRINK_COEFF = 0.95f;
+
 	struct AsyncBuildContext
 	{
 		int x = -1;
@@ -205,7 +211,49 @@ private:
 	void buildAllTilesDo(const float* bmin, const float* bmax, int tw, int th, float tcs);
 	void collectNavmeshGenParams(common::NavmeshGenParams& params) const;
 	void handleRenderOverlayOffsetPlanes(double* proj, double* model, int* view);
-};
 
+	std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]> calcPreliminaryJumpData(
+		const dtMeshTile* ctile,
+		const float checkBboxFwdDst,
+		const float checkBboxHeight,
+		const float minClimbHeight,
+		const float maxClimbHeight,
+		const float shrinkCoeff
+	);
+	void calcPreliminaryJumpData(
+		std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]>& outData,
+		const dtMeshTile* ctile,
+		const float checkBboxFwdDst,
+		const float checkBboxHeight,
+		const float minClimbHeight,
+		const float maxClimbHeight,
+		const float shrinkCoeff
+	);
+	bool checkAbilityJumpDownOrForward(
+		const float* v1,
+		const float* v2,
+		const float* vInPoly,
+		const float checkBboxFwdDst,
+		const float checkBboxHeight,
+		const float shrinkCoeff
+	);
+	bool checkAbilityClimb(
+		const float* v1,
+		const float* v2,
+		const float* vInPoly,
+		const float minClimbHeight,
+		const float maxClimbHeight,
+		const class dtQueryFilter* filter
+	);
+	bool checkAbilityClimbOverlapped(
+		const float* polyNorm,
+		const float polyDist,
+		const float* polyVerts,
+		const int nPolyVerts,
+		const float minClimbHeight,
+		const float maxClimbHeight,
+		const class dtQueryFilter* filter
+	);
+};
 
 #endif // RECASTSAMPLETILEMESH_H

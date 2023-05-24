@@ -27,76 +27,6 @@
 
 #include <string>
 
-/*
-class collisionDetectorGeometryWorld: public collisionDetectorGeometryInterface
-{
-public:
-    collisionDetectorGeometryWorld(InputGeom* inGeom, bool active):
-        m_inGeom(inGeom), m_active(active) {}
-    collisionDetectorGeometryWorld(const collisionDetectorGeometryWorld&) = delete;
-    collisionDetectorGeometryWorld& operator=(const collisionDetectorGeometryWorld&) = delete;
-
-    void disable() {m_active = false;}
-    void enable() {m_active = true;}
-    bool getActive() const {return m_active;}
-    int getCallsNum () const {return m_callsNum;}
-    void clearCallsNum () {m_callsNum = 0;}
-
-    static void Vmul(float* v, const float m)
-    {
-        v[0] *= m;
-        v[1] *= m;
-        v[2] *= m;
-    }
-
-    static void Vadd(float* res, const float* v)
-    {
-        res[0] += v[0];
-        res[1] += v[1];
-        res[2] += v[2];
-    }
-
-    static void Vsub(float* res, const float* v)
-    {
-        res[0] -= v[0];
-        res[1] -= v[1];
-        res[2] -= v[2];
-    }
-
-    static float Vlen(const float* v)
-    {
-        return rcSqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-    }
-
-    static void calcObbPoints(const geometry::OBB* b, float* obbPoints);
-
-    static void calcObbExt(
-        const float* src,
-        const float* dst,
-        const float deltaH,
-        const float halfWidth,
-        const float scale,
-        geometry::OBBExt* be
-    );
-
-    bool detectJumpForwardCollisions(
-        const float* src, const float* dst, float deltaH
-    ) const;
-
-    bool detectClimbCollisions(
-        const float* src, const float* dst, float xzDist, float deltaH
-    ) const;
-
-    bool detectJumpDownCollisions(const float* src, const float* dst, float deltaH) const;
-
-    bool detectCollision(const float* src, const float* dst) const;
-
-private:
-    InputGeom* m_inGeom;
-    bool m_active;
-    mutable int m_callsNum = 0;
-};
-*/
 
 class NavMeshTesterTool : public SampleTool
 {
@@ -132,20 +62,6 @@ private:
 	
 	static const int MAX_POLYS = 256;
 	static const int MAX_SMOOTH = 2048;
-	
-    // ====================================
-    static constexpr float JUMPING_RATIO = 0.1;
-    static constexpr float NORMAL_RATIO = 1.0 - JUMPING_RATIO;
-    //static const int JUMPING_SIZE =
-    //    MAX_POLYS * JUMPING_RATIO * sizeof(JumpingPathEntry) +
-    //    MAX_POLYS * NORMAL_RATIO * sizeof(NormalPathEntry);
-    static const int NCOORDS = 3;
-    //char m_polysJumping[JUMPING_SIZE];
-    //StaticArrayInternal m_infoPolysJumping;
-    //CalcedPathEntry m_straightPathJumping[MAX_POLYS];
-    int m_straightWithJumpsPathOptions;
-    //collisionDetectorGeometryWorld m_collDet;
-    // ====================================
 
 	dtPolyRef m_startRef;
 	dtPolyRef m_endRef;
@@ -206,9 +122,9 @@ public:
 	void drawAgent(const float* pos, float r, float h, float c, const unsigned int col);
 
 private:
-    //bool findPathWithJumps(
-    //    dtPolyRef startRef, dtPolyRef endRef, const float* spos, const float* epos
-    //);
+    bool findPathWithJumps(
+        dtPolyRef startRef, dtPolyRef endRef, const float* spos, const float* epos
+    );
 
 private:
     void printNavmeshPolyId(double* proj, double* model, int* view, dtPolyRef ref) const;

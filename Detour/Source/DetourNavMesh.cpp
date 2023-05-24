@@ -1735,16 +1735,30 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile)
 	return DT_SUCCESS;
 }
 
-dtStatus dtNavMesh::calcPreliminaryJumpData(const dtTileRef refTile)
-{
-	return calcPreliminaryJumpData(getTileByRef(refTile));
-}
+void dtNavMesh::setPreliminaryJumpData(
+	const dtMeshTile* ctile,
+	std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]>& data,
+	const int polyCount
+) {
+	assert(polyCount == ctile->header->polyCount);
 
-dtStatus dtNavMesh::calcPreliminaryJumpData(const dtMeshTile* ctile)
-{
-	return DT_SUCCESS;
-}
+	dtMeshTile* tile = const_cast<dtMeshTile*>(ctile);
+	for (int i = 0; i < polyCount; ++i)
+	{
+		dtPoly* p = &tile->polys[i];
+		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip off-mesh links.
+			continue;
 
+		const int vertsCount = static_cast<int>(p->vertCount);
+		dtPoly::JmpAbilityInfoPoly& polyData = data[i];
+		for (int j = 0; j < vertsCount; ++j)
+		{
+			dtPoly::JmpAbilityInfoEdge& edge = polyData.edges[j];
+			p->setEdgeJmpClimbFlags(j, edge.jmpDown, edge.jmpFwd, edge.climb);
+		}
+		p->setClimbOverlappedFlag(polyData.climbOverlapped);
+	}
+}
 #endif // ZENGINE_NAVMESH
 
 const dtMeshTile* dtNavMesh::getTileAt(const int x, const int y, const int layer) const
@@ -2313,4 +2327,23 @@ dtStatus dtNavMesh::getPolyArea(dtPolyRef ref, unsigned char* resultArea) const
 	
 	return DT_SUCCESS;
 }
+
+#ifdef ZENGINE_NAVMESH
+void calcPolyCenter(const dtMeshTile* tile, const dtPoly* poly, float* center)
+{
+	center[0] = center[1] = center[2] = 0.f;
+	const int n = poly->vertCount;
+	for (int i = 0; i < n; ++i)
+	{
+		const float* v = &tile->verts[poly->verts[i] * 3];
+		center[0] += v[0];
+		center[1] += v[1];
+		center[2] += v[2];
+	}
+	const float mul = 1.0f / n;
+	center[0] *= mul;
+	center[1] *= mul;
+	center[2] *= mul;
+}
+#endif // ZENGINE_NAVMESH
 

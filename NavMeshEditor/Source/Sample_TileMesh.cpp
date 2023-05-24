@@ -39,6 +39,7 @@
 #include "DetourNavMesh.h"
 #include "DetourNavMeshBuilder.h"
 #include "DetourDebugDraw.h"
+#include "DetourNavMeshQuery.h"
 #include "NavMeshTesterTool.h"
 #include "ConvexVolumeTool.h"
 
@@ -812,7 +813,7 @@ bool Sample_TileMesh::initNavMesh()
 		return false;
 	}
 
-	status = m_navQuery->init(m_navMesh, 2048);
+	status = m_navQuery->init(m_navMesh, NAVMESH_QUERY_MAX_NODES);
 	if (dtStatusFailed(status))
 	{
 		m_ctx->log(RC_LOG_ERROR, "initNavMesh: Could not init Detour navmesh query");
@@ -846,6 +847,192 @@ bool Sample_TileMesh::handleBuild()
     initToolStates(this);
 
     return true;
+}
+
+std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]> Sample_TileMesh::calcPreliminaryJumpData(
+	const dtMeshTile* ctile,
+	const float checkBboxFwdDst,
+	const float checkBboxHeight,
+	const float minClimbHeight,
+	const float maxClimbHeight,
+	const float shrinkCoeff
+) {
+	const int polyCount = ctile->header->polyCount;
+	std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]> data(new(std::nothrow) dtPoly::JmpAbilityInfoPoly[polyCount]);
+	if (!data)
+	{
+		return {};
+	}
+	std::memset(data.get(), 0, polyCount * sizeof(dtPoly::JmpAbilityInfoPoly));
+
+	calcPreliminaryJumpData(data, ctile, checkBboxFwdDst, checkBboxHeight, minClimbHeight, maxClimbHeight, shrinkCoeff);
+
+	return data;
+}
+
+void Sample_TileMesh::calcPreliminaryJumpData(
+	std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]>& outData,
+	const dtMeshTile* ctile,
+	const float checkBboxFwdDst,
+	const float checkBboxHeight,
+	const float minClimbHeight,
+	const float maxClimbHeight,
+	const float shrinkCoeff
+) {
+	float polyCenter[3];
+	float baseVerts[3 * (DT_VERTS_PER_POLYGON + 1)];
+	dtQueryFilter filter;
+	filter.setIncludeFlags(common::SamplePolyFlags::SAMPLE_POLYFLAGS_ALL ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_DISABLED);
+	filter.setExcludeFlags(0);
+
+	for (int i = 0, polyCount = ctile->header->polyCount; i < polyCount; ++i)
+	{
+		const dtPoly* p = &ctile->polys[i];
+		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip off-mesh links.
+			continue;
+
+		int vertsCount = static_cast<int>(p->vertCount);
+		for (int j = 0; j < vertsCount; ++j)
+		{
+			rcVcopy(baseVerts + j * std::ptrdiff_t(3), &ctile->verts[p->verts[j] * 3]);
+		}
+		// double copy of first edge for easy edge processing
+		rcVcopy(baseVerts + vertsCount * std::ptrdiff_t(3), &ctile->verts[p->verts[0] * 3]);
+		calcPolyCenter(ctile, p, polyCenter);
+
+		dtPoly::JmpAbilityInfoPoly& polyData = outData[i];
+		for (int j = 0; j < vertsCount; ++j)
+		{
+			// if there is the connection to other polygon, skip the edge
+			if (p->neis[j])
+				continue;
+			const float* v1 = baseVerts + j * 3;
+			const float* v2 = v1 + 3;
+			dtPoly::JmpAbilityInfoEdge& edge = polyData.edges[j];
+			edge.jmpDown = checkAbilityJumpDownOrForward(v1, v2, polyCenter, checkBboxFwdDst, checkBboxHeight, shrinkCoeff);
+			edge.jmpFwd = checkAbilityJumpDownOrForward(v1, v2, polyCenter, checkBboxFwdDst, checkBboxHeight, shrinkCoeff);
+			edge.climb = checkAbilityClimb(v1, v2, polyCenter, 50.f, maxClimbHeight, &filter);
+		}
+		polyData.climbOverlapped = checkAbilityClimbOverlapped(
+			p->norm, p->dist, baseVerts, vertsCount, 50.f, maxClimbHeight, &filter
+		);
+	}
+}
+
+bool Sample_TileMesh::checkAbilityJumpDownOrForward(
+	const float* v1,
+	const float* v2,
+	const float* vInPoly,
+	const float checkBboxFwdDst,
+	const float checkBboxHeight,
+	const float shrinkCoeff
+) {
+	float outPerp[3];
+	float center[3];
+	float end[3];
+	float edgeDir[3];
+
+	if (!geometry::calcDirOutOfPolyXz(v1, v2, vInPoly, outPerp)) {
+		// too little poly
+		return false;
+	}
+	geometry::vadd(center, v1, v2);
+	geometry::vmul(center, 0.5f);
+	geometry::vsub(edgeDir, v2, v1);
+	geometry::vmad(end, center, outPerp, checkBboxFwdDst);
+	geometry::OBBExt be;
+	const float edgeLen = geometry::vdist(v1, v2);
+	be.Init(center, end, edgeDir, edgeLen * 0.5f, checkBboxHeight * 0.5f, shrinkCoeff);
+	
+	return !m_geom->obbCollDetect(&be);
+}
+
+bool Sample_TileMesh::checkAbilityClimb(
+	const float* v1,
+	const float* v2,
+	const float* vInPoly,
+	const float minClimbHeight,
+	const float maxClimbHeight,
+	const class dtQueryFilter* filter
+) {
+	static const int NUM_DIRS = 3;
+	static const int NUM_VERTS = (NUM_DIRS + 1) * 2;
+	float dirs[3 * NUM_DIRS];
+	float verts[3 * NUM_VERTS];
+	float outPerp[3];
+	float center[3];
+	float halfExtents[3];
+
+	if (!geometry::calcDirOutOfPolyXz(v1, v2, vInPoly, outPerp)) {
+		// too little poly
+		return false;
+	}
+	geometry::calcObbDirsAndPoints(v1, v2, outPerp, MAX_FWD_DST_FOR_CLIMB_BBOX, maxClimbHeight, dirs, NUM_DIRS, verts, NUM_VERTS);
+	geometry::calcCenterAndHalfExtents(verts, NUM_VERTS, center, halfExtents);
+	dtFindCollidedPolysQuery<NUM_DIRS> query(m_navQuery, dirs, NUM_DIRS, verts, NUM_VERTS);
+	// TODO replace to dtJmpNavMeshQuery::findCollidedPolys
+	dtStatus status = m_navQuery->queryPolygons(center, halfExtents, filter, &query);
+	if (dtStatusFailed(status)) {
+		return false;
+	}
+
+	return query.getPolysNum();
+}
+
+bool Sample_TileMesh::checkAbilityClimbOverlapped(
+	const float* polyNorm,
+	const float polyDist,
+	const float* vPolyVerts, // poly verts + first vertex
+	const int nPolyVerts,
+	const float minClimbHeight,
+	const float maxClimbHeight,
+	const class dtQueryFilter* filter
+) {
+	static const float EPS = 1e-3;
+	static const int NUM_DIRS = DT_MAX_PLANES_PER_BOUNDING_POLYHEDRON;
+	static const int NUM_VERTS = (NUM_DIRS - 1) * 2;
+	float dirs[3 * NUM_DIRS];
+	float verts[3 * NUM_VERTS];
+	float center[3];
+	float halfExtents[3];
+	float* lastDir = dirs + nPolyVerts * 3;
+	bool lastDirCalced = false;
+	float e1[3], e2[3];
+
+	float* verts_2 = verts + 3 * nPolyVerts;
+	for (int i = 0, n = 3 * nPolyVerts; i < n; i += 3)
+	{
+		geometry::calcVerticalVertexProjectionOnPlane(vPolyVerts + i, polyNorm, polyDist, verts + i);
+		geometry::vcopy(verts_2 + i, verts + i);
+		(verts_2 + i)[1] += maxClimbHeight;
+		(verts + i)[1] += minClimbHeight;
+		// at last iteration there isn't undound 'vPolyVerts' access, because it holds + first vertex
+		geometry::calcPerpToEdgeXz(vPolyVerts + i, vPolyVerts + i + 3, dirs + i);
+		if (!lastDirCalced && i < n - 6)
+		{
+			geometry::vsub(e1, vPolyVerts + i, vPolyVerts + i + 3);
+			geometry::vsub(e2, vPolyVerts + i + 3, vPolyVerts + i + 6);
+			geometry::vcross(lastDir, e1, e2);
+			if (geometry::vlen(lastDir) > EPS)
+				lastDirCalced = true;
+		}
+	}
+	if (!lastDirCalced)
+	{
+		assert(false);
+		lastDir[0] = lastDir[2] = 0.f;
+		lastDir[1] = 1.f;
+	}
+
+	geometry::calcCenterAndHalfExtents(verts, nPolyVerts * 2, center, halfExtents);
+	dtFindCollidedPolysQuery<NUM_DIRS> query(m_navQuery, dirs, nPolyVerts + 1, verts, nPolyVerts * 2);
+	// TODO replace to dtJmpNavMeshQuery::findCollidedPolys
+	dtStatus status = m_navQuery->queryPolygons(center, halfExtents, filter, &query);
+	if (dtStatusFailed(status)) {
+		return false;
+	}
+
+	return query.getPolysNum();
 }
 
 void Sample_TileMesh::buildTile(const float* pos)
@@ -905,7 +1092,7 @@ void Sample_TileMesh::buildTile(const float* pos)
     // Add tile, or leave the location empty.
     if (data)
     {
-        // Let the navmesh own the data.
+        // Let the navmesh owns data
         dtStatus status = m_navMesh->addTile(data, dataSize, DT_TILE_FREE_DATA, 0, 0);
 		const dtMeshTile* tile = m_navMesh->getTileAt(tx, ty, 0);
 		if (dtStatusFailed(status) || !tile) {
@@ -915,12 +1102,16 @@ void Sample_TileMesh::buildTile(const float* pos)
 			status = m_navMesh->calcAveragePolyPlanes(tile);
 			if (dtStatusSucceed(status))
 			{
-				status = m_navMesh->calcPreliminaryJumpData(tile);
-				if (dtStatusFailed(status)) {
+				// TODO make name constants
+				auto data = calcPreliminaryJumpData(
+					tile, CHECK_BBOX_FWD_DST, CHECK_BBOX_HEIGHT, MIN_CLIMB_HEIGHT, MAX_CLIMB_HEIGHT, SHRINK_COEFF
+				);
+				if (!data) {
 					m_ctx->log(RC_LOG_ERROR, "Error of calculating preliminary jump data for tile, x: %d, y: %d):", tx, ty);
 					m_navMesh->removeTile(m_navMesh->getTileRefAt(tx, ty, 0), 0, 0);
 				}
 				else {
+					m_navMesh->setPreliminaryJumpData(tile, data, tile->header->polyCount);
 					int tIdx = m_navMesh->getTileIndex(tile) + 1;
 					collectNavmeshGenParams(m_navGenParams[tIdx]);
 					if (!m_collected) {
@@ -1162,6 +1353,38 @@ void Sample_TileMesh::buildAllTilesDo(
 				m_asyncBuildingProgress = conv.vi;
 			}
 		}
+
+		int maxPolyPerTile = 0;
+		for (int j = 0; j < m_navMesh->getMaxTiles(); ++j)
+		{
+			const dtMeshTile* tile = static_cast<const dtNavMesh*>(m_navMesh)->getTile(j);
+			if (!tile->header) continue;
+			if (tile->header->polyCount > maxPolyPerTile) maxPolyPerTile = tile->header->polyCount;
+		}
+		std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]> polyArr(new(std::nothrow) dtPoly::JmpAbilityInfoPoly[maxPolyPerTile]);
+		if (!polyArr)
+		{
+			for (int j = 0; j < n; ++j) {
+				AsyncBuildContext& e = tilesData[j];
+				m_navMesh->removeTile(m_navMesh->getTileRefAt(e.x, e.y, 0), 0, 0);
+			}
+			m_ctx->log(RC_LOG_ERROR, "Error of memory allocation for polys preliminary jump data");
+		}
+		else {
+			std::memset(polyArr.get(), 0, maxPolyPerTile * sizeof(dtPoly::JmpAbilityInfoPoly));
+			for (int j = 0; j < m_navMesh->getMaxTiles(); ++j)
+			{
+				const dtMeshTile* tile = static_cast<const dtNavMesh*>(m_navMesh)->getTile(j);
+				if (!tile->header)
+					continue;
+				// TODO make name constants
+				calcPreliminaryJumpData(
+					polyArr, tile, CHECK_BBOX_FWD_DST, CHECK_BBOX_HEIGHT, MIN_CLIMB_HEIGHT, MAX_CLIMB_HEIGHT, SHRINK_COEFF
+				);
+				m_navMesh->setPreliminaryJumpData(tile, polyArr, tile->header->polyCount);
+			}
+		}
+
 		m_ctx->log(RC_LOG_PROGRESS, "Progress: 100%");
 	}
 	catch (const std::exception& e) {

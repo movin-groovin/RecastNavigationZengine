@@ -21,7 +21,21 @@
 
 #include "DetourNavMesh.h"
 #include "DetourStatus.h"
+#include "DetourCommon.h"
 
+#ifdef ZENGINE_NAVMESH
+#include <cstring>
+#include <algorithm>
+#include <cstdint>
+#include <cstdlib>
+#include <cassert>
+#include <memory>
+#include <cmath>
+#include <new>
+#include "Geometry.h"
+#include "Common.h"
+#include "Mesh.h"
+#endif // ZENGINE_NAVMESH
 
 // Define DT_VIRTUAL_QUERYFILTER if you wish to derive a custom filter from dtQueryFilter.
 // On certain platforms indirect or virtual function call is expensive. The default
@@ -158,6 +172,990 @@ public:
 	/// This can be called multiple times for a single query.
 	virtual void process(const dtMeshTile* tile, dtPoly** polys, dtPolyRef* refs, int count) = 0;
 };
+
+#ifdef ZENGINE_NAVMESH
+
+template <int OBP_PLANES_NUM, int REF_ARR_SIZE = 8>
+class dtFindCollidedPolysQuery: public dtPolyQuery
+{
+public:
+	static const int DEFAULT_REF_ARR_SIZE = REF_ARR_SIZE;
+	static const int MAX_OBP_PLANES_NUM = OBP_PLANES_NUM;
+
+	using ObpType = geometry::YAlignedOBP<MAX_OBP_PLANES_NUM>;
+
+private:
+	void clear()
+	{
+		delete[] m_polyRef;
+		m_polyRef = nullptr;
+		m_polyRefSize = 0;
+		m_polysNum = 0;
+	}
+
+	void init(int polyRefSize)
+	{
+		if (polyRefSize) {
+			m_polyRef = new(std::nothrow) dtPolyRef[polyRefSize];
+			if (!m_polyRef)
+				return;
+		}
+		else {
+			m_polyRef = nullptr;
+		}
+		m_polyRefSize = polyRefSize;
+		m_polysNum = 0;
+	}
+
+public:
+	dtFindCollidedPolysQuery(
+		const dtNavMeshQuery* query,
+		const float* dirs,
+		const int numDirs,
+		const float* verts,
+		const int numVerts,
+		const int extraRefSize = 0
+	):
+		m_query(query),
+		m_nav(query->getAttachedNavMesh())
+	{
+		obp.init(dirs, numDirs, verts, numVerts);
+		init(extraRefSize);
+	}
+	~dtFindCollidedPolysQuery() { clear(); }
+	dtFindCollidedPolysQuery(const dtFindCollidedPolysQuery&) = delete;
+	dtFindCollidedPolysQuery& operator= (const dtFindCollidedPolysQuery&) = delete;
+
+	bool isExtraRefInited() const { return m_polyRef; }
+	int getPolysNum() const { return m_polysNum; }
+	int getPolyRefSize() const { return m_polyRefSize; }
+	dtPolyRef getPolyRef(int idx) const
+	{
+		assert(idx < m_polysNum);
+		if (idx < DEFAULT_REF_ARR_SIZE) return m_defPolyRef[idx];
+		assert(m_polyRef);
+		return m_polyRef[idx - DEFAULT_REF_ARR_SIZE];
+	}
+	int getPolyRefs(dtPolyRef* dat, const int datSize) const
+	{
+		int num = std::min(datSize, DEFAULT_REF_ARR_SIZE);
+		std::memcpy(dat, m_defPolyRef, num * sizeof(dtPolyRef));
+		
+		const int inArrSize = m_polysNum - DEFAULT_REF_ARR_SIZE;
+		if (inArrSize > 0 && (datSize - num) > 0)
+		{
+			std::memcpy(dat + num, m_polyRef, inArrSize * sizeof(dtPolyRef));
+			num += inArrSize;
+		}
+
+		return num;
+	}
+
+	bool putPolyRef(const dtPolyRef ref)
+	{
+		if (m_polysNum < DEFAULT_REF_ARR_SIZE)
+		{
+			m_defPolyRef[m_polysNum++] = ref;
+			return true;
+		}
+		if (m_polyRef && (m_polysNum - DEFAULT_REF_ARR_SIZE) < m_polyRefSize)
+		{
+			m_polyRef[m_polysNum++] = ref;
+			return true;
+		}
+		return false;
+	}
+
+	void process(const dtMeshTile* tile, dtPoly** polys, dtPolyRef* refs, int count) override
+	{
+		dtIgnoreUnused(polys);
+		float polyNorm[3];
+		float d = FLT_MAX;
+
+		for (int i = 0; i < count; ++i)
+		{
+			dtPolyRef ref = refs[i];
+			const dtMeshTile* tile = 0;
+			const dtPoly* poly = 0;
+			m_nav->getTileAndPolyByRefUnsafe(ref, &tile, &poly);
+			if (!poly->isAveragePolyInited()) {
+				const float* v0 = &tile->verts[poly->verts[0] * 3];
+				const float* v1 = &tile->verts[poly->verts[1] * 3];
+				const float* v2 = &tile->verts[poly->verts[2] * 3];
+				float e1[3], e2[3];
+				geometry::vsub(e1, v0, v1);
+				geometry::vsub(e1, v2, v1);
+				geometry::vcross(polyNorm, e1, e2);
+				d = -geometry::vdot(v0, polyNorm);
+			}
+			else {
+				geometry::vcopy(polyNorm, poly->norm);
+				d = poly->dist;
+			}
+
+			float projVerts[3 * DT_VERTS_PER_POLYGON];
+			const int numPolyVerts = poly->vertCount;
+			for (int j = 0; j < numPolyVerts; ++j) {
+				const float* v = &tile->verts[poly->verts[j] * 3];
+				geometry::calcVerticalVertexProjectionOnPlane(v, polyNorm, d, projVerts + j * 3);
+			}
+
+			if (
+				geometry::intersectionYAOBPVsPolygon<ObpType, DT_VERTS_PER_POLYGON>(
+					&obp, polyNorm, projVerts, numPolyVerts
+				)
+			) {
+				putPolyRef(ref);
+				break;
+			}
+		}
+	}
+
+private:
+	const dtNavMeshQuery* m_query;
+	const dtNavMesh* m_nav;
+	ObpType obp;
+	int m_polysNum;
+	dtPolyRef m_defPolyRef[DEFAULT_REF_ARR_SIZE];
+	int m_polyRefSize;
+	dtPolyRef* m_polyRef;
+};
+
+struct TransferEntry
+{
+	uint32_t transferTypeToNextPoly;
+	dtPolyRef currentPolyRef;
+	float posJmpFrom[3];
+	float posJmpTo[3];
+};
+
+struct AgentCharacteristics
+{
+	bool acrobat;
+	bool canJmpFwd;
+	bool canJmpDown;
+	bool canClimb;
+	bool noTotallyJumpClimb; // only walking and running
+	float agentHeight;
+	float agentLength; // depth
+	float agentWidth;
+	float maxJmpFwdDistance;
+	float stepHeight;
+	float maxClimbHeight;
+	float maxJumpDownHeight;
+	dtQueryFilter filter;
+};
+
+struct JumpingRet
+{
+	JumpingRet() = default;
+	void setData(
+		uint16_t transferType_,
+		dtPolyRef polyRefFrom_,
+		dtPolyRef polyRefTo_,
+		const float* posFrom_,
+		const float* posTo_
+	) {
+		transferType = transferType_;
+		polyRefFrom = polyRefFrom_;
+		polyRefTo = polyRefTo_;
+		std::memcpy(posFrom, posFrom_, sizeof(posFrom));
+		std::memcpy(posTo, posTo_, sizeof(posTo));
+	}
+	void clear() { std::memset(this, 0, sizeof(JumpingRet)); }
+
+	uint16_t transferType;
+	dtPolyRef polyRefFrom;
+	float posFrom[3];
+	dtPolyRef polyRefTo;
+	float posTo[3];
+};
+
+template <int I>
+class JumpingRetArr: private common::NonCopyable
+{
+public:
+	static const int MAX_SIZE = I;
+
+public:
+	JumpingRetArr() = default;
+	~JumpingRetArr() = default;
+
+	JumpingRet* allocEntry() { assert(m_num != MAX_SIZE); return &m_arr[m_num++]; }
+	JumpingRet* getEntry(const uint32_t idx) { return m_arr + idx; }
+	const JumpingRet* getEntry(const uint32_t idx) const { return m_arr + idx; }
+	void clear() { m_num = 0; }
+	uint32_t getNum() const { return m_num; }
+
+private:
+	JumpingRet m_arr[MAX_SIZE];
+	uint32_t m_num = 0;
+};
+
+using StdJmpArr = JumpingRetArr<
+	DT_VERTS_PER_POLYGON * (NavmeshPolyTransferFlags::MAX_ACTION - 2)
+>;
+
+class TotalJmpTransfers
+{
+public:
+	static const int SIZE = DT_VERTS_PER_POLYGON + 1;
+	static const int CLIMB_OVERLAPPED_INDEX = SIZE - 1;
+
+public:
+	void init() {
+		for (int i = 0; i < SIZE; ++i) {
+			auto* transfer = m_transfers + i;
+			transfer->clear();
+		}
+	}
+	void clear() {
+		init();
+	}
+	StdJmpArr* get(int i) {
+		assert(i >= 0 && i < SIZE);
+		return &m_transfers[i];
+	}
+	const StdJmpArr* get(int i) const {
+		assert(i >= 0 && i < SIZE);
+		return &m_transfers[i];
+	}
+	bool hasTransfers(int i) const {
+		assert(i >= 0 && i < SIZE);
+		return m_transfers[i].getNum();
+	}
+	bool hasTransfers() const {
+		for (int i = 0; i < SIZE; ++i) {
+			auto* transfer = m_transfers + i;
+			if (transfer->getNum())
+				return true;
+		}
+		return false;
+	}
+	uint32_t getTotalNumTransfers() const {
+		uint32_t num = 0;
+		for (int i = 0; i < SIZE; ++i) {
+			auto* transfer = m_transfers + i;
+			num += transfer->getNum();
+		}
+		return num;
+	}
+
+private:
+	StdJmpArr m_transfers[SIZE]; // by edge id + last index for overlapped climb
+};
+
+struct TransferDataEntry
+{
+	void setData(uint8_t eIdx, uint8_t tType, dtPolyRef refIdTo, const float* posFrom, const float* posTo)
+	{
+		edgeId = eIdx;
+		transferType = tType;
+		std::memcpy(pointFrom, posFrom, sizeof(float) * 3);
+		std::memcpy(pointTo, posTo, sizeof(float) * 3);
+		polyRefIdTo = refIdTo;
+		float diff[3];
+		geometry::vsub(diff, pointTo, pointFrom);
+		roundedMaxIntGroundDst = (int16_t)std::ceil( std::sqrt(diff[0] * diff[0] + diff[1] * diff[1]) );
+		roundedMaxIntHeightDst = (int16_t)std::ceil( std::abs(diff[1]) );
+	}
+
+	uint8_t edgeId; // edge index in range 0 - 5
+	uint8_t transferType;
+	int16_t roundedMaxIntGroundDst; // XZ distance
+	int16_t roundedMaxIntHeightDst; // Y distance
+	float pointFrom[3];
+	//dtPolyRef polyRefIdFrom; // ref id is start poly
+	float pointTo[3];
+	dtPolyRef polyRefIdTo;
+};
+
+template <uint32_t TRANSFER_BLOCK_SZ = DT_VERTS_PER_POLYGON>
+class JmpTransferCache final: private common::NonCopyable
+{
+public:
+	using IndexType = uint32_t;
+	using ScoreType = uint64_t;
+
+	static const uint32_t TRANSFER_BLOCK_SIZE = TRANSFER_BLOCK_SZ;
+	static const IndexType INVALID_BLOCK_IDX = -1;
+	static const IndexType INVALID_HEAP_IDX = 0;
+
+private:
+	using JmpTransferCheckerType = bool(const AgentCharacteristics* info, const TransferDataEntry* entry);
+
+	struct PolyEntry
+	{
+		void clear()
+		{
+			numBlocks = 0;
+			dataBlockIdx = INVALID_BLOCK_IDX;
+		}
+
+		int16_t numBlocks;
+		IndexType dataBlockIdx;
+	};
+
+	struct TileEntry
+	{
+		ScoreType heapScore;
+		IndexType heapIdx;
+
+		int32_t polysSize;
+		PolyEntry* polys;
+		IndexType blocksBunchIdx;
+	};
+
+	template <int SZ = DT_VERTS_PER_POLYGON>
+	struct TransfersDataEntry
+	{
+		static const uint32_t SIZE = SZ;
+
+		IndexType getNextBlockIdx() const { return nextBlockIdx; }
+		int getEntriesNum() const { return entriesNum; }
+		void setNextBlockIdx(IndexType idx) { nextBlockIdx = idx; }
+		void setEntriesNum(int num) { entriesNum = (uint8_t)num; }
+		bool hasNextBlock() const { return nextBlockIdx != INVALID_BLOCK_IDX; }
+		TransferDataEntry* allocEntry() { return entriesNum != SIZE ? &transfers[entriesNum++] : nullptr; }
+		void setPolyArrIdx(const IndexType idx) { polyArrIdx = idx; }
+		IndexType getPolyArrIdx() { return polyArrIdx; }
+		void setBlocksBunchIdx(const IndexType idx) { blocksBunchIdx = idx; }
+		IndexType getBlocksBunchIdx() { return blocksBunchIdx; }
+		void clear() { entriesNum = 0; nextBlockIdx = polyArrIdx = blocksBunchIdx = INVALID_BLOCK_IDX; }
+
+		uint8_t entriesNum;
+		IndexType nextBlockIdx;
+		IndexType polyArrIdx;
+		IndexType blocksBunchIdx;
+		TransferDataEntry transfers[SIZE];
+	};
+	using TransfersDataEntryType = TransfersDataEntry<TRANSFER_BLOCK_SIZE>;
+
+	template <typename T>
+	class TransfersDataPool final: private common::NonCopyable
+	{
+	public:
+		using Type = T;
+
+	public:
+		TransfersDataPool() = default;
+		~TransfersDataPool() { clear(); }
+		bool init(int size)
+		{
+			m_freedBlocks = static_cast<uint32_t*>(std::malloc(sizeof(uint32_t) * size));
+			m_data = static_cast<Type*>(std::malloc(sizeof(Type) * size));
+			if (!m_data || !m_freedBlocks) {
+				std::free(m_freedBlocks);
+				std::free(m_data);
+				return false;
+			}
+			for (int i = size - 1, j = 0; i >= 0; --i, ++j) {
+				m_freedBlocks[i] = j;
+			}
+			m_sizeBlocks = size;
+			m_freedIndex = size - 1;
+			return true;
+		}
+		uint32_t allocBlock()
+		{
+			if (m_freedIndex == INVALID_BLOCK_IDX)
+				return INVALID_BLOCK_IDX;
+			return m_freedBlocks[m_freedIndex--];
+		}
+		void freeBlock(uint32_t blockId)
+		{
+			assert(m_freedIndex != m_sizeBlocks - 1);
+			m_freedBlocks[++m_freedIndex] = blockId;
+		}
+		bool isEmpty() const
+		{
+			return m_freedIndex == INVALID_BLOCK_IDX;
+		}
+		int getNumberFreeBlocks() const
+		{
+			return m_freedIndex + 1;
+		}
+		int getSizeBlocks() const
+		{
+			return m_sizeBlocks;
+		}
+		Type* getData() { return m_data; }
+		Type* getBlockData(uint32_t blockId)
+		{
+			return m_data + blockId;
+		}
+
+		void clear()
+		{
+			std::free(m_freedBlocks);
+			std::free(m_data);
+			m_freedBlocks = nullptr;
+			m_data = nullptr;
+			m_sizeBlocks = 0;
+			m_freedIndex = INVALID_BLOCK_IDX;
+		}
+
+	private:
+		Type* m_data = nullptr;
+		int m_sizeBlocks = 0;
+		uint32_t* m_freedBlocks = nullptr;
+		int m_freedIndex = INVALID_BLOCK_IDX;
+	};
+
+	class MinPriorityQueue: private common::NonCopyable // binary heap
+	{
+	public:
+		MinPriorityQueue(): m_heapNum(), m_heapSize(), m_heapData() {}
+		bool init(uint32_t size)
+		{
+			m_heapSize = std::pow(2, std::ceil(std::log2(size))) + 2;
+			m_heapNum = 1;
+			assert(m_heapSize > size);
+			if (m_heapData = (TileEntry**)std::malloc(sizeof(TileEntry*) * m_heapSize)) {
+				std::memset(m_heapData, 0, sizeof(TileEntry*) * m_heapSize);
+			}
+			else {
+				m_heapSize = 0;
+			}
+			return m_heapData;
+		}
+		void clear()
+		{
+			m_heapNum = 0;
+			m_heapSize = 0;
+			std::free(m_heapData);
+			m_heapData = nullptr;
+		}
+		~MinPriorityQueue()
+		{
+			clear();
+		}
+
+		TileEntry* getByIndex(const IndexType i)
+		{
+			assert(i <= m_heapNum);
+			return m_heapData + i;
+		}
+
+		TileEntry* getMin()
+		{
+			return m_heapData + 1;
+		}
+
+		inline bool empty() const { return m_heapNum == 1; }
+		inline uint32_t getNum() const { return m_heapNum - 1; }
+		inline bool noMemory() const { return m_heapNum == m_heapSize; }
+
+		void setScoreByIndex(const IndexType i, const ScoreType score)
+		{
+			assert(i < m_heapNum);
+			TileEntry* dat = m_heapData + i;
+			assert(dat->heapScore > score);
+			dat->heapScore = score;
+			moveDown(i);
+		}
+
+		bool append(TileEntry* te)
+		{
+			if (noMemory())
+				return false;
+			m_heapData[m_heapNum] = te;
+			++m_heapNum;
+			moveUp(m_heapNum - 1);
+			return true;
+		}
+
+		TileEntry* removeMin()
+		{
+			assert(m_heapNum > 1);
+			std::swap(m_heapData[1], m_heapData[m_heapNum]);
+			--m_heapNum;
+			if (m_heapNum > 1) moveDown(1);
+			return m_heapData[m_heapNum + 1];
+		}
+
+	private:
+		inline IndexType parentIdx(const IndexType i) { return i >> 1; }
+		inline IndexType leftChildIdx(const IndexType i) { return i << 1; }
+		inline IndexType rightChildIdx(const IndexType i) { return i << 1 | 1; }
+
+		void moveDown(IndexType idx)
+		{
+			assert(idx < m_heapNum);
+			IndexType newIdx = idx;
+			TileEntry* dat = m_heapData + idx;
+			const ScoreType score = dat->heapScore;
+			while (newIdx < m_heapNum)
+			{
+				const IndexType leftIdx = leftChildIdx(newIdx);
+				const IndexType rightIdx = rightChildIdx(newIdx);
+				if (leftIdx < m_heapNum && (m_heapData + leftIdx)->heapScore < score) {
+					newIdx = leftIdx;
+				}
+				else if (rightIdx < m_heapNum && (m_heapData + rightIdx)->heapScore < score) {
+					newIdx = rightIdx;
+				}
+
+				if (newIdx == idx) break;
+				std::swap(m_heapData[idx], m_heapData[newIdx]);
+				(m_heapData + idx)->heapIdx = idx;
+				idx = newIdx;
+			}
+			assert(newIdx == idx);
+			dat->heapIdx = newIdx;
+		}
+
+		void moveUp(IndexType idx)
+		{
+			assert(idx + 1 == m_heapNum);
+			TileEntry* dat = m_heapData + idx;
+			const ScoreType score = dat->heapScore;
+			IndexType newIdx = parentIdx(idx);
+			while (newIdx && (m_heapData + newIdx)->heapScore > score)
+			{
+				std::swap(m_heapData[idx], m_heapData[newIdx]);
+				(m_heapData + idx)->heapIdx = idx;
+				idx = newIdx;
+				newIdx = parentIdx(idx);
+			}
+			assert(idx && idx != newIdx);
+			dat->heapIdx = idx;
+		}
+
+	private:
+		uint32_t m_heapNum;
+		uint32_t m_heapSize;
+		TileEntry** m_heapData;
+	};
+
+public:
+	JmpTransferCache() = default;
+	~JmpTransferCache() { clear(); }
+
+	bool init(const dtNavMesh* nav, int32_t casheBlocksSize, JmpTransferCheckerType* jmpTransferChecker)
+	{
+		// TODO alloc memory by 1 block
+		m_tilesSize = nav->getMaxTiles();
+		if (!m_tilesSize)
+			return false;
+		m_tiles = (TileEntry*)std::malloc(sizeof(TileEntry) * m_tilesSize);
+		if (!m_tiles) {
+			return false;
+		}
+		for (int i = 0; i < m_tilesSize; ++i)
+		{
+			std::memset(m_tiles + i, 0, sizeof(TileEntry));
+			m_tiles[i].blocksBunchIdx = INVALID_BLOCK_IDX;
+		}
+
+		for (int i = 0; i < m_tilesSize; ++i)
+		{
+			const dtMeshTile* tile = nav->getTile(i);
+			if (!tile->header) continue;
+			TileEntry* te = &m_tiles[i];
+			te->polysSize = tile->header->polyCount;
+			if (te->polysSize)
+			{
+				te->polys = (PolyEntry*)std::malloc(sizeof(PolyEntry) * te->polysSize);
+				if (!te->polys)
+				{
+					clear();
+					return false;
+				}
+				for (int i = 0; i < te->polysSize; ++i)
+				{
+					te->polys[i].clear();
+				}
+			}
+		}
+		m_nav = nav;
+		m_jmpTransferChecker = jmpTransferChecker;
+
+		if (!m_pqTilesUsage.init(m_tilesSize))
+		{
+			clear();
+			return false;
+		}
+		if (!m_pool.init(casheBlocksSize))
+		{
+			clear();
+			return false;
+		}
+
+		return true;
+	}
+
+	void clear()
+	{
+		m_nav = nullptr;
+		for (int i = 0; i < m_tilesSize; ++i) {
+			std::free(m_tiles[i].polys);
+		}
+		std::free(m_tiles);
+		m_tiles = nullptr;
+		m_tilesSize = 0;
+		m_cacheScore = 0;
+		m_numUsedTiles = 0;
+		m_pqTilesUsage.clear();
+		m_pool.clear();
+	}
+
+	bool getData(const dtPolyRef polyRef, const AgentCharacteristics* info, TotalJmpTransfers* to)
+	{
+		unsigned int salt, it, ip;
+		m_nav->decodePolyId(ref, salt, it, ip);
+		return getData(polyRef, it, ip, info, to);
+	}
+
+	bool insertData(const dtPolyRef polyRef, const TotalJmpTransfers* from)
+	{
+		unsigned int salt, it, ip;
+		m_nav->decodePolyId(ref, salt, it, ip);
+		return insertData(it, ip, from);
+	}
+
+	bool getData(
+		const dtPolyRef polyRef,
+		unsigned int it,
+		unsigned int ip,
+		const AgentCharacteristics* info,
+		TotalJmpTransfers* to
+	) {
+		const TileEntry* te = &m_tiles[it];
+		const PolyEntry* pe = &te->polys[ip];
+		if (pe->dataBlockIdx == INVALID_BLOCK_IDX)
+		{
+			return false;
+		}
+		IndexType curBlockIdx = pe->dataBlockIdx;
+
+		do {
+			const TransfersDataEntryType* from = m_pool.getBlockData(curBlockIdx);
+			for (uint32_t i = 0, n = from->getEntriesNum(); i < n; ++i)
+			{
+				const TransferDataEntry* entryFrom = from->transfers + i;
+				assert(
+					entryFrom->edgeId >= 0 &&
+					entryFrom->edgeId <= TotalJmpTransfers::CLIMB_OVERLAPPED_INDEX
+				);
+				StdJmpArr* jmpArr = to->get(entryFrom->edgeId);
+				if (!m_jmpTransferChecker(info, entryFrom)) {
+					continue;
+				}
+				JumpingRet* entryTo = jmpArr->allocEntry();
+				entryTo->setData(
+					entryFrom->transferType,
+					polyRef,
+					entryFrom->polyRefIdTo,
+					entryFrom->pointFrom,
+					entryFrom->pointTo
+				);
+			}
+			curBlockIdx = from->getNextBlockIdx();
+		} while (from->hasNextBlock());
+
+		return true;
+	}
+
+	bool insertData(unsigned int it, unsigned int ip, const TotalJmpTransfers* from)
+	{
+		assert(from->hasTransfers());
+		TileEntry* te = &m_tiles[it];
+		PolyEntry* pe = &te->polys[ip];
+		assert(pe->numBlocks == 0);
+		assert(pe->dataBlockIdx == INVALID_BLOCK_IDX);
+		uint32_t numTranfers = from->getTotalNumTransfers();
+		uint32_t numBlocks = numTranfers / TransfersDataEntryType::SIZE +
+				 (uint32_t)(1 && (numTranfers % TransfersDataEntryType::SIZE));
+		assert(numBlocks == std::ceil(numTranfers / TransfersDataEntryType::SIZE));
+
+		const uint32_t numFreeBlocks = m_pool.getNumberFreeBlocks();
+		if (numBlocks > numFreeBlocks)
+		{
+			if (!freeBlocksFromTile(numBlocks)) {
+				// insufficient memory
+				return false;
+			}
+		}
+		
+		IndexType toBlockIdx = m_pool.allocBlock();
+		TransfersDataEntryType* toBlock = m_pool.getBlockData(toBlockIdx);
+		toBlock->clear();
+		uint16_t numAllocedBlocks = 1;
+		bool copied = false;
+		for (int i = 0; i < TotalJmpTransfers::SIZE; ++i)
+		{
+			// this check will be in lower cycle 'fromArr->getNum()'
+			//if (!from->hasTransfers(i))
+			//	continue;
+			const StdJmpArr* fromArr = from->get(i);
+			for (int j = 0, n = fromArr->getNum(); j < n; ++j)
+			{
+				const JumpingRet* fromEntry = fromArr->getEntry(j);
+				assert(fromEntry->transferType > NavmeshPolyTransferFlags::WALKING);
+				TransferDataEntry* toEntry = toBlock->allocEntry();
+				if (!toEntry)
+				{
+					IndexType idx = m_pool.allocBlock();
+					++numAllocedBlocks;
+					toBlock = m_pool.getBlockData(idx);
+					toBlock->clear();
+					toBlock->setNextBlockIdx(toBlockIdx);
+					toBlockIdx = idx;
+					toEntry = toBlock->allocEntry();
+				}
+				toEntry->setData(
+					(uint8_t)i,
+					fromEntry->transferType,
+					fromEntry->polyRefTo,
+					fromEntry->posFrom,
+					fromEntry->posTo
+				);
+				copied = true;
+			}
+		}
+
+		if (copied) {
+			pe->dataBlockIdx = toBlockIdx;
+			pe->numBlocks = numAllocedBlocks;
+			toBlock->setPolyArrIdx(ip);
+			toBlock->setBlocksBunchIdx(te->blocksBunchIdx);
+			te->blocksBunchIdx = toBlockIdx;
+		}
+		else {
+			m_pool.freeBlock(toBlockIdx);
+		}
+
+		return true;
+	}
+
+	bool freeBlocksFromTile(const uint32_t numBlocks)
+	{
+		static const uint32_t MIN_TILES_IN_QUEUE = 11;
+		TileEntry* te = m_pqTilesUsage.getMin();
+		uint32_t numFreedBlocks = 0;
+
+		while (numFreedBlocks < numBlocks)
+		{
+			if (m_pqTilesUsage.getNum() < MIN_TILES_IN_QUEUE)
+				break;
+
+			IndexType idx = te->blocksBunchIdx;
+			assert(idx != INVALID_BLOCK_IDX);
+			TransfersDataEntryType* block = m_pool.getBlockData(idx);
+			uint32_t polyArrIdx = block->getPolyArrIdx();
+			assert(polyArrIdx != INVALID_BLOCK_IDX);
+			PolyEntry* pe = &te->polys[polyArrIdx];
+			numFreedBlocks += pe->numBlocks;
+			pe.clear();
+			te->blocksBunchIdx = block->getBlocksBunchIdx();
+			if (te->blocksBunchIdx == INVALID_BLOCK_IDX)
+			{
+				m_pqTilesUsage.removeMin();
+				te = m_pqTilesUsage.getMin();
+			}
+
+#ifndef NDEBUG
+			uint32_t cntFreedBlocks = 0;
+#endif
+			while(true) {
+				m_pool.freeBlock(idx);
+#ifndef NDEBUG
+				++cntFreedBlocks;
+#endif
+				if (!block->hasNextBlock())
+					break;
+				idx = block->getNextBlockIdx();
+				block = m_pool.getBlockData(idx);
+			}
+			assert(cntFreedBlocks == numFreedBlocks);
+		}
+
+		return numFreedBlocks >= numBlocks;
+	}
+
+	ScoreType getTileScore(const IndexType idx) const { return m_tiles[idx].heapScore; }
+	void setTileScore(const IndexType idx, const ScoreType val)
+	{
+		TileEntry* te = &m_tiles[idx];
+		assert(te->heapIdx != INVALID_HEAP_IDX);
+		m_pqTilesUsage.setScoreByIndex(te->heapIdx, val);
+	}
+	bool tileActive(const IndexType idx) const { return m_tiles[idx].heapIdx != INVALID_HEAP_IDX; }
+	bool insertTile(const IndexType idx)
+	{
+		TileEntry* te = &m_tiles[idx];
+		assert(te->heapIdx == INVALID_HEAP_IDX);
+		return m_pqTilesUsage.append(te);
+	}
+	void incrementScore() const { ++m_cacheScore; }
+	ScoreType getScore() const { return m_cacheScore; }
+	void setScore(const ScoreType val) const { m_cacheScore = val; }
+
+private:
+	const dtNavMesh* m_nav = {};
+	JmpTransferCheckerType* m_jmpTransferChecker = {};
+	int32_t m_tilesSize = {};
+	TileEntry* m_tiles = {};
+	mutable ScoreType m_cacheScore = {};
+	MinPriorityQueue m_pqTilesUsage;
+	TransfersDataPool<TransfersDataEntryType> m_pool;
+};
+
+using StdJmpTransferCache = JmpTransferCache<>;
+
+class JmpCollider: private common::NonCopyable
+{
+public:
+	JmpCollider() = default;
+	~JmpCollider() = default;
+
+	bool init(const mesh::Grid2dBvh* collider);
+	const mesh::Grid2dBvh* getCollider() const;
+
+	bool detectJmpFwdCollision(
+		const float* src,
+		const float* dst,
+		const AgentCharacteristics* agentInfo
+	) const;
+	bool detectClimbCollision(
+		const float* src,
+		const float* dst,
+		const AgentCharacteristics* agentInfo
+	) const;
+	bool detectJmpDownCollision(
+		const float* src,
+		const float* dst,
+		const AgentCharacteristics* agentInfo
+	) const;
+
+private:
+	const mesh::Grid2dBvh* m_collider = {};
+};
+
+class JmpPathEntry: private common::NonCopyable
+{
+public:
+	JmpPathEntry() = default;
+	~JmpPathEntry() = default;
+
+private:
+	uint32_t m_transferType = {};
+	float m_pointFrom[3] = {};
+	dtPolyRef m_polyFrom = {};
+	float m_pointTo[3] = {};
+	std::shared_ptr<JmpPathEntry> m_next;
+	std::weak_ptr<JmpPathEntry> m_closestNextJmpTransfer = {};
+};
+
+class dtJmpNavMeshQuery: private common::NonCopyable
+{
+public:
+	dtJmpNavMeshQuery() = default;
+	~dtJmpNavMeshQuery() = default;
+
+	bool init(
+		const uint32_t agentCharsSize,
+		const AgentCharacteristics* agentChars,
+		const JmpCollider* collider,
+		const StdJmpTransferCache* transfersCashe
+	);
+
+	// like dtNavMeshQuery::findPath
+	//dtStatus findPath(
+	//	dtPolyRef startRef,
+	//	dtPolyRef endRef,
+	//	const float* startPos,
+	//	const float* endPos,
+	//	const dtQueryFilter* filter,
+	//	dtPolyRef* path,
+	//	int* pathCount,
+	//	const int maxPath
+	//) const;
+	// Finds path points from polygons corridor from findPathWithJumps
+	dtStatus calcPathWithJumps(const float* startPos, const float* endPos);
+	// Finds the straight path from the start to the end position within the polygon corridor
+	dtStatus findPathWithJumps(
+		const AgentCharacteristics* agentChars,
+		dtPolyRef startRef,
+		dtPolyRef endRef,
+		const float* startPos,
+		const float* endPos,
+		const dtQueryFilter* filter,
+		const int entriesSize,
+		TransferEntry* foundEntries, // raw path
+		int* entriesNumber
+	);
+	dtStatus findCollidedPolys(
+		const float* center, const float* halfExtents, const dtQueryFilter* filter, dtPolyQuery* query
+	);
+	dtStatus queryPolygons(
+		const float* center,
+		const float* halfExtents,
+		const dtQueryFilter* filter,
+		dtPolyQuery* query
+	) const;
+	void queryPolygonsInTile(
+		const dtMeshTile* tile,
+		const float* qmin,
+		const float* qmax,
+		const dtQueryFilter* filter,
+		dtPolyQuery* query
+	) const;
+
+	std::shared_ptr<JmpPathEntry> getLastPath() const;
+
+private:
+	static bool availableJmpTransfer(const AgentCharacteristics* info, const TransferDataEntry* entry);
+
+	dtStatus getPathToNodeWithJumps(
+		const float* endPos,
+		const dtNodeJmp* endNode,
+		const int entriesSize,
+		TransferEntry* foundEntries,
+		int* entriesNum
+	);
+	//dtStatus getPathToNode(struct dtNode* endNode, dtPolyRef* path, int* pathCount, int maxPath) const;
+	dtStatus getPortalPoints(
+		dtPolyRef from,
+		dtPolyRef to,
+		float* left,
+		float* right,
+		unsigned char& fromType,
+		unsigned char& toType
+	) const;
+	dtStatus getPortalPoints(
+		dtPolyRef from,
+		const dtPoly* fromPoly,
+		const dtMeshTile* fromTile,
+		dtPolyRef to,
+		const dtPoly* toPoly,
+		const dtMeshTile* toTile,
+		float* left,
+		float* right
+	) const;
+	dtStatus getEdgeMidPoint(dtPolyRef from, dtPolyRef to, float* mid) const;
+	dtStatus getEdgeMidPoint(
+		dtPolyRef from,
+		const dtPoly* fromPoly,
+		const dtMeshTile* fromTile,
+		dtPolyRef to,
+		const dtPoly* toPoly,
+		const dtMeshTile* toTile,
+		float* mid
+	) const;
+
+private:
+	const dtNavMesh* m_nav = {};
+	uint32_t m_agentCharsSize = {};
+	const AgentCharacteristics* m_agentChars = {};
+	const JmpCollider* m_collider = {};
+	const StdJmpTransferCache* m_transfersCashe = {};
+	class dtNodePoolJmp* m_nodePool = {};
+	class dtNodeQueueJmp* m_openList = {};
+	std::shared_ptr<JmpPathEntry> m_calcedPath;
+};
+#endif // ZENGINE_NAVMESH
 
 /// Provides the ability to perform pathfinding related queries against
 /// a navigation mesh.
@@ -338,7 +1336,7 @@ public:
 	dtStatus findNearestPoly(const float* center, const float* halfExtents,
 							 const dtQueryFilter* filter,
 							 dtPolyRef* nearestRef, float* nearestPt, bool* isOverPoly) const;
-	
+
 	/// Finds polygons that overlap the search box.
 	///  @param[in]		center		The center of the search box. [(x, y, z)]
 	///  @param[in]		halfExtents		The search distance along each axis. [(x, y, z)]
@@ -556,6 +1554,7 @@ private:
 	// Gets the path leading to the specified end node.
 	dtStatus getPathToNode(struct dtNode* endNode, dtPolyRef* path, int* pathCount, int maxPath) const;
 	
+private:
 	const dtNavMesh* m_nav;				///< Pointer to navmesh data.
 
 	struct dtQueryData

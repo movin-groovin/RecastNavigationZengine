@@ -135,7 +135,7 @@ void dtFreeNavMeshQuery(dtNavMeshQuery* navmesh)
 ///
 /// @see dtNavMesh, dtQueryFilter, #dtAllocNavMeshQuery(), #dtAllocNavMeshQuery()
 
-dtNavMeshQuery::dtNavMeshQuery() :
+dtNavMeshQuery::dtNavMeshQuery():
 	m_nav(0),
 	m_tinyNodePool(0),
 	m_nodePool(0),
@@ -1193,6 +1193,875 @@ dtStatus dtNavMeshQuery::getPathToNode(dtNode* endNode, dtPolyRef* path, int* pa
 	return DT_SUCCESS;
 }
 
+#ifdef ZENGINE_NAVMESH
+
+bool dtJmpNavMeshQuery::init(
+	const uint32_t agentCharsSize,
+	const AgentCharacteristics* agentChars,
+	const JmpCollider* collider,
+	const StdJmpTransferCache* transfersCashe
+) {
+	return false;
+}
+
+void dtJmpNavMeshQuery::queryPolygonsInTile(
+	const dtMeshTile* tile,
+	const float* qmin,
+	const float* qmax,
+	const dtQueryFilter* filter,
+	dtPolyQuery* query
+) const
+{
+	dtAssert(m_nav);
+	static const int batchSize = 32;
+	dtPolyRef polyRefs[batchSize];
+	dtPoly* polys[batchSize];
+	int n = 0;
+
+	if (tile->bvTree)
+	{
+		const dtBVNode* node = &tile->bvTree[0];
+		const dtBVNode* end = &tile->bvTree[tile->header->bvNodeCount];
+		const float* tbmin = tile->header->bmin;
+		const float* tbmax = tile->header->bmax;
+		const float qfac = tile->header->bvQuantFactor;
+
+		// Calculate quantized box
+		unsigned short bmin[3], bmax[3];
+		// dtClamp query box to world box.
+		float minx = dtClamp(qmin[0], tbmin[0], tbmax[0]) - tbmin[0];
+		float miny = dtClamp(qmin[1], tbmin[1], tbmax[1]) - tbmin[1];
+		float minz = dtClamp(qmin[2], tbmin[2], tbmax[2]) - tbmin[2];
+		float maxx = dtClamp(qmax[0], tbmin[0], tbmax[0]) - tbmin[0];
+		float maxy = dtClamp(qmax[1], tbmin[1], tbmax[1]) - tbmin[1];
+		float maxz = dtClamp(qmax[2], tbmin[2], tbmax[2]) - tbmin[2];
+		// Quantize
+		bmin[0] = (unsigned short)(qfac * minx) & 0xfffe;
+		bmin[1] = (unsigned short)(qfac * miny) & 0xfffe;
+		bmin[2] = (unsigned short)(qfac * minz) & 0xfffe;
+		bmax[0] = (unsigned short)(qfac * maxx + 1) | 1;
+		bmax[1] = (unsigned short)(qfac * maxy + 1) | 1;
+		bmax[2] = (unsigned short)(qfac * maxz + 1) | 1;
+
+		// Traverse tree
+		const dtPolyRef base = m_nav->getPolyRefBase(tile);
+		while (node < end)
+		{
+			const bool overlap = dtOverlapQuantBounds(bmin, bmax, node->bmin, node->bmax);
+			const bool isLeafNode = node->i >= 0;
+
+			if (isLeafNode && overlap)
+			{
+				dtPolyRef ref = base | (dtPolyRef)node->i;
+				if (filter->passFilter(ref, tile, &tile->polys[node->i]))
+				{
+					polyRefs[n] = ref;
+					polys[n] = &tile->polys[node->i];
+
+					if (n == batchSize - 1)
+					{
+						query->process(tile, polys, polyRefs, batchSize);
+						n = 0;
+					}
+					else
+					{
+						n++;
+					}
+				}
+			}
+
+			if (overlap || isLeafNode)
+				node++;
+			else
+			{
+				const int escapeIndex = -node->i;
+				node += escapeIndex;
+			}
+		}
+	}
+	else
+	{
+		float bmin[3], bmax[3];
+		const dtPolyRef base = m_nav->getPolyRefBase(tile);
+		for (int i = 0; i < tile->header->polyCount; ++i)
+		{
+			dtPoly* p = &tile->polys[i];
+			// Do not return off-mesh connection polygons.
+			if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)
+				continue;
+			// Must pass filter
+			const dtPolyRef ref = base | (dtPolyRef)i;
+			if (!filter->passFilter(ref, tile, p))
+				continue;
+			// Calc polygon bounds.
+			const float* v = &tile->verts[p->verts[0] * 3];
+			dtVcopy(bmin, v);
+			dtVcopy(bmax, v);
+			for (int j = 1; j < p->vertCount; ++j)
+			{
+				v = &tile->verts[p->verts[j] * 3];
+				dtVmin(bmin, v);
+				dtVmax(bmax, v);
+			}
+			if (dtOverlapBounds(qmin, qmax, bmin, bmax))
+			{
+				polyRefs[n] = ref;
+				polys[n] = p;
+
+				if (n == batchSize - 1)
+				{
+					query->process(tile, polys, polyRefs, batchSize);
+					n = 0;
+				}
+				else
+				{
+					n++;
+				}
+			}
+		}
+	}
+
+	// Process the last polygons that didn't make a full batch.
+	if (n > 0)
+		query->process(tile, polys, polyRefs, n);
+}
+
+dtStatus dtJmpNavMeshQuery::queryPolygons(
+	const float* center,
+	const float* halfExtents,
+	const dtQueryFilter* filter,
+	dtPolyQuery* query
+) const
+{
+	dtAssert(m_nav);
+
+	if (!center || !dtVisfinite(center) ||
+		!halfExtents || !dtVisfinite(halfExtents) ||
+		!filter || !query)
+	{
+		return DT_FAILURE | DT_INVALID_PARAM;
+	}
+
+	float bmin[3], bmax[3];
+	dtVsub(bmin, center, halfExtents);
+	dtVadd(bmax, center, halfExtents);
+
+	// Find tiles the query touches.
+	int minx, miny, maxx, maxy;
+	m_nav->calcTileLoc(bmin, &minx, &miny);
+	m_nav->calcTileLoc(bmax, &maxx, &maxy);
+
+	static const int MAX_NEIS = 32;
+	const dtMeshTile* neis[MAX_NEIS];
+
+	for (int y = miny; y <= maxy; ++y)
+	{
+		for (int x = minx; x <= maxx; ++x)
+		{
+			const int nneis = m_nav->getTilesAt(x, y, neis, MAX_NEIS);
+			for (int j = 0; j < nneis; ++j)
+			{
+				queryPolygonsInTile(neis[j], bmin, bmax, filter, query);
+			}
+		}
+	}
+
+	return DT_SUCCESS;
+}
+
+dtStatus dtJmpNavMeshQuery::findCollidedPolys(
+	const float* center, const float* halfExtents, const dtQueryFilter* filter, dtPolyQuery* query
+) {
+	dtAssert(m_nav);
+	return queryPolygons(center, halfExtents, filter, query);
+}
+
+dtStatus dtJmpNavMeshQuery::getPortalPoints(
+	dtPolyRef from,
+	dtPolyRef to,
+	float* left,
+	float* right,
+	unsigned char& fromType,
+	unsigned char& toType
+) const
+{
+	dtAssert(m_nav);
+
+	const dtMeshTile* fromTile = 0;
+	const dtPoly* fromPoly = 0;
+	if (dtStatusFailed(m_nav->getTileAndPolyByRef(from, &fromTile, &fromPoly)))
+		return DT_FAILURE | DT_INVALID_PARAM;
+	fromType = fromPoly->getType();
+
+	const dtMeshTile* toTile = 0;
+	const dtPoly* toPoly = 0;
+	if (dtStatusFailed(m_nav->getTileAndPolyByRef(to, &toTile, &toPoly)))
+		return DT_FAILURE | DT_INVALID_PARAM;
+	toType = toPoly->getType();
+
+	return getPortalPoints(from, fromPoly, fromTile, to, toPoly, toTile, left, right);
+}
+
+// Returns portal points between two polygons.
+dtStatus dtJmpNavMeshQuery::getPortalPoints(
+	dtPolyRef from,
+	const dtPoly* fromPoly,
+	const dtMeshTile* fromTile,
+	dtPolyRef to,
+	const dtPoly* toPoly,
+	const dtMeshTile* toTile,
+	float* left,
+	float* right
+) const
+{
+	// Find the link that points to the 'to' polygon.
+	const dtLink* link = 0;
+	for (unsigned int i = fromPoly->firstLink; i != DT_NULL_LINK; i = fromTile->links[i].next)
+	{
+		if (fromTile->links[i].ref == to)
+		{
+			link = &fromTile->links[i];
+			break;
+		}
+	}
+	if (!link)
+		return DT_FAILURE | DT_INVALID_PARAM;
+
+	// Handle off-mesh connections.
+	if (fromPoly->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)
+	{
+		// Find link that points to first vertex.
+		for (unsigned int i = fromPoly->firstLink; i != DT_NULL_LINK; i = fromTile->links[i].next)
+		{
+			if (fromTile->links[i].ref == to)
+			{
+				const int v = fromTile->links[i].edge;
+				dtVcopy(left, &fromTile->verts[fromPoly->verts[v] * 3]);
+				dtVcopy(right, &fromTile->verts[fromPoly->verts[v] * 3]);
+				return DT_SUCCESS;
+			}
+		}
+		return DT_FAILURE | DT_INVALID_PARAM;
+	}
+
+	if (toPoly->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)
+	{
+		for (unsigned int i = toPoly->firstLink; i != DT_NULL_LINK; i = toTile->links[i].next)
+		{
+			if (toTile->links[i].ref == from)
+			{
+				const int v = toTile->links[i].edge;
+				dtVcopy(left, &toTile->verts[toPoly->verts[v] * 3]);
+				dtVcopy(right, &toTile->verts[toPoly->verts[v] * 3]);
+				return DT_SUCCESS;
+			}
+		}
+		return DT_FAILURE | DT_INVALID_PARAM;
+	}
+
+	// Find portal vertices.
+	const int v0 = fromPoly->verts[link->edge];
+	const int v1 = fromPoly->verts[(link->edge + 1) % (int)fromPoly->vertCount];
+	dtVcopy(left, &fromTile->verts[v0 * 3]);
+	dtVcopy(right, &fromTile->verts[v1 * 3]);
+
+	// If the link is at tile boundary, dtClamp the vertices to
+	// the link width.
+	if (link->side != 0xff)
+	{
+		// Unpack portal limits.
+		if (link->bmin != 0 || link->bmax != 255)
+		{
+			const float s = 1.0f / 255.0f;
+			const float tmin = link->bmin * s;
+			const float tmax = link->bmax * s;
+			dtVlerp(left, &fromTile->verts[v0 * 3], &fromTile->verts[v1 * 3], tmin);
+			dtVlerp(right, &fromTile->verts[v0 * 3], &fromTile->verts[v1 * 3], tmax);
+		}
+	}
+
+	return DT_SUCCESS;
+}
+
+// Returns edge mid point between two polygons.
+dtStatus dtJmpNavMeshQuery::getEdgeMidPoint(dtPolyRef from, dtPolyRef to, float* mid) const
+{
+	float left[3], right[3];
+	unsigned char fromType, toType;
+	if (dtStatusFailed(getPortalPoints(from, to, left, right, fromType, toType)))
+		return DT_FAILURE | DT_INVALID_PARAM;
+	mid[0] = (left[0] + right[0]) * 0.5f;
+	mid[1] = (left[1] + right[1]) * 0.5f;
+	mid[2] = (left[2] + right[2]) * 0.5f;
+	return DT_SUCCESS;
+}
+
+dtStatus dtJmpNavMeshQuery::getEdgeMidPoint(
+	dtPolyRef from,
+	const dtPoly* fromPoly,
+	const dtMeshTile* fromTile,
+	dtPolyRef to,
+	const dtPoly* toPoly,
+	const dtMeshTile* toTile,
+	float* mid
+) const
+{
+	float left[3], right[3];
+	if (dtStatusFailed(getPortalPoints(from, fromPoly, fromTile, to, toPoly, toTile, left, right)))
+		return DT_FAILURE | DT_INVALID_PARAM;
+	mid[0] = (left[0] + right[0]) * 0.5f;
+	mid[1] = (left[1] + right[1]) * 0.5f;
+	mid[2] = (left[2] + right[2]) * 0.5f;
+	return DT_SUCCESS;
+}
+
+//dtStatus dtJmpNavMeshQuery::findPath(
+//	dtPolyRef startRef,
+//	dtPolyRef endRef,
+//	const float* startPos,
+//	const float* endPos,
+//	const dtQueryFilter* filter,
+//	dtPolyRef* path,
+//	int* pathCount,
+//	const int maxPath
+//) const
+//{
+//	dtAssert(m_nav);
+//	dtAssert(m_nodePool);
+//	dtAssert(m_openList);
+//
+//	if (!pathCount)
+//		return DT_FAILURE | DT_INVALID_PARAM;
+//
+//	*pathCount = 0;
+//
+//	// Validate input
+//	if (!m_nav->isValidPolyRef(startRef) || !m_nav->isValidPolyRef(endRef) ||
+//		!startPos || !dtVisfinite(startPos) ||
+//		!endPos || !dtVisfinite(endPos) ||
+//		!filter || !path || maxPath <= 0)
+//	{
+//		return DT_FAILURE | DT_INVALID_PARAM;
+//	}
+//
+//	if (startRef == endRef)
+//	{
+//		path[0] = startRef;
+//		*pathCount = 1;
+//		return DT_SUCCESS;
+//	}
+//
+//	m_nodePool->clear();
+//	m_openList->clear();
+//
+//	dtNode* startNode = m_nodePool->getNode(startRef);
+//	dtVcopy(startNode->pos, startPos);
+//	startNode->pidx = 0;
+//	startNode->cost = 0;
+//	startNode->total = dtVdist(startPos, endPos) * H_SCALE;
+//	startNode->id = startRef;
+//	startNode->flags = DT_NODE_OPEN;
+//	m_openList->push(startNode);
+//
+//	dtNode* lastBestNode = startNode;
+//	float lastBestNodeCost = startNode->total;
+//
+//	bool outOfNodes = false;
+//
+//	while (!m_openList->empty())
+//	{
+//		// Remove node from open list and put it in closed list.
+//		dtNode* bestNode = m_openList->pop();
+//		bestNode->flags &= ~DT_NODE_OPEN;
+//		bestNode->flags |= DT_NODE_CLOSED;
+//
+//		// Reached the goal, stop searching.
+//		if (bestNode->id == endRef)
+//		{
+//			lastBestNode = bestNode;
+//			break;
+//		}
+//
+//		// Get current poly and tile.
+//		// The API input has been cheked already, skip checking internal data.
+//		const dtPolyRef bestRef = bestNode->id;
+//		const dtMeshTile* bestTile = 0;
+//		const dtPoly* bestPoly = 0;
+//		m_nav->getTileAndPolyByRefUnsafe(bestRef, &bestTile, &bestPoly);
+//
+//		// Get parent poly and tile.
+//		dtPolyRef parentRef = 0;
+//		const dtMeshTile* parentTile = 0;
+//		const dtPoly* parentPoly = 0;
+//		if (bestNode->pidx)
+//			parentRef = m_nodePool->getNodeAtIdx(bestNode->pidx)->id;
+//		if (parentRef)
+//			m_nav->getTileAndPolyByRefUnsafe(parentRef, &parentTile, &parentPoly);
+//
+//		for (unsigned int i = bestPoly->firstLink; i != DT_NULL_LINK; i = bestTile->links[i].next)
+//		{
+//			dtPolyRef neighbourRef = bestTile->links[i].ref;
+//
+//			// Skip invalid ids and do not expand back to where we came from.
+//			if (!neighbourRef || neighbourRef == parentRef)
+//				continue;
+//
+//			// Get neighbour poly and tile.
+//			// The API input has been cheked already, skip checking internal data.
+//			const dtMeshTile* neighbourTile = 0;
+//			const dtPoly* neighbourPoly = 0;
+//			m_nav->getTileAndPolyByRefUnsafe(neighbourRef, &neighbourTile, &neighbourPoly);
+//
+//			if (!filter->passFilter(neighbourRef, neighbourTile, neighbourPoly))
+//				continue;
+//
+//			// deal explicitly with crossing tile boundaries
+//			unsigned char crossSide = 0;
+//			if (bestTile->links[i].side != 0xff)
+//				crossSide = bestTile->links[i].side >> 1;
+//
+//			// get the node
+//			dtNode* neighbourNode = m_nodePool->getNode(neighbourRef, crossSide);
+//			if (!neighbourNode)
+//			{
+//				outOfNodes = true;
+//				continue;
+//			}
+//
+//			// If the node is visited the first time, calculate node position.
+//			if (neighbourNode->flags == 0)
+//			{
+//				getEdgeMidPoint(bestRef, bestPoly, bestTile,
+//					neighbourRef, neighbourPoly, neighbourTile,
+//					neighbourNode->pos);
+//			}
+//
+//			// Calculate cost and heuristic.
+//			float cost = 0;
+//			float heuristic = 0;
+//
+//			// Special case for last node.
+//			if (neighbourRef == endRef)
+//			{
+//				// Cost
+//				const float curCost = filter->getCost(bestNode->pos, neighbourNode->pos,
+//					parentRef, parentTile, parentPoly,
+//					bestRef, bestTile, bestPoly,
+//					neighbourRef, neighbourTile, neighbourPoly);
+//				const float endCost = filter->getCost(neighbourNode->pos, endPos,
+//					bestRef, bestTile, bestPoly,
+//					neighbourRef, neighbourTile, neighbourPoly,
+//					0, 0, 0);
+//
+//				cost = bestNode->cost + curCost + endCost;
+//				heuristic = 0;
+//			}
+//			else
+//			{
+//				// Cost
+//				const float curCost = filter->getCost(bestNode->pos, neighbourNode->pos,
+//					parentRef, parentTile, parentPoly,
+//					bestRef, bestTile, bestPoly,
+//					neighbourRef, neighbourTile, neighbourPoly);
+//				cost = bestNode->cost + curCost;
+//				heuristic = dtVdist(neighbourNode->pos, endPos) * H_SCALE;
+//			}
+//
+//			const float total = cost + heuristic;
+//
+//			// The node is already in open list and the new result is worse, skip.
+//			if ((neighbourNode->flags & DT_NODE_OPEN) && total >= neighbourNode->total)
+//				continue;
+//			// The node is already visited and process, and the new result is worse, skip.
+//			if ((neighbourNode->flags & DT_NODE_CLOSED) && total >= neighbourNode->total)
+//				continue;
+//
+//			// Add or update the node.
+//			neighbourNode->pidx = m_nodePool->getNodeIdx(bestNode);
+//			neighbourNode->id = neighbourRef;
+//			neighbourNode->flags = (neighbourNode->flags & ~DT_NODE_CLOSED);
+//			neighbourNode->cost = cost;
+//			neighbourNode->total = total;
+//
+//			if (neighbourNode->flags & DT_NODE_OPEN)
+//			{
+//				// Already in open, update node location.
+//				m_openList->modify(neighbourNode);
+//			}
+//			else
+//			{
+//				// Put the node in open list.
+//				neighbourNode->flags |= DT_NODE_OPEN;
+//				m_openList->push(neighbourNode);
+//			}
+//
+//			// Update nearest node to target so far.
+//			if (heuristic < lastBestNodeCost)
+//			{
+//				lastBestNodeCost = heuristic;
+//				lastBestNode = neighbourNode;
+//			}
+//		}
+//	}
+//
+//	dtStatus status = getPathToNode(lastBestNode, path, pathCount, maxPath);
+//
+//	if (lastBestNode->id != endRef)
+//		status |= DT_PARTIAL_RESULT;
+//
+//	if (outOfNodes)
+//		status |= DT_OUT_OF_NODES;
+//
+//	return status;
+//}
+//
+//dtStatus dtJmpNavMeshQuery::getPathToNode(dtNode* endNode, dtPolyRef* path, int* pathCount, int maxPath) const
+//{
+//	// Find the length of the entire path.
+//	dtNode* curNode = endNode;
+//	int length = 0;
+//	do
+//	{
+//		length++;
+//		curNode = m_nodePool->getNodeAtIdx(curNode->pidx);
+//	} while (curNode);
+//
+//	// If the path cannot be fully stored then advance to the last node we will be able to store.
+//	curNode = endNode;
+//	int writeCount;
+//	for (writeCount = length; writeCount > maxPath; writeCount--)
+//	{
+//		dtAssert(curNode);
+//
+//		curNode = m_nodePool->getNodeAtIdx(curNode->pidx);
+//	}
+//
+//	// Write path
+//	for (int i = writeCount - 1; i >= 0; i--)
+//	{
+//		dtAssert(curNode);
+//
+//		path[i] = curNode->id;
+//		curNode = m_nodePool->getNodeAtIdx(curNode->pidx);
+//	}
+//
+//	dtAssert(!curNode);
+//
+//	*pathCount = dtMin(length, maxPath);
+//
+//	if (length > maxPath)
+//		return DT_SUCCESS | DT_BUFFER_TOO_SMALL;
+//
+//	return DT_SUCCESS;
+//}
+
+dtStatus dtJmpNavMeshQuery::findPathWithJumps(
+	const AgentCharacteristics* agentChars,
+	dtPolyRef startRef,
+	dtPolyRef endRef,
+	const float* startPos,
+	const float* endPos,
+	const dtQueryFilter* filter,
+	const int entriesSize,
+	TransferEntry* foundEntries, // raw path
+	int* entriesNumber
+) {
+	dtAssert(m_nav);
+	dtAssert(m_nodePool);
+	dtAssert(m_openList);
+	dtAssert(entriesNumber);
+	dtAssert(entriesSize > 0);
+	dtAssert(foundEntries);
+	dtAssert(filter);
+	dtAssert(endPos);
+	dtAssert(startPos);
+	dtAssert(agentChars);
+
+	*entriesNumber = 0;
+
+	// Validate input
+	if (!m_nav->isValidPolyRef(startRef) || !m_nav->isValidPolyRef(endRef) ||
+		!dtVisfinite(startPos) || !dtVisfinite(endPos)
+	) {
+		return DT_FAILURE | DT_INVALID_PARAM;
+	}
+
+	if (startRef == endRef)
+	{
+		auto& entry = foundEntries[0];
+		entry.transferTypeToNextPoly = NavmeshPolyTransferFlags::NO_ACTION;
+		entry.currentPolyRef = startRef;
+		*entriesNumber = 1;
+		return DT_SUCCESS;
+	}
+
+	m_nodePool->clear();
+	m_openList->clear();
+
+	dtNodeJmp* startNode = m_nodePool->getNode(startRef, NavmeshPolyTransferFlags::NO_ACTION, 0);
+	dtVcopy(startNode->pos, startPos);
+	startNode->pidx = 0;
+	startNode->cost = 0;
+	startNode->total = dtVdist(startPos, endPos) * H_SCALE;
+	startNode->id = startRef;
+	startNode->flags = DT_NODE_OPEN;
+	m_openList->push(startNode);
+
+	dtNodeJmp* lastBestNode = startNode;
+	float lastBestNodeCost = startNode->total;
+
+	bool outOfNodes = false;
+
+	while (!m_openList->empty())
+	{
+		// Remove node from open list and put it in closed list.
+		dtNodeJmp* bestNode = m_openList->pop();
+		bestNode->flags &= ~DT_NODE_OPEN;
+		bestNode->flags |= DT_NODE_CLOSED;
+
+		// Reached the goal, stop searching.
+		if (bestNode->id == endRef)
+		{
+			lastBestNode = bestNode;
+			break;
+		}
+
+		// Get current poly and tile.
+		// The API input has been cheked already, skip checking internal data.
+		const dtPolyRef bestRef = bestNode->id;
+		const dtMeshTile* bestTile = 0;
+		const dtPoly* bestPoly = 0;
+		m_nav->getTileAndPolyByRefUnsafe(bestRef, &bestTile, &bestPoly);
+
+		// Get parent poly and tile.
+		dtPolyRef parentRef = 0;
+		const dtMeshTile* parentTile = 0;
+		const dtPoly* parentPoly = 0;
+		if (bestNode->pidx)
+			parentRef = m_nodePool->getNodeAtIdx(bestNode->pidx)->id;
+		if (parentRef)
+			m_nav->getTileAndPolyByRefUnsafe(parentRef, &parentTile, &parentPoly);
+
+		for (unsigned int i = bestPoly->firstLink; i != DT_NULL_LINK; i = bestTile->links[i].next)
+		{
+			const uint32_t transferType = NavmeshPolyTransferFlags::WALKING;
+			dtPolyRef neighbourRef = bestTile->links[i].ref;
+
+			// Skip invalid ids and do not expand back to where we came from.
+			if (!neighbourRef || neighbourRef == parentRef)
+				continue;
+
+			// Get neighbour poly and tile.
+			// The API input has been cheked already, skip checking internal data.
+			const dtMeshTile* neighbourTile = 0;
+			const dtPoly* neighbourPoly = 0;
+			m_nav->getTileAndPolyByRefUnsafe(neighbourRef, &neighbourTile, &neighbourPoly);
+
+			if (!filter->passFilter(neighbourRef, neighbourTile, neighbourPoly))
+				continue;
+
+			// deal explicitly with crossing tile boundaries
+			unsigned char crossSide = 0;
+			if (bestTile->links[i].side != 0xff)
+				crossSide = bestTile->links[i].side >> 1;
+
+			// get the node
+			dtNodeJmp* neighbourNode = m_nodePool->getNode(neighbourRef, transferType, crossSide);
+			if (!neighbourNode)
+			{
+				outOfNodes = true;
+				continue;
+			}
+
+			// If the node is visited the first time, calculate node position.
+			if (neighbourNode->flags == 0)
+			{
+				getEdgeMidPoint(bestRef, bestPoly, bestTile,
+					neighbourRef, neighbourPoly, neighbourTile,
+					neighbourNode->pos);
+			}
+
+			// Calculate cost and heuristic.
+			float cost = 0;
+			float heuristic = 0;
+
+			// Special case for last node.
+			if (neighbourRef == endRef)
+			{
+				// Cost
+				const float curCost = filter->getCost(bestNode->pos, neighbourNode->pos,
+					parentRef, parentTile, parentPoly,
+					bestRef, bestTile, bestPoly,
+					neighbourRef, neighbourTile, neighbourPoly);
+				const float endCost = filter->getCost(neighbourNode->pos, endPos,
+					bestRef, bestTile, bestPoly,
+					neighbourRef, neighbourTile, neighbourPoly,
+					0, 0, 0);
+
+				cost = bestNode->cost + curCost + endCost;
+				heuristic = 0;
+			}
+			else
+			{
+				// Cost
+				const float curCost = filter->getCost(bestNode->pos, neighbourNode->pos,
+					parentRef, parentTile, parentPoly,
+					bestRef, bestTile, bestPoly,
+					neighbourRef, neighbourTile, neighbourPoly);
+				cost = bestNode->cost + curCost;
+				heuristic = dtVdist(neighbourNode->pos, endPos) * H_SCALE;
+			}
+
+			const float total = cost + heuristic;
+
+			// The node is already in open list and the new result is worse, skip.
+			if ((neighbourNode->flags & DT_NODE_OPEN) && total >= neighbourNode->total)
+				continue;
+			// The node is already visited and process, and the new result is worse, skip.
+			if ((neighbourNode->flags & DT_NODE_CLOSED) && total >= neighbourNode->total)
+				continue;
+
+			// Add or update the node.
+			neighbourNode->pidx = m_nodePool->getNodeIdx(bestNode);
+			neighbourNode->id = neighbourRef;
+			neighbourNode->flags = (neighbourNode->flags & ~DT_NODE_CLOSED);
+			neighbourNode->cost = cost;
+			neighbourNode->total = total;
+
+			if (neighbourNode->flags & DT_NODE_OPEN)
+			{
+				// Already in open, update node location.
+				m_openList->modify(neighbourNode);
+			}
+			else
+			{
+				// Put the node in open list.
+				neighbourNode->flags |= DT_NODE_OPEN;
+				m_openList->push(neighbourNode);
+			}
+
+			// Update nearest node to target so far.
+			if (heuristic < lastBestNodeCost)
+			{
+				lastBestNodeCost = heuristic;
+				lastBestNode = neighbourNode;
+			}
+		}
+	}
+
+	dtStatus status = getPathToNodeWithJumps(endPos, lastBestNode, entriesSize, foundEntries, entriesNumber);
+	if (lastBestNode->id != endRef)
+		status |= DT_PARTIAL_RESULT;
+
+	if (outOfNodes)
+		status |= DT_OUT_OF_NODES;
+
+	return status;
+}
+
+dtStatus dtJmpNavMeshQuery::getPathToNodeWithJumps(
+	const float* endPos,
+	const dtNodeJmp* endNode,
+	const int entriesSize,
+	TransferEntry* foundEntries,
+	int* entriesNum
+) {
+	// Find the length of the entire path.
+	const dtNodeJmp* curNode = endNode;
+	int length = 0;
+	do
+	{
+		length++;
+		curNode = m_nodePool->getNodeAtIdx(curNode->pidx);
+	} while (curNode);
+	assert(length > 1);
+
+	// If the path cannot be fully stored then advance to the last node we will be able to store.
+	curNode = endNode;
+	int writeCount;
+	for (writeCount = length; writeCount > entriesSize; writeCount--)
+	{
+		assert(curNode);
+		curNode = m_nodePool->getNodeAtIdx(curNode->pidx);
+	}
+
+	// Write last entry
+	const int lastIdx = writeCount - 1;
+	foundEntries[lastIdx].transferTypeToNextPoly = NavmeshPolyTransferFlags::NO_ACTION;
+	foundEntries[lastIdx].currentPolyRef = curNode->id;
+	geometry::vcopy(foundEntries[lastIdx].posJmpFrom, curNode->pos);
+	geometry::vcopy(foundEntries[lastIdx].posJmpTo, curNode->pos);
+	// Write path: pass nodes in reverse order
+	const dtNodeJmp* tmpNode = {};
+	for (int i = writeCount - 2; i >= 0; i--)
+	{
+		tmpNode = curNode;
+		curNode = m_nodePool->getNodeAtIdx(curNode->pidx);
+		assert(curNode);
+
+		TransferEntry& entry = foundEntries[i];
+		entry.transferTypeToNextPoly = tmpNode->transferTypeFromPrevPoly;
+		entry.currentPolyRef = curNode->id;
+		if (entry.transferTypeToNextPoly > NavmeshPolyTransferFlags::WALKING)
+		{
+			geometry::vcopy(entry.posJmpFrom, tmpNode->posJmpFromPrevPoly);
+			geometry::vcopy(entry.posJmpTo, tmpNode->pos);
+		}
+	}
+	assert(!curNode);
+
+	*entriesNum = dtMin(length, entriesSize);
+	if (length + 1 <= entriesSize) {
+		const int idx = *entriesNum;
+		foundEntries[lastIdx].transferTypeToNextPoly = NavmeshPolyTransferFlags::WALKING;
+		foundEntries[idx].transferTypeToNextPoly = NavmeshPolyTransferFlags::NO_ACTION;
+		foundEntries[idx].currentPolyRef = foundEntries[lastIdx].currentPolyRef;
+		geometry::vcopy(foundEntries[idx].posJmpFrom, endPos);
+		geometry::vcopy(foundEntries[idx].posJmpTo, endPos);
+		++(*entriesNum);
+	}
+	else if (length > entriesSize) {
+		return DT_SUCCESS | DT_BUFFER_TOO_SMALL;
+	}
+
+	return DT_SUCCESS;
+}
+
+dtStatus dtJmpNavMeshQuery::calcPathWithJumps(const float* startPos, const float* endPos)
+{
+	return DT_FAILURE;
+}
+
+bool dtJmpNavMeshQuery::availableJmpTransfer(const AgentCharacteristics* info, const TransferDataEntry* entry)
+{
+	uint32_t type = entry->transferType;
+	if (type == NavmeshPolyTransferFlags::CLIMB || type == NavmeshPolyTransferFlags::CLIMB_OVERLAPPED_POLYS)
+	{
+		if (info->maxClimbHeight < entry->roundedMaxIntHeightDst)
+			return false;
+	}
+	else if (type == NavmeshPolyTransferFlags::JUMP_DOWN)
+	{
+		if (info->maxJumpDownHeight < entry->roundedMaxIntHeightDst)
+			return false;
+	}
+	else if (type == NavmeshPolyTransferFlags::JUMP_FORWARD)
+	{
+		if (info->maxJmpFwdDistance < entry->roundedMaxIntGroundDst)
+			return false;
+	}
+#ifndef NDEBUG
+	else {
+		assert(false);
+		return false;
+	}
+#endif
+	return true;
+}
+
+std::shared_ptr<JmpPathEntry> dtJmpNavMeshQuery::getLastPath() const { return m_calcedPath; }
+
+#endif // ZENGINE_NAVMESH
 
 /// @par
 ///
