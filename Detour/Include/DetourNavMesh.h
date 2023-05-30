@@ -68,7 +68,8 @@ typedef unsigned int dtTileRef;
 /// @ingroup detour
 static const int DT_VERTS_PER_POLYGON = 6; // max verts per navmesh polygon
 #ifdef ZENGINE_NAVMESH
-static const int DT_MAX_PLANES_PER_BOUNDING_POLYHEDRON = DT_VERTS_PER_POLYGON + 1;
+static_assert(DT_VERTS_PER_POLYGON == 6, "DT_VERTS_PER_POLYGON assumed is equal to 6");
+static const int MAX_PLANES_PER_BOUNDING_POLYHEDRON = DT_VERTS_PER_POLYGON + 1;
 static const float MAX_FWD_DST_FOR_CLIMB_BBOX = 50.f;
 #endif // ZENGINE_NAVMESH
 
@@ -187,6 +188,8 @@ struct dtPoly
 	unsigned char areaAndtype;
 
 #ifdef ZENGINE_NAVMESH
+	static const uint32_t EMPTY_JMP_ABILITY_FLAG = 0;
+
 	/// average plane of poly
 	float norm[3];
 	float dist;
@@ -231,7 +234,7 @@ struct dtPoly
 
 #ifdef ZENGINE_NAVMESH
 	inline bool isAveragePolyInited() const { return norm[0] != FLT_MAX; }
-	inline uint32_t getJmpAbilityFlags() const { return jmpAbilityFlags; }
+	inline bool canJumpFromPoly() const { return jmpAbilityFlags; /*!= EMPTY_JMP_ABILITY_FLAG;*/ }
 	inline void setJmpAbilityFlags(const uint32_t v) { jmpAbilityFlags = v; }
 	inline uint32_t getEdgeJmpClimbFlags(int edgeIdx) const {
 		assert(edgeIdx >= 0 && edgeIdx <= 6);
@@ -489,6 +492,8 @@ public:
 	void collectInfo(
 		int& nTiles, int& nPolys, int& nConnectedEdges, int& nNonConnectedEdges
 	) const;
+	void closestPointOnPoly(dtPolyRef ref, const float* pos, float* closest, bool* posOverPoly) const;
+	static void calcPolyCenter(const dtMeshTile* tile, const dtPoly* poly, float* center);
 #endif // ZENGINE_NAVMESH
 
 	/// Gets the tile for the specified tile reference.
@@ -730,7 +735,9 @@ private:
 	/// Returns whether position is over the poly and the height at the position if so.
 	bool getPolyHeight(const dtMeshTile* tile, const dtPoly* poly, const float* pos, float* height) const;
 	/// Returns closest point on polygon.
+#ifndef ZENGINE_NAVMESH
 	void closestPointOnPoly(dtPolyRef ref, const float* pos, float* closest, bool* posOverPoly) const;
+#endif // ZENGINE_NAVMESH
 	
 	dtNavMeshParams m_params;			///< Current initialization params. TODO: do not store this info twice.
 	float m_orig[3];					///< Origin of the tile (0,0)
@@ -761,10 +768,6 @@ dtNavMesh* dtAllocNavMesh();
 ///  @param[in]	navmesh		A navigation mesh allocated using #dtAllocNavMesh
 ///  @ingroup detour
 void dtFreeNavMesh(dtNavMesh* navmesh);
-
-#ifdef ZENGINE_NAVMESH
-void calcPolyCenter(const dtMeshTile* tile, const dtPoly* poly, float* center);
-#endif // ZENGINE_NAVMESH
 
 #endif // DETOURNAVMESH_H
 

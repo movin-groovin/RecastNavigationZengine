@@ -355,11 +355,18 @@ inline float dtTriArea2D(const float* a, const float* b, const float* c)
 inline bool dtOverlapQuantBounds(const unsigned short amin[3], const unsigned short amax[3],
 								 const unsigned short bmin[3], const unsigned short bmax[3])
 {
+#ifdef ZENGINE_NAVMESH
+	if (amin[0] > bmax[0] || amax[0] < bmin[0]) return false;
+	if (amin[1] > bmax[1] || amax[1] < bmin[1]) return false;
+	if (amin[2] > bmax[2] || amax[2] < bmin[2]) return false;
+	return true;
+#else
 	bool overlap = true;
 	overlap = (amin[0] > bmax[0] || amax[0] < bmin[0]) ? false : overlap;
 	overlap = (amin[1] > bmax[1] || amax[1] < bmin[1]) ? false : overlap;
 	overlap = (amin[2] > bmax[2] || amax[2] < bmin[2]) ? false : overlap;
 	return overlap;
+#endif // ZENGINE_NAVMESH
 }
 
 /// Determines if two axis-aligned bounding boxes overlap.

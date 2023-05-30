@@ -2076,6 +2076,23 @@ void dtNavMesh::collectInfo(
 		++nTiles;
 	}
 }
+
+void dtNavMesh::calcPolyCenter(const dtMeshTile* tile, const dtPoly* poly, float* center)
+{
+	center[0] = center[1] = center[2] = 0.f;
+	const int n = poly->vertCount;
+	for (int i = 0; i < n; ++i)
+	{
+		const float* v = &tile->verts[poly->verts[i] * 3];
+		center[0] += v[0];
+		center[1] += v[1];
+		center[2] += v[2];
+	}
+	const float mul = 1.0f / n;
+	center[0] *= mul;
+	center[1] *= mul;
+	center[2] *= mul;
+}
 #endif // ZENGINE_NAVMESH
 
 /// @par
@@ -2327,23 +2344,3 @@ dtStatus dtNavMesh::getPolyArea(dtPolyRef ref, unsigned char* resultArea) const
 	
 	return DT_SUCCESS;
 }
-
-#ifdef ZENGINE_NAVMESH
-void calcPolyCenter(const dtMeshTile* tile, const dtPoly* poly, float* center)
-{
-	center[0] = center[1] = center[2] = 0.f;
-	const int n = poly->vertCount;
-	for (int i = 0; i < n; ++i)
-	{
-		const float* v = &tile->verts[poly->verts[i] * 3];
-		center[0] += v[0];
-		center[1] += v[1];
-		center[2] += v[2];
-	}
-	const float mul = 1.0f / n;
-	center[0] *= mul;
-	center[1] *= mul;
-	center[2] *= mul;
-}
-#endif // ZENGINE_NAVMESH
-

@@ -2292,7 +2292,7 @@ bool Grid2dBvh::obbTriCollisionVobFirstHit(int vobId, const geometry::OBBExt* be
 	//geometry::vcopy(beMut->b.center, vertex);
 	beMut->setCenter(vertex);
 	for (int i = 0; i < 3; ++i) {
-		transformDirection(&be->getDir()[i * 3], vobPos.invTrafo, vertex);
+		transformDirection(be->getDir(i), vobPos.invTrafo, vertex); // &be->getDirs()[i * 3]
 		//geometry::vcopy(&beMut->b.dir[i], vertex);
 		beMut->setDir(i, vertex);
 	}

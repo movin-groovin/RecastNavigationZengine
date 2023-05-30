@@ -69,6 +69,9 @@ enum TransferType: uint32_t
 };
 }
 
+static const int MAX_TRANSFERS_PER_JMP_ACTION = 7;
+static const int JMP_ACTION_SIZE = 3;
+
 namespace common
 {
 
@@ -120,53 +123,53 @@ struct NavmeshGenParams
 
 // These are just sample areas to use consistent values across the samples.
 // The use should specify these base on his needs.
-struct  SamplePolyAreas
+namespace SamplePolyAreas
 {
-	enum {
-		SAMPLE_POLYAREA_GROUND,
-		SAMPLE_POLYAREA_ROAD,
-		SAMPLE_POLYAREA_FOREST,
-		SAMPLE_POLYAREA_DOOR,
-		SAMPLE_POLYAREA_LADDER,
-		SAMPLE_POLYAREA_WATER,
-		SAMPLE_POLYAREA_WATER_WALKING,
-		SAMPLE_POLYAREA_WATER_FORDING,
-		SAMPLE_POLYAREA_WATER_SWIMMING,
-		SAMPLE_POLYAREA_LAVA,
+enum {
+	SAMPLE_POLYAREA_GROUND,
+	SAMPLE_POLYAREA_ROAD,
+	SAMPLE_POLYAREA_FOREST,
+	SAMPLE_POLYAREA_DOOR,
+	SAMPLE_POLYAREA_LADDER,
+	SAMPLE_POLYAREA_WATER,
+	SAMPLE_POLYAREA_WATER_WALKING,
+	SAMPLE_POLYAREA_WATER_FORDING,
+	SAMPLE_POLYAREA_WATER_SWIMMING,
+	SAMPLE_POLYAREA_LAVA,
 
-		SAMPLE_POLYAREA_MAX = 0x3f
-	};
+	SAMPLE_POLYAREA_MAX = 0x3f
+};
 };
 
-struct SamplePolyFlags
+namespace SamplePolyFlags
 {
-	enum {
-		SAMPLE_POLYFLAGS_WALK = 0x01,		// Ability to walk (ground, grass, road)
-		SAMPLE_POLYFLAGS_WATER_WALKING = 0x02,
-		SAMPLE_POLYFLAGS_WATER_FORDING = 0x04,
-		SAMPLE_POLYFLAGS_WATER_SWIMMING = 0x08,		// Ability to swim (water).
-		SAMPLE_POLYFLAGS_ROAD = 0x10,		// Ability to move through doors.
-		SAMPLE_POLYFLAGS_FOREST = 0x20,
-		SAMPLE_POLYFLAGS_DOOR = 0x40,		// Ability to move through doors.
-		SAMPLE_POLYFLAGS_LADDER = 0x80,
-		SAMPLE_POLYFLAGS_INHABITED = 0x4000,
-		SAMPLE_POLYFLAGS_DISABLED = 0x8000,	// Disabled polygon
-		SAMPLE_POLYFLAGS_ALL = 0xffff     // All abilities.
-	};
+enum {
+	SAMPLE_POLYFLAGS_WALK = 0x01,		// Ability to walk (ground, grass, road)
+	SAMPLE_POLYFLAGS_WATER_WALKING = 0x02,
+	SAMPLE_POLYFLAGS_WATER_FORDING = 0x04,
+	SAMPLE_POLYFLAGS_WATER_SWIMMING = 0x08,		// Ability to swim (water).
+	SAMPLE_POLYFLAGS_ROAD = 0x10,		// Ability to move through doors.
+	SAMPLE_POLYFLAGS_FOREST = 0x20,
+	SAMPLE_POLYFLAGS_DOOR = 0x40,		// Ability to move through doors.
+	SAMPLE_POLYFLAGS_LADDER = 0x80,
+	SAMPLE_POLYFLAGS_INHABITED = 0x4000,
+	SAMPLE_POLYFLAGS_DISABLED = 0x8000,	// Disabled polygon
+	SAMPLE_POLYFLAGS_ALL = 0xffff     // All abilities.
+};
 };
 
-struct VobType
+namespace VobType
 {
-	enum: int
-	{
-		INVALID,
-		SKIPPED,
-		LADDER,
-		DOOR,
-		MOVER_UNIDIRECTION,
-		MOVER_BIDIRECTION,
-		OTHER
-	};
+enum: int
+{
+	INVALID,
+	SKIPPED,
+	LADDER,
+	DOOR,
+	MOVER_UNIDIRECTION,
+	MOVER_BIDIRECTION,
+	OTHER
+};
 };
 
 // functions

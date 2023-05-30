@@ -205,28 +205,28 @@ bool intersectionObbVsTriangle(const OBBExt* be, const float* triPoints)
 
 	// edges
 	for (int i = 0; i < 3; ++i) {
-		vcross(cross, e + i * 3, be->getDir());
+		vcross(cross, e + i * 3, be->getDir(0));
 		calcProjection(be->getVerts(), 8, cross, minMaxObb);
 		calcProjection(triPoints, 3, cross, minMaxTri);
 		if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
-		vcross(cross, e + i * 3, be->getDir() + 3);
+		vcross(cross, e + i * 3, be->getDir(1));
 		calcProjection(be->getVerts(), 8, cross, minMaxObb);
 		calcProjection(triPoints, 3, cross, minMaxTri);
 		if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
-		vcross(cross, e + i * 3, be->getDir() + 6);
+		vcross(cross, e + i * 3, be->getDir(2));
 		calcProjection(be->getVerts(), 8, cross, minMaxObb);
 		calcProjection(triPoints, 3, cross, minMaxTri);
 		if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
 	}
 	// obb faces
-	calcProjection(be->getVerts(), 8, be->getDir(), minMaxObb);
-	calcProjection(triPoints, 3, be->getDir(), minMaxTri);
+	calcProjection(be->getVerts(), 8, be->getDir(0), minMaxObb);
+	calcProjection(triPoints, 3, be->getDir(0), minMaxTri);
 	if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
-	calcProjection(be->getVerts(), 8, be->getDir() + 3, minMaxObb);
-	calcProjection(triPoints, 3, be->getDir() + 3, minMaxTri);
+	calcProjection(be->getVerts(), 8, be->getDir(1), minMaxObb);
+	calcProjection(triPoints, 3, be->getDir(1), minMaxTri);
 	if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
-	calcProjection(be->getVerts(), 8, be->getDir() + 6, minMaxObb);
-	calcProjection(triPoints, 3, be->getDir() + 6, minMaxTri);
+	calcProjection(be->getVerts(), 8, be->getDir(2), minMaxObb);
+	calcProjection(triPoints, 3, be->getDir(2), minMaxTri);
 	if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
 	// tri
 	vcross(cross, e + 0, e + 3);
@@ -663,6 +663,20 @@ void calcCenterAndHalfExtents(const float* verts, const int vertsSize, float* ce
 	vadd(center, min, max);
 	vmul(center, 0.5f);
 	vmul(halfExtents, 0.5f);
+}
+
+void calcAabb(const float* verts, const int vertsSize, float* min, float* max)
+{
+	min[0] = min[1] = min[2] = FLT_MAX;
+	max[0] = max[1] = max[2] = -FLT_MAX;
+
+	const float* p = verts;
+	const float* pe = verts + vertsSize * 3;
+	for (; p < pe; p += 3)
+	{
+		vmin(min, p);
+		vmax(max, p);
+	}
 }
 
 } // namespace geometry

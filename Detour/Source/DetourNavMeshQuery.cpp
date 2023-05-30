@@ -101,7 +101,38 @@ inline float dtQueryFilter::getCost(const float* pa, const float* pb,
 #endif	
 	
 static const float H_SCALE = 0.999f; // Search heuristic scale.
+#ifdef ZENGINE_NAVMESH
+static const float CLIMB_SCALE = 2.f;
+static const float JUMP_SCALE = 2.f;
 
+float dtQueryFilter::calcJumpClimbCost(const float* from, const float* to, const float* pathStart, float scale)
+{
+	static const float C = 10.f;
+	static const float THRESHOLD_DST = 500.f;
+	const float dstFromStart = geometry::vdist(pathStart, from);
+	// increasing cost for jump/climb at the beginning of a path
+	const float jumpClimbK = dstFromStart > THRESHOLD_DST ? 1.f : (C - std::log2(dstFromStart));
+	const float dst = geometry::vdist(from, to);
+	return dst * scale * jumpClimbK;
+}
+
+float dtQueryFilter::calcNonWalkCoeff(const uint16_t transferType)
+{
+	if (
+		transferType == NavmeshPolyTransferFlags::JUMP_DOWN ||
+		transferType == NavmeshPolyTransferFlags::JUMP_FORWARD
+	) {
+		return JUMP_SCALE;
+	}
+	else if (
+		transferType == NavmeshPolyTransferFlags::CLIMB ||
+		transferType == NavmeshPolyTransferFlags::CLIMB_OVERLAPPED_POLYS
+	) {
+		return CLIMB_SCALE;
+	}
+	return 1.f;
+}
+#endif // ZENGINE_NAVMESH
 
 dtNavMeshQuery* dtAllocNavMeshQuery()
 {
@@ -625,7 +656,11 @@ dtStatus dtNavMeshQuery::getPolyHeight(dtPolyRef ref, const float* pos, float* h
 
 class dtFindNearestPolyQuery : public dtPolyQuery
 {
+#ifdef ZENGINE_NAVMESH
+	const dtNavMesh* m_nav;
+#else
 	const dtNavMeshQuery* m_query;
+#endif // ZENGINE_NAVMESH
 	const float* m_center;
 	float m_nearestDistanceSqr;
 	dtPolyRef m_nearestRef;
@@ -633,10 +668,15 @@ class dtFindNearestPolyQuery : public dtPolyQuery
 	bool m_overPoly;
 
 public:
+#ifdef ZENGINE_NAVMESH
+	dtFindNearestPolyQuery(const dtNavMesh* nav, const float* center)
+		: m_nav(nav), m_center(center), m_nearestDistanceSqr(FLT_MAX), m_nearestRef(0), m_nearestPoint(), m_overPoly(false)
+	{}
+#else
 	dtFindNearestPolyQuery(const dtNavMeshQuery* query, const float* center)
 		: m_query(query), m_center(center), m_nearestDistanceSqr(FLT_MAX), m_nearestRef(0), m_nearestPoint(), m_overPoly(false)
-	{
-	}
+	{}
+#endif // ZENGINE_NAVMESH
 
 	dtPolyRef nearestRef() const { return m_nearestRef; }
 	const float* nearestPoint() const { return m_nearestPoint; }
@@ -653,8 +693,11 @@ public:
 			float diff[3];
 			bool posOverPoly = false;
 			float d;
+#ifdef ZENGINE_NAVMESH
+			m_nav->closestPointOnPoly(ref, m_center, closestPtPoly, &posOverPoly);
+#else
 			m_query->closestPointOnPoly(ref, m_center, closestPtPoly, &posOverPoly);
-
+#endif // ZENGINE_NAVMESH
 			// If a point is directly over a polygon and closer than
 			// climb height, favor that instead of straight line nearest point.
 			dtVsub(diff, m_center, closestPtPoly);
@@ -706,7 +749,11 @@ dtStatus dtNavMeshQuery::findNearestPoly(const float* center, const float* halfE
 
 	// queryPolygons below will check rest of params
 	
+#ifdef ZENGINE_NAVMESH
+	dtFindNearestPolyQuery query(m_nav, center);
+#else
 	dtFindNearestPolyQuery query(this, center);
+#endif // ZENGINE_NAVMESH
 
 	dtStatus status = queryPolygons(center, halfExtents, filter, &query);
 	if (dtStatusFailed(status))
@@ -1195,13 +1242,163 @@ dtStatus dtNavMeshQuery::getPathToNode(dtNode* endNode, dtPolyRef* path, int* pa
 
 #ifdef ZENGINE_NAVMESH
 
+dtJmpNavMeshQuery::~dtJmpNavMeshQuery()
+{
+	clear();
+}
+
+dtJmpNavMeshQuery::FinalizationPathData::~FinalizationPathData()
+{
+	clear();
+}
+
+bool dtJmpNavMeshQuery::FinalizationPathData::init(const uint32_t nodesSize)
+{
+	polyPathSize = std::max<uint32_t>(nodesSize / MAX_NODES_DECREASE_COEFF, MIN_RAW_PATH_SIZE);
+	polyPath = (PolyToPolyTransfer*)std::malloc(sizeof(PolyToPolyTransfer) * polyPathSize);
+	if (!polyPath) {
+		clear();
+		return false;
+	}
+	rawPolyPathSize = polyPathSize + 2;
+	rawPolyPath = (dtPolyRef*)std::malloc(sizeof(dtPolyRef) * rawPolyPathSize);
+	if (!rawPolyPath) {
+		clear();
+		return false;
+	}
+	
+	straightPathSize = rawPolyPathSize + 1;
+	straightPath = (float*)std::malloc(sizeof(float) * 3 * straightPathSize);
+	if (!straightPath) {
+		clear();
+		return false;
+	}
+	straightPathFlags = (uint8_t*)std::malloc(sizeof(uint8_t) * straightPathSize);
+	if (!straightPathFlags) {
+		clear();
+		return false;
+	}
+	straightPathRefs = (dtPolyRef*)std::malloc(sizeof(dtPolyRef) * straightPathSize);
+	if (!straightPathRefs) {
+		clear();
+		return false;
+	}
+
+	return true;
+}
+
+void dtJmpNavMeshQuery::FinalizationPathData::clear()
+{
+	std::free(polyPath);
+	std::free(rawPolyPath);
+	polyPath = nullptr;
+	rawPolyPath = nullptr;
+	polyPathSize = 0;
+	rawPolyPathSize = 0;
+	std::free(straightPath);
+	std::free(straightPathFlags);
+	std::free(straightPathRefs);
+	straightPath = nullptr;
+	straightPathFlags = nullptr;
+	straightPathRefs = nullptr;
+	straightPathSize = 0;
+}
+
 bool dtJmpNavMeshQuery::init(
+	const dtNavMesh* nav,
+	const mesh::Grid2dBvh* space,
 	const uint32_t agentCharsSize,
 	const AgentCharacteristics* agentChars,
-	const JmpCollider* collider,
-	const StdJmpTransferCache* transfersCashe
+	const uint32_t tilesMaxSize,
+	const uint32_t polysMaxSize,
+	const uint32_t casheBlocksSize,
+	const uint32_t maxNodes,
+	const float polyPickWidth,
+	const float polyPickHeight
 ) {
-	return false;
+	if (maxNodes < MINIMUM_MAX_NODES_SIZE)
+		return false;
+
+	m_nav = nav;
+	m_cntFindPathWithJumpsCalls = 0;
+	m_agentChars = (AgentCharacteristics*)std::malloc(sizeof(AgentCharacteristics) * agentCharsSize);
+	if (!m_agentChars) {
+		clear();
+		return false;
+	}
+	std::memcpy(m_agentChars, agentChars, sizeof(AgentCharacteristics) * agentCharsSize);
+	m_agentCharsSize = agentCharsSize;
+	if (!m_collider.init(space)) {
+		clear();
+		return false;
+	}
+	if (!m_transfersCashe.init(
+		nav, tilesMaxSize, polysMaxSize, casheBlocksSize, &dtJmpNavMeshQuery::availableJmpTransfer
+	)) {
+		clear();
+		return false;
+	}
+	m_nodePool = new (std::malloc(sizeof(dtNodePoolJmp))) dtNodePoolJmp();
+	if (!m_nodePool) {
+		clear();
+		return false;
+	}
+	if (!m_nodePool->init(maxNodes, dtNextPow2(maxNodes / MAX_NODES_DECREASE_COEFF))) {
+		clear();
+		return false;
+	}
+	m_openList = new (std::malloc(sizeof(dtNodeQueueJmp))) dtNodeQueueJmp();
+	if (!m_openList) {
+		clear();
+		return false;
+	}
+	if (!m_openList->init(maxNodes)) {
+		clear();
+		return false;
+	}
+	if (!m_finPathData.init(maxNodes)) {
+		clear();
+		return false;
+	}
+	m_polyPickExt[0] = m_polyPickExt[2] = polyPickWidth;
+	m_polyPickExt[1] = polyPickHeight;
+
+	return true;
+}
+
+bool dtJmpNavMeshQuery::clearState(const dtNavMesh* nav)
+{
+	m_nav = nav;
+	m_cntFindPathWithJumpsCalls = 0;
+	// no state
+	//m_collider.clearSate();
+	if (!m_transfersCashe.clearState(nav))
+		return false;
+	// every findPathWithJumps call
+	//m_nodePool->clearState();
+	//m_openList->clearState();
+	m_calcedPath.reset();
+	return true;
+}
+
+void dtJmpNavMeshQuery::clear()
+{
+	m_nav = nullptr;
+	m_cntFindPathWithJumpsCalls = 0;
+	m_calcedPath.reset();
+	std::free(m_agentChars);
+	m_agentChars = nullptr;
+	m_agentCharsSize = 0;
+	m_collider.clear();
+	m_transfersCashe.clear();
+	m_nodePool->clear();
+	std::free(m_nodePool);
+	m_nodePool = nullptr;
+	m_openList->clear();
+	std::free(m_openList);
+	m_openList = nullptr;
+	m_finPathData.clear();
+	std::memset(m_polyPickExt, 0, sizeof(m_polyPickExt));
 }
 
 void dtJmpNavMeshQuery::queryPolygonsInTile(
@@ -1212,105 +1409,55 @@ void dtJmpNavMeshQuery::queryPolygonsInTile(
 	dtPolyQuery* query
 ) const
 {
-	dtAssert(m_nav);
-	static const int batchSize = 32;
-	dtPolyRef polyRefs[batchSize];
-	dtPoly* polys[batchSize];
+	assert(m_nav);
+	assert(tile->bvTree);
+
+	static const int BATCH_SIZE = 32;
+	dtPolyRef polyRefs[BATCH_SIZE];
+	dtPoly* polys[BATCH_SIZE];
 	int n = 0;
 
-	if (tile->bvTree)
+	const dtBVNode* node = &tile->bvTree[0];
+	const dtBVNode* end = &tile->bvTree[tile->header->bvNodeCount];
+	const float* tbmin = tile->header->bmin;
+	const float* tbmax = tile->header->bmax;
+	const float qfac = tile->header->bvQuantFactor;
+
+	// Calculate quantized box
+	unsigned short bmin[3], bmax[3];
+	// dtClamp query box to world box.
+	float minx = dtClamp(qmin[0], tbmin[0], tbmax[0]) - tbmin[0];
+	float miny = dtClamp(qmin[1], tbmin[1], tbmax[1]) - tbmin[1];
+	float minz = dtClamp(qmin[2], tbmin[2], tbmax[2]) - tbmin[2];
+	float maxx = dtClamp(qmax[0], tbmin[0], tbmax[0]) - tbmin[0];
+	float maxy = dtClamp(qmax[1], tbmin[1], tbmax[1]) - tbmin[1];
+	float maxz = dtClamp(qmax[2], tbmin[2], tbmax[2]) - tbmin[2];
+	// Quantize
+	bmin[0] = (unsigned short)(qfac * minx) & 0xfffe;
+	bmin[1] = (unsigned short)(qfac * miny) & 0xfffe;
+	bmin[2] = (unsigned short)(qfac * minz) & 0xfffe;
+	bmax[0] = (unsigned short)(qfac * maxx + 1) | 1;
+	bmax[1] = (unsigned short)(qfac * maxy + 1) | 1;
+	bmax[2] = (unsigned short)(qfac * maxz + 1) | 1;
+
+	// Traverse tree
+	const dtPolyRef base = m_nav->getPolyRefBase(tile);
+	while (node < end)
 	{
-		const dtBVNode* node = &tile->bvTree[0];
-		const dtBVNode* end = &tile->bvTree[tile->header->bvNodeCount];
-		const float* tbmin = tile->header->bmin;
-		const float* tbmax = tile->header->bmax;
-		const float qfac = tile->header->bvQuantFactor;
+		const bool overlap = dtOverlapQuantBounds(bmin, bmax, node->bmin, node->bmax);
+		const bool isLeafNode = node->i >= 0;
 
-		// Calculate quantized box
-		unsigned short bmin[3], bmax[3];
-		// dtClamp query box to world box.
-		float minx = dtClamp(qmin[0], tbmin[0], tbmax[0]) - tbmin[0];
-		float miny = dtClamp(qmin[1], tbmin[1], tbmax[1]) - tbmin[1];
-		float minz = dtClamp(qmin[2], tbmin[2], tbmax[2]) - tbmin[2];
-		float maxx = dtClamp(qmax[0], tbmin[0], tbmax[0]) - tbmin[0];
-		float maxy = dtClamp(qmax[1], tbmin[1], tbmax[1]) - tbmin[1];
-		float maxz = dtClamp(qmax[2], tbmin[2], tbmax[2]) - tbmin[2];
-		// Quantize
-		bmin[0] = (unsigned short)(qfac * minx) & 0xfffe;
-		bmin[1] = (unsigned short)(qfac * miny) & 0xfffe;
-		bmin[2] = (unsigned short)(qfac * minz) & 0xfffe;
-		bmax[0] = (unsigned short)(qfac * maxx + 1) | 1;
-		bmax[1] = (unsigned short)(qfac * maxy + 1) | 1;
-		bmax[2] = (unsigned short)(qfac * maxz + 1) | 1;
-
-		// Traverse tree
-		const dtPolyRef base = m_nav->getPolyRefBase(tile);
-		while (node < end)
+		if (isLeafNode && overlap)
 		{
-			const bool overlap = dtOverlapQuantBounds(bmin, bmax, node->bmin, node->bmax);
-			const bool isLeafNode = node->i >= 0;
-
-			if (isLeafNode && overlap)
-			{
-				dtPolyRef ref = base | (dtPolyRef)node->i;
-				if (filter->passFilter(ref, tile, &tile->polys[node->i]))
-				{
-					polyRefs[n] = ref;
-					polys[n] = &tile->polys[node->i];
-
-					if (n == batchSize - 1)
-					{
-						query->process(tile, polys, polyRefs, batchSize);
-						n = 0;
-					}
-					else
-					{
-						n++;
-					}
-				}
-			}
-
-			if (overlap || isLeafNode)
-				node++;
-			else
-			{
-				const int escapeIndex = -node->i;
-				node += escapeIndex;
-			}
-		}
-	}
-	else
-	{
-		float bmin[3], bmax[3];
-		const dtPolyRef base = m_nav->getPolyRefBase(tile);
-		for (int i = 0; i < tile->header->polyCount; ++i)
-		{
-			dtPoly* p = &tile->polys[i];
-			// Do not return off-mesh connection polygons.
-			if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)
-				continue;
-			// Must pass filter
-			const dtPolyRef ref = base | (dtPolyRef)i;
-			if (!filter->passFilter(ref, tile, p))
-				continue;
-			// Calc polygon bounds.
-			const float* v = &tile->verts[p->verts[0] * 3];
-			dtVcopy(bmin, v);
-			dtVcopy(bmax, v);
-			for (int j = 1; j < p->vertCount; ++j)
-			{
-				v = &tile->verts[p->verts[j] * 3];
-				dtVmin(bmin, v);
-				dtVmax(bmax, v);
-			}
-			if (dtOverlapBounds(qmin, qmax, bmin, bmax))
+			dtPolyRef ref = base | (dtPolyRef)node->i;
+			if (filter->passFilter(ref, tile, &tile->polys[node->i]))
 			{
 				polyRefs[n] = ref;
-				polys[n] = p;
+				polys[n] = &tile->polys[node->i];
 
-				if (n == batchSize - 1)
+				if (n == BATCH_SIZE - 1)
 				{
-					query->process(tile, polys, polyRefs, batchSize);
+					query->process(tile, polys, polyRefs, BATCH_SIZE);
 					n = 0;
 				}
 				else
@@ -1319,6 +1466,14 @@ void dtJmpNavMeshQuery::queryPolygonsInTile(
 				}
 			}
 		}
+
+		if (overlap || isLeafNode)
+			node++;
+		else
+		{
+			const int escapeIndex = -node->i;
+			node += escapeIndex;
+		}
 	}
 
 	// Process the last polygons that didn't make a full batch.
@@ -1326,15 +1481,24 @@ void dtJmpNavMeshQuery::queryPolygonsInTile(
 		query->process(tile, polys, polyRefs, n);
 }
 
+dtStatus dtJmpNavMeshQuery::findNearestPoly(
+	const float* center, const dtQueryFilter* filter, dtPolyRef* foundRef
+) const {
+	assert(m_nav);
+	dtFindNearestPolyQuery query(m_nav, center);
+	dtStatus status = queryPolygons(center, m_polyPickExt, filter, &query);
+	if (dtStatusFailed(status))
+		return status;
+	*foundRef = query.nearestRef();
+	return DT_SUCCESS;
+}
+
 dtStatus dtJmpNavMeshQuery::queryPolygons(
 	const float* center,
 	const float* halfExtents,
 	const dtQueryFilter* filter,
 	dtPolyQuery* query
-) const
-{
-	dtAssert(m_nav);
-
+) const {
 	if (!center || !dtVisfinite(center) ||
 		!halfExtents || !dtVisfinite(halfExtents) ||
 		!filter || !query)
@@ -1345,11 +1509,28 @@ dtStatus dtJmpNavMeshQuery::queryPolygons(
 	float bmin[3], bmax[3];
 	dtVsub(bmin, center, halfExtents);
 	dtVadd(bmax, center, halfExtents);
+	return queryPolygonsAabb(bmin, bmax, filter, query);
+}
+
+dtStatus dtJmpNavMeshQuery::queryPolygonsAabb(
+	const float* aabbMin,
+	const float* aabbMax,
+	const dtQueryFilter* filter,
+	dtPolyQuery* query
+) const {
+	assert(m_nav);
+
+	if (!aabbMin || !dtVisfinite(aabbMin) ||
+		!aabbMax || !dtVisfinite(aabbMax) ||
+		!filter || !query)
+	{
+		return DT_FAILURE | DT_INVALID_PARAM;
+	}
 
 	// Find tiles the query touches.
 	int minx, miny, maxx, maxy;
-	m_nav->calcTileLoc(bmin, &minx, &miny);
-	m_nav->calcTileLoc(bmax, &maxx, &maxy);
+	m_nav->calcTileLoc(aabbMin, &minx, &miny);
+	m_nav->calcTileLoc(aabbMax, &maxx, &maxy);
 
 	static const int MAX_NEIS = 32;
 	const dtMeshTile* neis[MAX_NEIS];
@@ -1361,7 +1542,7 @@ dtStatus dtJmpNavMeshQuery::queryPolygons(
 			const int nneis = m_nav->getTilesAt(x, y, neis, MAX_NEIS);
 			for (int j = 0; j < nneis; ++j)
 			{
-				queryPolygonsInTile(neis[j], bmin, bmax, filter, query);
+				queryPolygonsInTile(neis[j], aabbMin, aabbMax, filter, query);
 			}
 		}
 	}
@@ -1372,7 +1553,7 @@ dtStatus dtJmpNavMeshQuery::queryPolygons(
 dtStatus dtJmpNavMeshQuery::findCollidedPolys(
 	const float* center, const float* halfExtents, const dtQueryFilter* filter, dtPolyQuery* query
 ) {
-	dtAssert(m_nav);
+	assert(m_nav);
 	return queryPolygons(center, halfExtents, filter, query);
 }
 
@@ -1385,7 +1566,7 @@ dtStatus dtJmpNavMeshQuery::getPortalPoints(
 	unsigned char& toType
 ) const
 {
-	dtAssert(m_nav);
+	assert(m_nav);
 
 	const dtMeshTile* fromTile = 0;
 	const dtPoly* fromPoly = 0;
@@ -1507,7 +1688,9 @@ dtStatus dtJmpNavMeshQuery::getEdgeMidPoint(
 ) const
 {
 	float left[3], right[3];
-	if (dtStatusFailed(getPortalPoints(from, fromPoly, fromTile, to, toPoly, toTile, left, right)))
+	if (dtStatusFailed(
+		getPortalPoints(from, fromPoly, fromTile, to, toPoly, toTile, left, right
+	)))
 		return DT_FAILURE | DT_INVALID_PARAM;
 	mid[0] = (left[0] + right[0]) * 0.5f;
 	mid[1] = (left[1] + right[1]) * 0.5f;
@@ -1515,269 +1698,216 @@ dtStatus dtJmpNavMeshQuery::getEdgeMidPoint(
 	return DT_SUCCESS;
 }
 
-//dtStatus dtJmpNavMeshQuery::findPath(
-//	dtPolyRef startRef,
-//	dtPolyRef endRef,
-//	const float* startPos,
-//	const float* endPos,
-//	const dtQueryFilter* filter,
-//	dtPolyRef* path,
-//	int* pathCount,
-//	const int maxPath
-//) const
-//{
-//	dtAssert(m_nav);
-//	dtAssert(m_nodePool);
-//	dtAssert(m_openList);
-//
-//	if (!pathCount)
-//		return DT_FAILURE | DT_INVALID_PARAM;
-//
-//	*pathCount = 0;
-//
-//	// Validate input
-//	if (!m_nav->isValidPolyRef(startRef) || !m_nav->isValidPolyRef(endRef) ||
-//		!startPos || !dtVisfinite(startPos) ||
-//		!endPos || !dtVisfinite(endPos) ||
-//		!filter || !path || maxPath <= 0)
-//	{
-//		return DT_FAILURE | DT_INVALID_PARAM;
-//	}
-//
-//	if (startRef == endRef)
-//	{
-//		path[0] = startRef;
-//		*pathCount = 1;
-//		return DT_SUCCESS;
-//	}
-//
-//	m_nodePool->clear();
-//	m_openList->clear();
-//
-//	dtNode* startNode = m_nodePool->getNode(startRef);
-//	dtVcopy(startNode->pos, startPos);
-//	startNode->pidx = 0;
-//	startNode->cost = 0;
-//	startNode->total = dtVdist(startPos, endPos) * H_SCALE;
-//	startNode->id = startRef;
-//	startNode->flags = DT_NODE_OPEN;
-//	m_openList->push(startNode);
-//
-//	dtNode* lastBestNode = startNode;
-//	float lastBestNodeCost = startNode->total;
-//
-//	bool outOfNodes = false;
-//
-//	while (!m_openList->empty())
-//	{
-//		// Remove node from open list and put it in closed list.
-//		dtNode* bestNode = m_openList->pop();
-//		bestNode->flags &= ~DT_NODE_OPEN;
-//		bestNode->flags |= DT_NODE_CLOSED;
-//
-//		// Reached the goal, stop searching.
-//		if (bestNode->id == endRef)
-//		{
-//			lastBestNode = bestNode;
-//			break;
-//		}
-//
-//		// Get current poly and tile.
-//		// The API input has been cheked already, skip checking internal data.
-//		const dtPolyRef bestRef = bestNode->id;
-//		const dtMeshTile* bestTile = 0;
-//		const dtPoly* bestPoly = 0;
-//		m_nav->getTileAndPolyByRefUnsafe(bestRef, &bestTile, &bestPoly);
-//
-//		// Get parent poly and tile.
-//		dtPolyRef parentRef = 0;
-//		const dtMeshTile* parentTile = 0;
-//		const dtPoly* parentPoly = 0;
-//		if (bestNode->pidx)
-//			parentRef = m_nodePool->getNodeAtIdx(bestNode->pidx)->id;
-//		if (parentRef)
-//			m_nav->getTileAndPolyByRefUnsafe(parentRef, &parentTile, &parentPoly);
-//
-//		for (unsigned int i = bestPoly->firstLink; i != DT_NULL_LINK; i = bestTile->links[i].next)
-//		{
-//			dtPolyRef neighbourRef = bestTile->links[i].ref;
-//
-//			// Skip invalid ids and do not expand back to where we came from.
-//			if (!neighbourRef || neighbourRef == parentRef)
-//				continue;
-//
-//			// Get neighbour poly and tile.
-//			// The API input has been cheked already, skip checking internal data.
-//			const dtMeshTile* neighbourTile = 0;
-//			const dtPoly* neighbourPoly = 0;
-//			m_nav->getTileAndPolyByRefUnsafe(neighbourRef, &neighbourTile, &neighbourPoly);
-//
-//			if (!filter->passFilter(neighbourRef, neighbourTile, neighbourPoly))
-//				continue;
-//
-//			// deal explicitly with crossing tile boundaries
-//			unsigned char crossSide = 0;
-//			if (bestTile->links[i].side != 0xff)
-//				crossSide = bestTile->links[i].side >> 1;
-//
-//			// get the node
-//			dtNode* neighbourNode = m_nodePool->getNode(neighbourRef, crossSide);
-//			if (!neighbourNode)
-//			{
-//				outOfNodes = true;
-//				continue;
-//			}
-//
-//			// If the node is visited the first time, calculate node position.
-//			if (neighbourNode->flags == 0)
-//			{
-//				getEdgeMidPoint(bestRef, bestPoly, bestTile,
-//					neighbourRef, neighbourPoly, neighbourTile,
-//					neighbourNode->pos);
-//			}
-//
-//			// Calculate cost and heuristic.
-//			float cost = 0;
-//			float heuristic = 0;
-//
-//			// Special case for last node.
-//			if (neighbourRef == endRef)
-//			{
-//				// Cost
-//				const float curCost = filter->getCost(bestNode->pos, neighbourNode->pos,
-//					parentRef, parentTile, parentPoly,
-//					bestRef, bestTile, bestPoly,
-//					neighbourRef, neighbourTile, neighbourPoly);
-//				const float endCost = filter->getCost(neighbourNode->pos, endPos,
-//					bestRef, bestTile, bestPoly,
-//					neighbourRef, neighbourTile, neighbourPoly,
-//					0, 0, 0);
-//
-//				cost = bestNode->cost + curCost + endCost;
-//				heuristic = 0;
-//			}
-//			else
-//			{
-//				// Cost
-//				const float curCost = filter->getCost(bestNode->pos, neighbourNode->pos,
-//					parentRef, parentTile, parentPoly,
-//					bestRef, bestTile, bestPoly,
-//					neighbourRef, neighbourTile, neighbourPoly);
-//				cost = bestNode->cost + curCost;
-//				heuristic = dtVdist(neighbourNode->pos, endPos) * H_SCALE;
-//			}
-//
-//			const float total = cost + heuristic;
-//
-//			// The node is already in open list and the new result is worse, skip.
-//			if ((neighbourNode->flags & DT_NODE_OPEN) && total >= neighbourNode->total)
-//				continue;
-//			// The node is already visited and process, and the new result is worse, skip.
-//			if ((neighbourNode->flags & DT_NODE_CLOSED) && total >= neighbourNode->total)
-//				continue;
-//
-//			// Add or update the node.
-//			neighbourNode->pidx = m_nodePool->getNodeIdx(bestNode);
-//			neighbourNode->id = neighbourRef;
-//			neighbourNode->flags = (neighbourNode->flags & ~DT_NODE_CLOSED);
-//			neighbourNode->cost = cost;
-//			neighbourNode->total = total;
-//
-//			if (neighbourNode->flags & DT_NODE_OPEN)
-//			{
-//				// Already in open, update node location.
-//				m_openList->modify(neighbourNode);
-//			}
-//			else
-//			{
-//				// Put the node in open list.
-//				neighbourNode->flags |= DT_NODE_OPEN;
-//				m_openList->push(neighbourNode);
-//			}
-//
-//			// Update nearest node to target so far.
-//			if (heuristic < lastBestNodeCost)
-//			{
-//				lastBestNodeCost = heuristic;
-//				lastBestNode = neighbourNode;
-//			}
-//		}
-//	}
-//
-//	dtStatus status = getPathToNode(lastBestNode, path, pathCount, maxPath);
-//
-//	if (lastBestNode->id != endRef)
-//		status |= DT_PARTIAL_RESULT;
-//
-//	if (outOfNodes)
-//		status |= DT_OUT_OF_NODES;
-//
-//	return status;
-//}
-//
-//dtStatus dtJmpNavMeshQuery::getPathToNode(dtNode* endNode, dtPolyRef* path, int* pathCount, int maxPath) const
-//{
-//	// Find the length of the entire path.
-//	dtNode* curNode = endNode;
-//	int length = 0;
-//	do
-//	{
-//		length++;
-//		curNode = m_nodePool->getNodeAtIdx(curNode->pidx);
-//	} while (curNode);
-//
-//	// If the path cannot be fully stored then advance to the last node we will be able to store.
-//	curNode = endNode;
-//	int writeCount;
-//	for (writeCount = length; writeCount > maxPath; writeCount--)
-//	{
-//		dtAssert(curNode);
-//
-//		curNode = m_nodePool->getNodeAtIdx(curNode->pidx);
-//	}
-//
-//	// Write path
-//	for (int i = writeCount - 1; i >= 0; i--)
-//	{
-//		dtAssert(curNode);
-//
-//		path[i] = curNode->id;
-//		curNode = m_nodePool->getNodeAtIdx(curNode->pidx);
-//	}
-//
-//	dtAssert(!curNode);
-//
-//	*pathCount = dtMin(length, maxPath);
-//
-//	if (length > maxPath)
-//		return DT_SUCCESS | DT_BUFFER_TOO_SMALL;
-//
-//	return DT_SUCCESS;
-//}
+// description see 'dtNavMeshQuery::closestPointOnPolyBoundary'
+dtStatus dtJmpNavMeshQuery::closestPointOnPolyBoundary(
+	dtPolyRef ref, const float* pos, float* closest
+) const {
+	assert(m_nav);
+
+	const dtMeshTile* tile = 0;
+	const dtPoly* poly = 0;
+	if (dtStatusFailed(m_nav->getTileAndPolyByRef(ref, &tile, &poly)))
+		return DT_FAILURE | DT_INVALID_PARAM;
+
+	if (!pos || !dtVisfinite(pos) || !closest)
+		return DT_FAILURE | DT_INVALID_PARAM;
+
+	// Collect vertices.
+	float verts[DT_VERTS_PER_POLYGON * 3];
+	float edged[DT_VERTS_PER_POLYGON];
+	float edget[DT_VERTS_PER_POLYGON];
+	int nv = 0;
+	for (int i = 0; i < (int)poly->vertCount; ++i)
+	{
+		dtVcopy(&verts[nv * 3], &tile->verts[poly->verts[i] * 3]);
+		nv++;
+	}
+
+	bool inside = dtDistancePtPolyEdgesSqr(pos, verts, nv, edged, edget);
+	if (inside)
+	{
+		// Point is inside the polygon, return the point.
+		dtVcopy(closest, pos);
+	}
+	else
+	{
+		// Point is outside the polygon, dtClamp to nearest edge.
+		float dmin = edged[0];
+		int imin = 0;
+		for (int i = 1; i < nv; ++i)
+		{
+			if (edged[i] < dmin)
+			{
+				dmin = edged[i];
+				imin = i;
+			}
+		}
+		const float* va = &verts[imin * 3];
+		const float* vb = &verts[((imin + 1) % nv) * 3];
+		dtVlerp(closest, va, vb, edget[imin]);
+	}
+
+	return DT_SUCCESS;
+}
+
+// description see 'dtNavMeshQuery::appendVertex'
+dtStatus dtJmpNavMeshQuery::appendVertex(
+	const float* pos,
+	const unsigned char flags,
+	const dtPolyRef ref,
+	float* straightPath,
+	unsigned char* straightPathFlags,
+	dtPolyRef* straightPathRefs,
+	uint32_t* straightPathCount,
+	const uint32_t maxStraightPath
+) const {
+	if ((*straightPathCount) > 0 && dtVequal(&straightPath[((*straightPathCount) - 1) * 3], pos))
+	{
+		// The vertices are equal, update flags and poly.
+		if (straightPathFlags)
+			straightPathFlags[(*straightPathCount) - 1] = flags;
+		if (straightPathRefs)
+			straightPathRefs[(*straightPathCount) - 1] = ref;
+	}
+	else
+	{
+		// Append new vertex.
+		dtVcopy(&straightPath[(*straightPathCount) * 3], pos);
+		if (straightPathFlags)
+			straightPathFlags[(*straightPathCount)] = flags;
+		if (straightPathRefs)
+			straightPathRefs[(*straightPathCount)] = ref;
+		(*straightPathCount)++;
+
+		// If there is no space to append more vertices, return.
+		if ((*straightPathCount) >= maxStraightPath)
+		{
+			return DT_SUCCESS | DT_BUFFER_TOO_SMALL;
+		}
+
+		// If reached end of path, return.
+		if (flags == DT_STRAIGHTPATH_END)
+		{
+			return DT_SUCCESS;
+		}
+	}
+	return DT_IN_PROGRESS;
+}
+
+// description see 'dtNavMeshQuery::appendPortals'
+dtStatus dtJmpNavMeshQuery::appendPortals(
+	const int startIdx,
+	const int endIdx,
+	const float* endPos,
+	const dtPolyRef* path,
+	float* straightPath,
+	unsigned char* straightPathFlags,
+	dtPolyRef* straightPathRefs,
+	uint32_t* straightPathCount,
+	const uint32_t maxStraightPath,
+	const int options
+) const {
+	const float* startPos = &straightPath[(*straightPathCount - 1) * 3];
+	// Append or update last vertex
+	dtStatus stat = 0;
+	for (int i = startIdx; i < endIdx; i++)
+	{
+		// Calculate portal
+		const dtPolyRef from = path[i];
+		const dtMeshTile* fromTile = 0;
+		const dtPoly* fromPoly = 0;
+		if (dtStatusFailed(m_nav->getTileAndPolyByRef(from, &fromTile, &fromPoly)))
+			return DT_FAILURE | DT_INVALID_PARAM;
+
+		const dtPolyRef to = path[i + 1];
+		const dtMeshTile* toTile = 0;
+		const dtPoly* toPoly = 0;
+		if (dtStatusFailed(m_nav->getTileAndPolyByRef(to, &toTile, &toPoly)))
+			return DT_FAILURE | DT_INVALID_PARAM;
+
+		float left[3], right[3];
+		if (dtStatusFailed(getPortalPoints(from, fromPoly, fromTile, to, toPoly, toTile, left, right)))
+			break;
+
+		if (options & DT_STRAIGHTPATH_AREA_CROSSINGS)
+		{
+			// Skip intersection if only area crossings are requested.
+			if (fromPoly->getArea() == toPoly->getArea())
+				continue;
+		}
+
+		// Append intersection
+		float s, t;
+		if (dtIntersectSegSeg2D(startPos, endPos, left, right, s, t))
+		{
+			float pt[3];
+			dtVlerp(pt, left, right, t);
+
+			stat = appendVertex(pt, 0, path[i + 1],
+				straightPath, straightPathFlags, straightPathRefs,
+				straightPathCount, maxStraightPath);
+			if (stat != DT_IN_PROGRESS)
+				return stat;
+		}
+	}
+	return DT_IN_PROGRESS;
+}
+
+void dtJmpNavMeshQuery::JumpTransfersCommonData::init(
+	const dtPolyRef startPolyRef_,
+	const dtMeshTile* startTile_,
+	const dtPoly* startPoly_
+) {
+	startPolyRef = startPolyRef_;
+	startTile = startTile_;
+	startPoly = startPoly_;
+	dtNavMesh::calcPolyCenter(startTile, startPoly, startPolyCenter);
+
+	const int nPolyVerts = startPoly->vertCount;
+	for (int i = 0; i < nPolyVerts; ++i) {
+		geometry::vcopy(startPolyVerts + i * 3, &startTile->verts[startPoly->verts[i] * 3]);
+		if (startPoly->isAveragePolyInited())
+		{
+			geometry::calcVerticalVertexProjectionOnPlane(
+				startPolyVerts + i * 3,
+				startPoly->norm,
+				startPoly->dist,
+				startPolyAverageVerts + i * 3
+			);
+		}
+	}
+	geometry::vcopy(startPolyVerts + nPolyVerts * 3, startPolyVerts);
+	if (startPoly->isAveragePolyInited())
+		geometry::vcopy(startPolyAverageVerts + nPolyVerts * 3, startPolyAverageVerts);
+
+	neighbours[0] = startPolyRef;
+	neighboursNum = 1;
+#ifndef NDEBUG
+	std::memset(edges, 0, sizeof(edges));
+#endif // NDEBUG
+	for (unsigned i = startPoly->firstLink; i != DT_NULL_LINK; i = startTile->links[i].next) {
+		const dtLink& link = startTile->links[i];
+		neighbours[neighboursNum++] = link.ref;
+		edges[link.edge].first = link.ref;
+		edges[link.edge].second = link.side;
+	}
+	transfersData.clear();
+}
 
 dtStatus dtJmpNavMeshQuery::findPathWithJumps(
-	const AgentCharacteristics* agentChars,
+	const uint32_t agentIdx,
 	dtPolyRef startRef,
 	dtPolyRef endRef,
 	const float* startPos,
 	const float* endPos,
-	const dtQueryFilter* filter,
-	const int entriesSize,
-	TransferEntry* foundEntries, // raw path
-	int* entriesNumber
+	uint32_t* polyPathNum
 ) {
-	dtAssert(m_nav);
-	dtAssert(m_nodePool);
-	dtAssert(m_openList);
-	dtAssert(entriesNumber);
-	dtAssert(entriesSize > 0);
-	dtAssert(foundEntries);
-	dtAssert(filter);
-	dtAssert(endPos);
-	dtAssert(startPos);
-	dtAssert(agentChars);
+	assert(endPos);
+	assert(startPos);
+	assert(polyPathNum);
+	assert(agentIdx < m_agentCharsSize);
 
-	*entriesNumber = 0;
+	*polyPathNum = 0;
 
 	// Validate input
 	if (!m_nav->isValidPolyRef(startRef) || !m_nav->isValidPolyRef(endRef) ||
@@ -1788,15 +1918,15 @@ dtStatus dtJmpNavMeshQuery::findPathWithJumps(
 
 	if (startRef == endRef)
 	{
-		auto& entry = foundEntries[0];
+		PolyToPolyTransfer& entry = m_finPathData.polyPath[0];
 		entry.transferTypeToNextPoly = NavmeshPolyTransferFlags::NO_ACTION;
-		entry.currentPolyRef = startRef;
-		*entriesNumber = 1;
+		entry.polyRefFrom = startRef;
+		*polyPathNum = 1;
 		return DT_SUCCESS;
 	}
 
-	m_nodePool->clear();
-	m_openList->clear();
+	m_nodePool->clearState();
+	m_openList->clearState();
 
 	dtNodeJmp* startNode = m_nodePool->getNode(startRef, NavmeshPolyTransferFlags::NO_ACTION, 0);
 	dtVcopy(startNode->pos, startPos);
@@ -1809,9 +1939,12 @@ dtStatus dtJmpNavMeshQuery::findPathWithJumps(
 
 	dtNodeJmp* lastBestNode = startNode;
 	float lastBestNodeCost = startNode->total;
-
 	bool outOfNodes = false;
+	JumpTransfersCommonData commonData;
+	const AgentCharacteristics* agentChars = &m_agentChars[agentIdx];
 
+	const uint64_t score = incFindPathWithJumpsCounter();
+	uint32_t lastTileIdx = -1;
 	while (!m_openList->empty())
 	{
 		// Remove node from open list and put it in closed list.
@@ -1832,6 +1965,18 @@ dtStatus dtJmpNavMeshQuery::findPathWithJumps(
 		const dtMeshTile* bestTile = 0;
 		const dtPoly* bestPoly = 0;
 		m_nav->getTileAndPolyByRefUnsafe(bestRef, &bestTile, &bestPoly);
+		const uint32_t tileIdx = m_nav->getTileIndex(bestTile);
+		if (lastTileIdx != tileIdx)
+		{
+			if (!m_transfersCashe.isTileActive(tileIdx)) {
+				m_transfersCashe.insertTile(tileIdx, score);
+			}
+			else {
+				m_transfersCashe.setTileScore(tileIdx, score);
+			}
+			lastTileIdx = tileIdx;
+		}
+		commonData.init(bestRef, bestTile, bestPoly);
 
 		// Get parent poly and tile.
 		dtPolyRef parentRef = 0;
@@ -1842,114 +1987,168 @@ dtStatus dtJmpNavMeshQuery::findPathWithJumps(
 		if (parentRef)
 			m_nav->getTileAndPolyByRefUnsafe(parentRef, &parentTile, &parentPoly);
 
-		for (unsigned int i = bestPoly->firstLink; i != DT_NULL_LINK; i = bestTile->links[i].next)
+		findPolysReachableFromCurrent(agentChars, commonData);
+		for (int i = 0; i < TotalJmpTransfers::SIZE; ++i)
 		{
-			const uint32_t transferType = NavmeshPolyTransferFlags::WALKING;
-			dtPolyRef neighbourRef = bestTile->links[i].ref;
-
-			// Skip invalid ids and do not expand back to where we came from.
-			if (!neighbourRef || neighbourRef == parentRef)
-				continue;
-
-			// Get neighbour poly and tile.
-			// The API input has been cheked already, skip checking internal data.
-			const dtMeshTile* neighbourTile = 0;
-			const dtPoly* neighbourPoly = 0;
-			m_nav->getTileAndPolyByRefUnsafe(neighbourRef, &neighbourTile, &neighbourPoly);
-
-			if (!filter->passFilter(neighbourRef, neighbourTile, neighbourPoly))
-				continue;
-
-			// deal explicitly with crossing tile boundaries
-			unsigned char crossSide = 0;
-			if (bestTile->links[i].side != 0xff)
-				crossSide = bestTile->links[i].side >> 1;
-
-			// get the node
-			dtNodeJmp* neighbourNode = m_nodePool->getNode(neighbourRef, transferType, crossSide);
-			if (!neighbourNode)
+			const StdJmpArr& trArr = *commonData.transfersData.get(i);
+			int numArr = trArr.getNum();
+			assert(trArr.MAX_SIZE >= numArr);
+			assert(
+				(i >= (int)bestPoly->vertCount || bestPoly->neis[i] == 0) ||
+				(numArr == 1 && trArr.getEntry(0)->transferType == NavmeshPolyTransferFlags::WALKING)
+			);
+			for (int j = 0; j < numArr; ++j)
 			{
-				outOfNodes = true;
-				continue;
-			}
+				const JumpingRet& trData = *trArr.getEntry(j);
+				dtPolyRef neighbourRef = trData.polyRefTo;
+				assert(trData.transferType >= NavmeshPolyTransferFlags::WALKING);
 
-			// If the node is visited the first time, calculate node position.
-			if (neighbourNode->flags == 0)
-			{
-				getEdgeMidPoint(bestRef, bestPoly, bestTile,
-					neighbourRef, neighbourPoly, neighbourTile,
-					neighbourNode->pos);
-			}
+				// Skip invalid ids and do not expand back to where we came from.
+				if (!neighbourRef || neighbourRef == parentRef)
+					continue;
 
-			// Calculate cost and heuristic.
-			float cost = 0;
-			float heuristic = 0;
+				// Get neighbour poly and tile.
+				// The API input has been cheked already, skip checking internal data.
+				const dtMeshTile* neighbourTile = 0;
+				const dtPoly* neighbourPoly = 0;
+				m_nav->getTileAndPolyByRefUnsafe(neighbourRef, &neighbourTile, &neighbourPoly);
 
-			// Special case for last node.
-			if (neighbourRef == endRef)
-			{
-				// Cost
-				const float curCost = filter->getCost(bestNode->pos, neighbourNode->pos,
-					parentRef, parentTile, parentPoly,
-					bestRef, bestTile, bestPoly,
-					neighbourRef, neighbourTile, neighbourPoly);
-				const float endCost = filter->getCost(neighbourNode->pos, endPos,
-					bestRef, bestTile, bestPoly,
-					neighbourRef, neighbourTile, neighbourPoly,
-					0, 0, 0);
+				if (!agentChars->filter.passFilter(neighbourRef, neighbourTile, neighbourPoly))
+					continue;
+				if (
+					trData.transferType == NavmeshPolyTransferFlags::WALKING &&
+					!availableWalkTransfer(bestPoly->getArea(), neighbourPoly->getArea())
+				)
+					continue;
 
-				cost = bestNode->cost + curCost + endCost;
-				heuristic = 0;
-			}
-			else
-			{
-				// Cost
-				const float curCost = filter->getCost(bestNode->pos, neighbourNode->pos,
-					parentRef, parentTile, parentPoly,
-					bestRef, bestTile, bestPoly,
-					neighbourRef, neighbourTile, neighbourPoly);
-				cost = bestNode->cost + curCost;
-				heuristic = dtVdist(neighbourNode->pos, endPos) * H_SCALE;
-			}
+				// deal explicitly with crossing tile boundaries
+				unsigned char crossSide = 0;
+				// if WALKING numArr == 1
+				if (
+					trData.transferType == NavmeshPolyTransferFlags::WALKING &&
+					commonData.edges[i].second != 0xff
+				)
+					crossSide = commonData.edges[i].second >> 1;
 
-			const float total = cost + heuristic;
+				// get the node
+				dtNodeJmp* neighbourNode = m_nodePool->getNode(neighbourRef, trData.transferType, crossSide);
+				if (!neighbourNode)
+				{
+					outOfNodes = true;
+					continue;
+				}
+				assert(neighbourNode->transferTypeFromPrevPoly != NavmeshPolyTransferFlags::NO_ACTION);
 
-			// The node is already in open list and the new result is worse, skip.
-			if ((neighbourNode->flags & DT_NODE_OPEN) && total >= neighbourNode->total)
-				continue;
-			// The node is already visited and process, and the new result is worse, skip.
-			if ((neighbourNode->flags & DT_NODE_CLOSED) && total >= neighbourNode->total)
-				continue;
+				// If the node is visited the first time, calculate node position.
+				if (trData.transferType == NavmeshPolyTransferFlags::WALKING)
+				{
+					if (neighbourNode->flags == 0)
+					{
+						getEdgeMidPoint(bestRef, bestPoly, bestTile,
+							neighbourRef, neighbourPoly, neighbourTile,
+							neighbourNode->pos);
+					}
+				}
+				else {
+					assert(trData.transferType != NavmeshPolyTransferFlags::NO_ACTION);
+					assert(neighbourNode->flags == 0);
+					geometry::vcopy(neighbourNode->pos, trData.posTo);
+					geometry::vcopy(neighbourNode->posJmpFromPrevPoly, trData.posFrom);
+				}
 
-			// Add or update the node.
-			neighbourNode->pidx = m_nodePool->getNodeIdx(bestNode);
-			neighbourNode->id = neighbourRef;
-			neighbourNode->flags = (neighbourNode->flags & ~DT_NODE_CLOSED);
-			neighbourNode->cost = cost;
-			neighbourNode->total = total;
+				// Calculate cost and heuristic.
+				float cost = 0.f;
+				float curCost = 0.f;
+				float heuristic = 0.f;
+				float nonWalkCoeff = agentChars->filter.calcNonWalkCoeff(trData.transferType);
+				// Special case for last node.
+				if (neighbourRef == endRef)
+				{
+					// Cost
+					if (trData.transferType == NavmeshPolyTransferFlags::WALKING)
+					{
+						curCost = agentChars->filter.getCost(bestNode->pos, neighbourNode->pos,
+							parentRef, parentTile, parentPoly,
+							bestRef, bestTile, bestPoly,
+							neighbourRef, neighbourTile, neighbourPoly);
+					}
+					else {
+						assert(trData.transferType > NavmeshPolyTransferFlags::WALKING);
+						curCost = agentChars->filter.calcJumpClimbCost(
+							neighbourNode->posJmpFromPrevPoly, neighbourNode->pos, startPos, nonWalkCoeff
+						);
+					}
+					const float endCost = agentChars->filter.getCost(neighbourNode->pos, endPos,
+						bestRef, bestTile, bestPoly,
+						neighbourRef, neighbourTile, neighbourPoly,
+						0, 0, 0);
 
-			if (neighbourNode->flags & DT_NODE_OPEN)
-			{
-				// Already in open, update node location.
-				m_openList->modify(neighbourNode);
-			}
-			else
-			{
-				// Put the node in open list.
-				neighbourNode->flags |= DT_NODE_OPEN;
-				m_openList->push(neighbourNode);
-			}
+					cost = bestNode->cost + curCost + endCost;
+					heuristic = 0;
+				}
+				else {
+					// Cost
+					if (trData.transferType == NavmeshPolyTransferFlags::WALKING)
+					{
+						curCost = agentChars->filter.getCost(bestNode->pos, neighbourNode->pos,
+							parentRef, parentTile, parentPoly,
+							bestRef, bestTile, bestPoly,
+							neighbourRef, neighbourTile, neighbourPoly);
+					}
+					else {
+						assert(trData.transferType > NavmeshPolyTransferFlags::WALKING);
+						curCost = agentChars->filter.getCost(bestNode->pos, neighbourNode->posJmpFromPrevPoly,
+							parentRef, parentTile, parentPoly,
+							bestRef, bestTile, bestPoly,
+							neighbourRef, neighbourTile, neighbourPoly
+						);
+						const float nonWalkCost = agentChars->filter.calcJumpClimbCost(
+							neighbourNode->posJmpFromPrevPoly, neighbourNode->pos, startPos, nonWalkCoeff
+						);
+						curCost += nonWalkCost;
+					}
+					cost = bestNode->cost + curCost;
+					heuristic = dtVdist(neighbourNode->pos, endPos) * H_SCALE;
+				}
+				const float total = cost + heuristic;
 
-			// Update nearest node to target so far.
-			if (heuristic < lastBestNodeCost)
-			{
-				lastBestNodeCost = heuristic;
-				lastBestNode = neighbourNode;
+				// The node is already in open list and the new result is worse, skip.
+				if ((neighbourNode->flags & DT_NODE_OPEN) && total >= neighbourNode->total)
+					continue;
+				// The node is already visited and process, and the new result is worse, skip.
+				if ((neighbourNode->flags & DT_NODE_CLOSED) && total >= neighbourNode->total)
+					continue;
+
+				// Add or update the node.
+				neighbourNode->pidx = m_nodePool->getNodeIdx(bestNode);
+				//neighbourNode->id = neighbourRef; // set in 'm_nodePool->getNode'
+				neighbourNode->flags = (neighbourNode->flags & ~DT_NODE_CLOSED);
+				neighbourNode->cost = cost;
+				neighbourNode->total = total;
+
+				if (neighbourNode->flags & DT_NODE_OPEN)
+				{
+					// Already in open, update node location.
+					m_openList->modify(neighbourNode); // TODO measure asymptotic of 'modify'
+				}
+				else
+				{
+					// Put the node in open list.
+					neighbourNode->flags |= DT_NODE_OPEN;
+					m_openList->push(neighbourNode);
+				}
+
+				// Update nearest node to target so far.
+				if (heuristic < lastBestNodeCost)
+				{
+					lastBestNodeCost = heuristic;
+					lastBestNode = neighbourNode;
+				}
 			}
 		}
 	}
 
-	dtStatus status = getPathToNodeWithJumps(endPos, lastBestNode, entriesSize, foundEntries, entriesNumber);
+	dtStatus status = getPathToNodeWithJumps(endPos, lastBestNode, polyPathNum);
 	if (lastBestNode->id != endRef)
 		status |= DT_PARTIAL_RESULT;
 
@@ -1962,74 +2161,842 @@ dtStatus dtJmpNavMeshQuery::findPathWithJumps(
 dtStatus dtJmpNavMeshQuery::getPathToNodeWithJumps(
 	const float* endPos,
 	const dtNodeJmp* endNode,
-	const int entriesSize,
-	TransferEntry* foundEntries,
-	int* entriesNum
+	uint32_t* polyPathNum
 ) {
-	// Find the length of the entire path.
+	// Find the length of the entire path
 	const dtNodeJmp* curNode = endNode;
-	int length = 0;
+	uint32_t length = 0;
 	do
 	{
-		length++;
+		if (curNode->transferTypeFromPrevPoly > NavmeshPolyTransferFlags::WALKING) {
+			length += 2;
+		}
+		else {
+			++length;
+		}
 		curNode = m_nodePool->getNodeAtIdx(curNode->pidx);
 	} while (curNode);
 	assert(length > 1);
 
-	// If the path cannot be fully stored then advance to the last node we will be able to store.
+	// If the path cannot be fully stored then advance to the last node we will be able to store
 	curNode = endNode;
-	int writeCount;
-	for (writeCount = length; writeCount > entriesSize; writeCount--)
+	const dtNodeJmp* nextAfterCurNode{};
+	uint32_t writeCount = length;
+	while (writeCount > m_finPathData.polyPathSize)
 	{
 		assert(curNode);
+		if (nextAfterCurNode && nextAfterCurNode->transferTypeFromPrevPoly > NavmeshPolyTransferFlags::WALKING) {
+			writeCount -= 2;
+		}
+		else {
+			--writeCount;
+		}
+		nextAfterCurNode = curNode;
 		curNode = m_nodePool->getNodeAtIdx(curNode->pidx);
 	}
 
 	// Write last entry
-	const int lastIdx = writeCount - 1;
-	foundEntries[lastIdx].transferTypeToNextPoly = NavmeshPolyTransferFlags::NO_ACTION;
-	foundEntries[lastIdx].currentPolyRef = curNode->id;
-	geometry::vcopy(foundEntries[lastIdx].posJmpFrom, curNode->pos);
-	geometry::vcopy(foundEntries[lastIdx].posJmpTo, curNode->pos);
-	// Write path: pass nodes in reverse order
-	const dtNodeJmp* tmpNode = {};
-	for (int i = writeCount - 2; i >= 0; i--)
+	const uint32_t lastIdx = writeCount - 1;
+	PolyToPolyTransfer& entry = m_finPathData.polyPath[lastIdx];
+	entry.transferTypeToNextPoly = NavmeshPolyTransferFlags::WALKING;
+	entry.polyRefFrom = curNode->id;
+	geometry::vcopy(entry.posFrom, curNode->pos);
+	if (!nextAfterCurNode)
 	{
-		tmpNode = curNode;
+		geometry::vcopy(entry.posTo, endPos);
+	}
+	else {
+		if (nextAfterCurNode->transferTypeFromPrevPoly > NavmeshPolyTransferFlags::WALKING) {
+			geometry::vcopy(entry.posTo, nextAfterCurNode->posJmpFromPrevPoly);
+		}
+		else {
+			geometry::vcopy(entry.posTo, nextAfterCurNode->pos);
+		}
+	}
+
+	// Write path: pass nodes in reverse order
+	int i;
+	for (i = lastIdx - 1; i >= 0; --i)
+	{
+		nextAfterCurNode = curNode;
 		curNode = m_nodePool->getNodeAtIdx(curNode->pidx);
 		assert(curNode);
 
-		TransferEntry& entry = foundEntries[i];
-		entry.transferTypeToNextPoly = tmpNode->transferTypeFromPrevPoly;
-		entry.currentPolyRef = curNode->id;
-		if (entry.transferTypeToNextPoly > NavmeshPolyTransferFlags::WALKING)
+		if (nextAfterCurNode->transferTypeFromPrevPoly > NavmeshPolyTransferFlags::WALKING)
 		{
-			geometry::vcopy(entry.posJmpFrom, tmpNode->posJmpFromPrevPoly);
-			geometry::vcopy(entry.posJmpTo, tmpNode->pos);
+			PolyToPolyTransfer& jmpEntry = m_finPathData.polyPath[i];
+			jmpEntry.transferTypeToNextPoly = nextAfterCurNode->transferTypeFromPrevPoly;
+			jmpEntry.polyRefFrom = curNode->id;
+			geometry::vcopy(jmpEntry.posFrom, nextAfterCurNode->posJmpFromPrevPoly);
+			geometry::vcopy(jmpEntry.posTo, nextAfterCurNode->pos);
+			assert(i > 0);
+			--i;
+			PolyToPolyTransfer& entry = m_finPathData.polyPath[i];
+			entry.transferTypeToNextPoly = NavmeshPolyTransferFlags::WALKING;
+			entry.polyRefFrom = curNode->id;
+			geometry::vcopy(entry.posFrom, curNode->pos);
+			geometry::vcopy(entry.posTo, nextAfterCurNode->posJmpFromPrevPoly);
+		}
+		else {
+			PolyToPolyTransfer& entry = m_finPathData.polyPath[i];
+			entry.transferTypeToNextPoly = NavmeshPolyTransferFlags::WALKING;
+			entry.polyRefFrom = curNode->id;
+			geometry::vcopy(entry.posFrom, curNode->pos);
+			geometry::vcopy(entry.posTo, nextAfterCurNode->pos);
 		}
 	}
-	assert(!curNode);
+	assert(curNode && curNode->transferTypeFromPrevPoly == NavmeshPolyTransferFlags::NO_ACTION);
+	assert(i == -1);
 
-	*entriesNum = dtMin(length, entriesSize);
-	if (length + 1 <= entriesSize) {
-		const int idx = *entriesNum;
-		foundEntries[lastIdx].transferTypeToNextPoly = NavmeshPolyTransferFlags::WALKING;
-		foundEntries[idx].transferTypeToNextPoly = NavmeshPolyTransferFlags::NO_ACTION;
-		foundEntries[idx].currentPolyRef = foundEntries[lastIdx].currentPolyRef;
-		geometry::vcopy(foundEntries[idx].posJmpFrom, endPos);
-		geometry::vcopy(foundEntries[idx].posJmpTo, endPos);
-		++(*entriesNum);
-	}
-	else if (length > entriesSize) {
+	*polyPathNum = writeCount;
+	if (length > m_finPathData.polyPathSize) {
 		return DT_SUCCESS | DT_BUFFER_TOO_SMALL;
 	}
 
 	return DT_SUCCESS;
 }
 
-dtStatus dtJmpNavMeshQuery::calcPathWithJumps(const float* startPos, const float* endPos)
+void dtJmpNavMeshQuery::findPolysReachableFromCurrent(
+	const AgentCharacteristics* agentChars,
+	JumpTransfersCommonData& commonData
+) {
+	const dtPoly* startPoly = commonData.startPoly;
+
+	if (startPoly->canJumpFromPoly() && !agentChars->jumpingClimbingDisabled)
+	{
+		unsigned int salt, it, ip;
+		m_nav->decodePolyId(commonData.startPolyRef, salt, it, ip);
+		const bool found = m_transfersCashe.getData(
+			commonData.startPolyRef, it, ip, agentChars, &commonData.transfersData
+		);
+		if (!found) {
+			for (int i = 0, n = startPoly->vertCount; i < n; ++i)
+			{
+				if (startPoly->neis[i])
+					continue;
+				findPolysReachableJumpingAndClimbing(i, agentChars, commonData);
+			}
+			findPolysReachableClimbingOverlapped(agentChars, commonData);
+			m_transfersCashe.insertData(it, ip, &commonData.transfersData);
+		}
+	}
+
+	// find linked polys
+	TotalJmpTransfers& transfersData = commonData.transfersData;
+	for (int i = 0, n = startPoly->vertCount; i < n; ++i)
+	{
+		StdJmpArr& jmpArr = *transfersData.get(i);
+		if (startPoly->neis[i])
+		{
+			JumpingRet& entry = *jmpArr.allocEntry();
+			entry.transferType = NavmeshPolyTransferFlags::WALKING;
+			entry.polyRefFrom = commonData.startPolyRef;
+			// 'entry.posFrom' is undefined for WALKING
+			entry.polyRefTo = commonData.edges[i].first;
+			// 'entry.posTo' is undefined at current stage
+		}
+	}
+}
+
+void dtJmpNavMeshQuery::findPolysReachableJumpingAndClimbing(
+	uint32_t edgeIdx,
+	const AgentCharacteristics* agentChars,
+	JumpTransfersCommonData& commonData
+) {
+	const float* edgeV1 = commonData.startPolyVerts + edgeIdx * 3;
+	const float* edgeV2 = edgeV1 + 3;
+	float outPerp[3];
+	StdJmpArr* transfers = commonData.transfersData.get(edgeIdx);
+
+	if (!geometry::calcDirOutOfPolyXz(edgeV1, edgeV2, commonData.startPolyCenter, outPerp))
+	{
+		// too little poly
+		return;
+	}
+	findPolysReachableJumpingForward(edgeV1, edgeV2, outPerp, agentChars, commonData, transfers);
+	findPolysReachableJumpingDown(edgeV1, edgeV2, outPerp, agentChars, commonData, transfers);
+	findPolysReachableClimbing(edgeV1, edgeV2, outPerp, agentChars, commonData, transfers);
+}
+
+void dtJmpNavMeshQuery::findPolysReachableJumpingForward(
+	const float* edgeV1,
+	const float* edgeV2,
+	const float* outPerp,
+	const AgentCharacteristics* agentChars,
+	JumpTransfersCommonData& commonData,
+	StdJmpArr* transfers
+) {
+	float dirs[3 * geometry::OBBExt::DIRS_NUM];
+	float verts[3 * geometry::OBBExt::VERTS_NUM];
+	float aabbMin[3], aabbMax[3];
+	float edgeDir[3];
+	float enhancedV1[3], enhancedV2[3];
+
+	geometry::vsub(edgeDir, edgeV1, edgeV2);
+	geometry::vnormalize(edgeDir);
+	geometry::vmad(enhancedV2, edgeV2, edgeDir, agentChars->maxJmpFwdDistance);
+	geometry::vmul(edgeDir, -1.f);
+	geometry::vmad(enhancedV1, edgeV1, edgeDir, agentChars->maxJmpFwdDistance);
+	//const float halfHeight = agentChars->maxClimbHeight * 0.5f;
+	enhancedV1[1] -= agentChars->maxJmpFwdHeight;
+	enhancedV2[1] -= agentChars->maxJmpFwdHeight;
+	geometry::calcObbDirsAndPoints(
+		enhancedV1,
+		enhancedV2,
+		outPerp,
+		agentChars->maxJmpFwdDistance,
+		agentChars->maxJmpFwdHeight * 2.f,
+		dirs,
+		geometry::OBBExt::DIRS_NUM,
+		verts,
+		geometry::OBBExt::VERTS_NUM
+	);
+	geometry::calcAabb(verts, geometry::OBBExt::VERTS_NUM, aabbMin, aabbMax);
+	dtFindCollidedPolysQuery<geometry::OBBExt::DIRS_NUM, POLY_ARR_SIZE_FOR_EXTRACTION> jmpFwdQuery(
+		this,
+		dirs,
+		geometry::OBBExt::DIRS_NUM,
+		verts,
+		geometry::OBBExt::VERTS_NUM,
+		POLY_ARR_SIZE_FOR_EXTRACTION
+	);
+	dtStatus status = queryPolygonsAabb(aabbMin, aabbMax, &agentChars->filter, &jmpFwdQuery);
+	if (dtStatusFailed(status)) {
+		return;
+	}
+
+	for (int i = 0, m = 0, n = jmpFwdQuery.getPolysNum(); i < n; ++i)
+	{
+		m += findJumpingForwardTransfers(agentChars, commonData, jmpFwdQuery.getPoly(i), transfers);
+		if (m >= MAX_TRANSFERS_PER_JMP_ACTION)
+			break;
+	}
+}
+
+void dtJmpNavMeshQuery::findPolysReachableJumpingDown(
+	const float* edgeV1,
+	const float* edgeV2,
+	const float* outPerp,
+	const AgentCharacteristics* agentChars,
+	JumpTransfersCommonData& commonData,
+	StdJmpArr* transfers
+) {
+	float dirs[3 * geometry::OBBExt::DIRS_NUM];
+	float verts[3 * geometry::OBBExt::VERTS_NUM];
+	float aabbMin[3], aabbMax[3];
+	float edgeDir[3];
+	float enhancedV1[3], enhancedV2[3];
+
+	geometry::vsub(edgeDir, edgeV1, edgeV2);
+	geometry::vnormalize(edgeDir);
+	geometry::vmad(enhancedV2, edgeV2, edgeDir, agentChars->maxJmpDownDistance);
+	geometry::vmul(edgeDir, -1.f);
+	geometry::vmad(enhancedV1, edgeV1, edgeDir, agentChars->maxJmpDownDistance);
+	enhancedV1[1] -= agentChars->maxJmpDownHeight;
+	enhancedV2[1] -= agentChars->maxJmpDownHeight;
+
+	geometry::calcObbDirsAndPoints(
+		enhancedV1,
+		enhancedV2,
+		outPerp,
+		agentChars->maxJmpDownDistance,
+		agentChars->maxJmpDownHeight,
+		dirs,
+		geometry::OBBExt::DIRS_NUM,
+		verts,
+		geometry::OBBExt::VERTS_NUM
+	);
+	geometry::calcAabb(verts, geometry::OBBExt::VERTS_NUM, aabbMin, aabbMax);
+	dtFindCollidedPolysQuery<geometry::OBBExt::DIRS_NUM, POLY_ARR_SIZE_FOR_EXTRACTION> jmpDownQuery(
+		this,
+		dirs,
+		geometry::OBBExt::DIRS_NUM,
+		verts,
+		geometry::OBBExt::VERTS_NUM,
+		POLY_ARR_SIZE_FOR_EXTRACTION
+	);
+	dtStatus status = queryPolygonsAabb(aabbMin, aabbMax, &agentChars->filter, &jmpDownQuery);
+	if (dtStatusFailed(status)) {
+		return;
+	}
+
+	for (int i = 0, m = 0, n = jmpDownQuery.getPolysNum(); i < n; ++i)
+	{
+		m += findJumpingDownTransfers(agentChars, commonData, jmpDownQuery.getPoly(i), transfers);
+		if (m >= MAX_TRANSFERS_PER_JMP_ACTION)
+			break;
+	}
+}
+
+void dtJmpNavMeshQuery::findPolysReachableClimbing(
+	const float* edgeV1,
+	const float* edgeV2,
+	const float* outPerp,
+	const AgentCharacteristics* agentChars,
+	JumpTransfersCommonData& commonData,
+	StdJmpArr* transfers
+) {
+	float dirs[3 * geometry::OBBExt::DIRS_NUM];
+	float verts[3 * geometry::OBBExt::VERTS_NUM];
+	float aabbMin[3], aabbMax[3];
+
+	geometry::calcObbDirsAndPoints(
+		edgeV1,
+		edgeV2,
+		outPerp,
+		agentChars->agentLength,
+		agentChars->maxClimbHeight,
+		dirs,
+		geometry::OBBExt::DIRS_NUM,
+		verts,
+		geometry::OBBExt::VERTS_NUM
+	);
+	geometry::calcAabb(verts, geometry::OBBExt::VERTS_NUM, aabbMin, aabbMax);
+	dtFindCollidedPolysQuery<geometry::OBBExt::DIRS_NUM, POLY_ARR_SIZE_FOR_EXTRACTION> climbQuery(
+		this,
+		dirs,
+		geometry::OBBExt::DIRS_NUM,
+		verts,
+		geometry::OBBExt::VERTS_NUM,
+		POLY_ARR_SIZE_FOR_EXTRACTION
+	);
+	dtStatus status = queryPolygonsAabb(aabbMin, aabbMax, &agentChars->filter, &climbQuery);
+	if (dtStatusFailed(status)) {
+		return;
+	}
+
+	for (int i = 0, m = 0, n = climbQuery.getPolysNum(); i < n; ++i)
+	{
+		m += findClimbingTransfers(agentChars, commonData, climbQuery.getPoly(i), transfers);
+		if (m >= MAX_TRANSFERS_PER_JMP_ACTION)
+			break;
+	}
+}
+
+void dtJmpNavMeshQuery::findPolysReachableClimbingOverlapped(
+	const AgentCharacteristics* agentChars,
+	JumpTransfersCommonData& commonData
+) {
+	static const float EPS = 1e-3;
+	static const int DIRS_NUM = MAX_PLANES_PER_BOUNDING_POLYHEDRON;
+	static const int VERTS_NUM = (DIRS_NUM - 1) * 2;
+	float dirs[3 * DIRS_NUM];
+	const int polyVertsNum = commonData.startPoly->vertCount;
+	float* lastDir = dirs + polyVertsNum * 3;
+	bool lastDirCalced = false;
+	float verts[3 * VERTS_NUM];
+	float* vertsFirstHalf = verts;
+	float* vertsSecondHalf = verts + 3 * polyVertsNum;
+	float aabbMin[3], aabbMax[3];
+	float e1[3], e2[3];
+
+	for (int i = 0, n = 3 * polyVertsNum; i < n; i += 3, vertsFirstHalf += 3, vertsSecondHalf += 3)
+	{
+		geometry::vcopy(vertsSecondHalf, commonData.startPolyAverageVerts + i);
+		vertsFirstHalf[1] += 0.f;
+		vertsSecondHalf[1] += agentChars->maxClimbHeight;
+		// at last iteration there isn't undound 'vPolyVerts' access, because it holds + first vertex
+		geometry::calcPerpToEdgeXz(
+			commonData.startPolyAverageVerts + i, commonData.startPolyAverageVerts + i + 3, dirs + i
+		);
+		if (!lastDirCalced && i < n - 6)
+		{
+			geometry::vsub(e1, commonData.startPolyAverageVerts + i, commonData.startPolyAverageVerts + i + 3);
+			geometry::vsub(e2, commonData.startPolyAverageVerts + i + 3, commonData.startPolyAverageVerts + i + 6);
+			geometry::vcross(lastDir, e1, e2);
+			if (geometry::vlen(lastDir) > EPS)
+				lastDirCalced = true;
+		}
+	}
+	if (!lastDirCalced)
+	{
+		assert(false);
+		lastDir[0] = lastDir[2] = 0.f;
+		lastDir[1] = 1.f;
+	}
+	dtFindCollidedPolysQuery<MAX_PLANES_PER_BOUNDING_POLYHEDRON, POLY_ARR_SIZE_FOR_EXTRACTION> climbQuery(
+		this,
+		dirs,
+		DIRS_NUM,
+		verts,
+		VERTS_NUM,
+		POLY_ARR_SIZE_FOR_EXTRACTION
+	);
+	dtStatus status = queryPolygonsAabb(aabbMin, aabbMax, &agentChars->filter, &climbQuery);
+	if (dtStatusFailed(status)) {
+		return;
+	}
+
+	StdJmpArr* transfers = commonData.transfersData.get(TotalJmpTransfers::CLIMB_OVERLAPPED_INDEX);
+	//int m = 0;
+	for (int i = 0, n = climbQuery.getPolysNum(); i < n; ++i)
+	{
+		findClimbingOverlappedPolysTransfers(agentChars, commonData, climbQuery.getPoly(i), transfers);
+		//if (m >= MAX_TRANSFERS_PER_JMP_ACTION)
+		//	break;
+	}
+}
+
+bool dtJmpNavMeshQuery::findJumpingForwardTransfers(
+	const AgentCharacteristics* agentChars,
+	const JumpTransfersCommonData& commonData,
+	const dtPolyRef polyRef,
+	StdJmpArr* transfers
+) const {
+	return false;
+}
+
+bool dtJmpNavMeshQuery::findJumpingDownTransfers(
+	const AgentCharacteristics* agentChars,
+	const JumpTransfersCommonData& commonData,
+	const dtPolyRef polyRef,
+	StdJmpArr* transfers
+) const {
+	return false;
+}
+
+bool dtJmpNavMeshQuery::findClimbingTransfers(
+	const AgentCharacteristics* agentChars,
+	const JumpTransfersCommonData& commonData,
+	const dtPolyRef polyRef,
+	StdJmpArr* transfers
+) const {
+	return false;
+}
+
+bool dtJmpNavMeshQuery::findClimbingOverlappedPolysTransfers(
+	const AgentCharacteristics* agentChars,
+	const JumpTransfersCommonData& commonData,
+	const dtPolyRef polyRef,
+	StdJmpArr* transfers
+) const {
+	return false;
+}
+
+uint64_t dtJmpNavMeshQuery::incFindPathWithJumpsCounter() const
 {
-	return DT_FAILURE;
+	return ++m_cntFindPathWithJumpsCalls;
+}
+
+uint64_t dtJmpNavMeshQuery::getFindPathWithJumpsCounter() const
+{
+	return m_cntFindPathWithJumpsCalls;
+}
+
+uint32_t dtJmpNavMeshQuery::getPoolNodesSize() const
+{
+	return m_nodePool->getMaxNodes();
+}
+
+uint32_t dtJmpNavMeshQuery::calcPathWithJumps(const uint32_t agentIdx, const float* startPos, const float* endPos)
+{
+	assert(m_agentCharsSize > agentIdx);
+	uint32_t polyPathNum = 0;
+	dtPolyRef startRef = 0;
+	dtPolyRef endRef = 0;
+	const AgentCharacteristics& agentChars = m_agentChars[agentIdx];
+
+	// find polys corridor
+	findNearestPoly(startPos, &agentChars.filter, &startRef);
+	if (!startRef)
+		return CALC_PATH_ERROR_FIND_START_POLY;
+	findNearestPoly(endPos, &agentChars.filter, &endRef);
+	if (!endRef)
+		return CALC_PATH_ERROR_FIND_END_POLY;
+	dtStatus status = findPathWithJumps(agentIdx, startRef, endRef, startPos, endPos, &polyPathNum);
+	if (dtStatusFailed(status))
+		return CALC_PATH_ERROR_FIND_POLY_CORRIDOR;
+
+	// 1 entry special case
+	if (polyPathNum == 1)
+	{
+		const PolyToPolyTransfer& entry = m_finPathData.polyPath[0];
+		assert(entry.transferTypeToNextPoly == NavmeshPolyTransferFlags::NO_ACTION);
+		m_calcedPath = CalcedPathEntry::makeEntry(
+			NavmeshPolyTransferFlags::WALKING,
+			startPos,
+			endPos,
+			entry.polyRefFrom
+		);
+		return CALC_PATH_OK;
+	}
+
+	// common case
+	uint32_t straightPathNum = 0;
+	uint32_t rawPolyPathNum = 0;
+	const float* curStartPos = startPos;
+	const float* curEndPos = nullptr;
+	std::shared_ptr<CalcedPathEntry> totalEndEntry;
+	m_calcedPath.reset();
+	for (uint32_t i = 0; i < polyPathNum; ++i)
+	{
+		const PolyToPolyTransfer& arrEntry = m_finPathData.polyPath[i];
+		assert(
+			arrEntry.transferTypeToNextPoly != NavmeshPolyTransferFlags::MAX_ACTION &&
+			arrEntry.transferTypeToNextPoly != NavmeshPolyTransferFlags::NO_ACTION
+		);
+		if (arrEntry.transferTypeToNextPoly == NavmeshPolyTransferFlags::WALKING)
+		{
+			m_finPathData.rawPolyPath[rawPolyPathNum] = arrEntry.polyRefFrom;
+			++rawPolyPathNum;
+			continue;
+		}
+
+		// jump/climb
+		status = findStraightPath(
+			curStartPos, arrEntry.posFrom, m_finPathData.rawPolyPath, rawPolyPathNum, 0, &straightPathNum
+		);
+		if (dtStatusFailed(status))
+			return CALC_PATH_ERROR_FIND_STRAIGHT_PATH;
+		assert(straightPathNum > 0);
+		std::shared_ptr<CalcedPathEntry> startIterEntry;
+		std::shared_ptr<CalcedPathEntry> endIterEntry;
+		std::tie(startIterEntry, endIterEntry) = pathEntriesArrToList(straightPathNum, arrEntry.posFrom);
+		auto jmpEntry = CalcedPathEntry::makeEntry(
+			arrEntry.transferTypeToNextPoly,
+			arrEntry.posFrom,
+			arrEntry.posTo,
+			arrEntry.polyRefFrom
+		);
+		endIterEntry->setNext(jmpEntry);
+		endIterEntry = jmpEntry;
+		if (!m_calcedPath) {
+			m_calcedPath = startIterEntry;
+		}
+		else {
+			totalEndEntry->setNext(startIterEntry);
+		}
+
+		// prepare to next iteration
+		totalEndEntry = endIterEntry;
+		rawPolyPathNum = 0;
+		straightPathNum = 0;
+		curStartPos = arrEntry.posTo;
+	}
+
+	status = findStraightPath(
+		curStartPos, endPos, m_finPathData.rawPolyPath, rawPolyPathNum, 0, &straightPathNum
+	);
+	if (dtStatusFailed(status))
+		return CALC_PATH_ERROR_FIND_STRAIGHT_PATH;
+	assert(straightPathNum > 0);
+	std::shared_ptr<CalcedPathEntry> startIterEntry;
+	std::shared_ptr<CalcedPathEntry> endIterEntry;
+	std::tie(startIterEntry, endIterEntry) = pathEntriesArrToList(straightPathNum, endPos);
+	if (!m_calcedPath) {
+		m_calcedPath = startIterEntry;
+	}
+	else {
+		totalEndEntry->setNext(startIterEntry);
+	}
+	
+	return CALC_PATH_OK;
+}
+
+std::pair<std::shared_ptr<CalcedPathEntry>, std::shared_ptr<CalcedPathEntry>>
+	dtJmpNavMeshQuery::pathEntriesArrToList(const uint32_t straightPathNum, const float* endPos) const
+{
+	std::shared_ptr<CalcedPathEntry> startIterEntry;
+	std::shared_ptr<CalcedPathEntry> endIterEntry;
+	for (uint32_t j = 0; j < straightPathNum; ++j)
+	{
+		const float* pos = m_finPathData.straightPath + j * 3;
+		auto newEntry = CalcedPathEntry::makeEntry(
+			NavmeshPolyTransferFlags::WALKING,
+			pos,
+			(j + 1) != straightPathNum ? pos + 3 : endPos,
+			m_finPathData.straightPathRefs[j]
+		);
+		if (!endIterEntry) {
+			endIterEntry = newEntry;
+			startIterEntry = endIterEntry;
+		}
+		else {
+			endIterEntry->setNext(newEntry);
+			endIterEntry = newEntry;
+		}
+	}
+	return std::make_pair(startIterEntry, endIterEntry);
+}
+
+// description see in 'dtNavMeshQuery::findStraightPath'
+dtStatus dtJmpNavMeshQuery::findStraightPath(
+	const float* startPos,
+	const float* endPos,
+	const dtPolyRef* polyPath,
+	const uint32_t polyPathNum,
+	const int options,
+	uint32_t* straightPathNum
+) const {
+	*straightPathNum = 0;
+	dtStatus stat = 0;
+
+	if (!startPos || !dtVisfinite(startPos) ||
+		!endPos || !dtVisfinite(endPos)
+	) {
+		return DT_FAILURE | DT_INVALID_PARAM;
+	}
+
+	// TODO replace to normal names
+	const dtPolyRef* path = polyPath;
+	uint32_t pathSize = polyPathNum;
+	float* straightPath = m_finPathData.straightPath;
+	uint8_t* straightPathFlags = m_finPathData.straightPathFlags;
+	dtPolyRef* straightPathRefs = m_finPathData.straightPathRefs;
+	uint32_t maxStraightPath = m_finPathData.straightPathSize;
+
+	// TODO: Should this be callers responsibility?
+	float closestStartPos[3];
+	if (dtStatusFailed(closestPointOnPolyBoundary(path[0], startPos, closestStartPos)))
+		return DT_FAILURE | DT_INVALID_PARAM;
+
+	float closestEndPos[3];
+	if (dtStatusFailed(closestPointOnPolyBoundary(path[pathSize - 1], endPos, closestEndPos)))
+		return DT_FAILURE | DT_INVALID_PARAM;
+
+	// Add start point.
+	stat = appendVertex(closestStartPos, DT_STRAIGHTPATH_START, path[0],
+		straightPath, straightPathFlags, straightPathRefs,
+		straightPathNum, maxStraightPath);
+	if (stat != DT_IN_PROGRESS)
+		return stat;
+
+	if (pathSize > 1)
+	{
+		float portalApex[3], portalLeft[3], portalRight[3];
+		dtVcopy(portalApex, closestStartPos);
+		dtVcopy(portalLeft, portalApex);
+		dtVcopy(portalRight, portalApex);
+		int apexIndex = 0;
+		int leftIndex = 0;
+		int rightIndex = 0;
+
+		unsigned char leftPolyType = 0;
+		unsigned char rightPolyType = 0;
+
+		dtPolyRef leftPolyRef = path[0];
+		dtPolyRef rightPolyRef = path[0];
+
+		for (uint32_t i = 0; i < pathSize; ++i)
+		{
+			float left[3], right[3];
+			unsigned char toType;
+
+			if (i + 1 < pathSize)
+			{
+				unsigned char fromType; // fromType is ignored.
+
+				// Next portal.
+				if (dtStatusFailed(getPortalPoints(path[i], path[i + 1], left, right, fromType, toType)))
+				{
+					// Failed to get portal points, in practice this means that path[i+1] is invalid polygon.
+					// Clamp the end point to path[i], and return the path so far.
+
+					if (dtStatusFailed(closestPointOnPolyBoundary(path[i], endPos, closestEndPos)))
+					{
+						// This should only happen when the first polygon is invalid.
+						return DT_FAILURE | DT_INVALID_PARAM;
+					}
+
+					// Apeend portals along the current straight path segment.
+					if (options & (DT_STRAIGHTPATH_AREA_CROSSINGS | DT_STRAIGHTPATH_ALL_CROSSINGS))
+					{
+						// Ignore status return value as we're just about to return anyway.
+						appendPortals(apexIndex, i, closestEndPos, path,
+							straightPath, straightPathFlags, straightPathRefs,
+							straightPathNum, maxStraightPath, options);
+					}
+
+					// Ignore status return value as we're just about to return anyway.
+					appendVertex(closestEndPos, 0, path[i],
+						straightPath, straightPathFlags, straightPathRefs,
+						straightPathNum, maxStraightPath);
+
+					return DT_SUCCESS | DT_PARTIAL_RESULT | ((*straightPathNum >= maxStraightPath) ? DT_BUFFER_TOO_SMALL : 0);
+				}
+
+				// If starting really close the portal, advance.
+				if (i == 0)
+				{
+					float t;
+					if (dtDistancePtSegSqr2D(portalApex, left, right, t) < dtSqr(0.001f))
+						continue;
+				}
+			}
+			else
+			{
+				// End of the path.
+				dtVcopy(left, closestEndPos);
+				dtVcopy(right, closestEndPos);
+
+				toType = DT_POLYTYPE_GROUND;
+			}
+
+			// Right vertex.
+			if (dtTriArea2D(portalApex, portalRight, right) <= 0.0f)
+			{
+				if (dtVequal(portalApex, portalRight) || dtTriArea2D(portalApex, portalLeft, right) > 0.0f)
+				{
+					dtVcopy(portalRight, right);
+					rightPolyRef = (i + 1 < pathSize) ? path[i + 1] : 0;
+					rightPolyType = toType;
+					rightIndex = i;
+				}
+				else
+				{
+					// Append portals along the current straight path segment.
+					if (options & (DT_STRAIGHTPATH_AREA_CROSSINGS | DT_STRAIGHTPATH_ALL_CROSSINGS))
+					{
+						stat = appendPortals(apexIndex, leftIndex, portalLeft, path,
+							straightPath, straightPathFlags, straightPathRefs,
+							straightPathNum, maxStraightPath, options);
+						if (stat != DT_IN_PROGRESS)
+							return stat;
+					}
+
+					dtVcopy(portalApex, portalLeft);
+					apexIndex = leftIndex;
+
+					unsigned char flags = 0;
+					if (!leftPolyRef)
+						flags = DT_STRAIGHTPATH_END;
+					else if (leftPolyType == DT_POLYTYPE_OFFMESH_CONNECTION)
+						flags = DT_STRAIGHTPATH_OFFMESH_CONNECTION;
+					dtPolyRef ref = leftPolyRef;
+
+					// Append or update vertex
+					stat = appendVertex(portalApex, flags, ref,
+						straightPath, straightPathFlags, straightPathRefs,
+						straightPathNum, maxStraightPath);
+					if (stat != DT_IN_PROGRESS)
+						return stat;
+
+					dtVcopy(portalLeft, portalApex);
+					dtVcopy(portalRight, portalApex);
+					leftIndex = apexIndex;
+					rightIndex = apexIndex;
+
+					// Restart
+					i = apexIndex;
+
+					continue;
+				}
+			}
+
+			// Left vertex.
+			if (dtTriArea2D(portalApex, portalLeft, left) >= 0.0f)
+			{
+				if (dtVequal(portalApex, portalLeft) || dtTriArea2D(portalApex, portalRight, left) < 0.0f)
+				{
+					dtVcopy(portalLeft, left);
+					leftPolyRef = (i + 1 < pathSize) ? path[i + 1] : 0;
+					leftPolyType = toType;
+					leftIndex = i;
+				}
+				else
+				{
+					// Append portals along the current straight path segment.
+					if (options & (DT_STRAIGHTPATH_AREA_CROSSINGS | DT_STRAIGHTPATH_ALL_CROSSINGS))
+					{
+						stat = appendPortals(apexIndex, rightIndex, portalRight, path,
+							straightPath, straightPathFlags, straightPathRefs,
+							straightPathNum, maxStraightPath, options);
+						if (stat != DT_IN_PROGRESS)
+							return stat;
+					}
+
+					dtVcopy(portalApex, portalRight);
+					apexIndex = rightIndex;
+
+					unsigned char flags = 0;
+					if (!rightPolyRef)
+						flags = DT_STRAIGHTPATH_END;
+					else if (rightPolyType == DT_POLYTYPE_OFFMESH_CONNECTION)
+						flags = DT_STRAIGHTPATH_OFFMESH_CONNECTION;
+					dtPolyRef ref = rightPolyRef;
+
+					// Append or update vertex
+					stat = appendVertex(portalApex, flags, ref,
+						straightPath, straightPathFlags, straightPathRefs,
+						straightPathNum, maxStraightPath);
+					if (stat != DT_IN_PROGRESS)
+						return stat;
+
+					dtVcopy(portalLeft, portalApex);
+					dtVcopy(portalRight, portalApex);
+					leftIndex = apexIndex;
+					rightIndex = apexIndex;
+
+					// Restart
+					i = apexIndex;
+
+					continue;
+				}
+			}
+		}
+
+		// Append portals along the current straight path segment.
+		if (options & (DT_STRAIGHTPATH_AREA_CROSSINGS | DT_STRAIGHTPATH_ALL_CROSSINGS))
+		{
+			stat = appendPortals(apexIndex, pathSize - 1, closestEndPos, path,
+				straightPath, straightPathFlags, straightPathRefs,
+				straightPathNum, maxStraightPath, options);
+			if (stat != DT_IN_PROGRESS)
+				return stat;
+		}
+	}
+
+	// Ignore status return value as we're just about to return anyway.
+	appendVertex(closestEndPos, DT_STRAIGHTPATH_END, 0,
+		straightPath, straightPathFlags, straightPathRefs,
+		straightPathNum, maxStraightPath);
+
+	return DT_SUCCESS | ((*straightPathNum >= maxStraightPath) ? DT_BUFFER_TOO_SMALL : 0);
+}
+
+bool dtJmpNavMeshQuery::availableWalkTransfer(const uint8_t from, const uint8_t to)
+{
+	using namespace common::SamplePolyAreas;
+	switch (from)
+	{
+		case SAMPLE_POLYAREA_WATER: {
+			assert(false);
+			return true;
+		}
+		case SAMPLE_POLYAREA_GROUND:
+		case SAMPLE_POLYAREA_ROAD:
+		case SAMPLE_POLYAREA_FOREST:
+		case SAMPLE_POLYAREA_DOOR:
+		case SAMPLE_POLYAREA_LADDER:
+		case SAMPLE_POLYAREA_WATER_WALKING: {
+			return true;
+		}
+		case SAMPLE_POLYAREA_WATER_FORDING: {
+			switch (to)
+				{
+				case SAMPLE_POLYAREA_WATER_WALKING:
+				case SAMPLE_POLYAREA_WATER_FORDING:
+				case SAMPLE_POLYAREA_WATER_SWIMMING:
+					return true;
+				default:
+					return false;
+			}
+		}
+		case SAMPLE_POLYAREA_WATER_SWIMMING: {
+			switch (to)
+			{
+				case SAMPLE_POLYAREA_WATER_FORDING:
+				case SAMPLE_POLYAREA_WATER_SWIMMING:
+					return true;
+				default:
+					return false;
+			}
+		}
+		default: {
+			assert(1 != 1);
+			return false;
+		}
+	}
 }
 
 bool dtJmpNavMeshQuery::availableJmpTransfer(const AgentCharacteristics* info, const TransferDataEntry* entry)
@@ -2042,7 +3009,7 @@ bool dtJmpNavMeshQuery::availableJmpTransfer(const AgentCharacteristics* info, c
 	}
 	else if (type == NavmeshPolyTransferFlags::JUMP_DOWN)
 	{
-		if (info->maxJumpDownHeight < entry->roundedMaxIntHeightDst)
+		if (info->maxJmpDownHeight < entry->roundedMaxIntHeightDst)
 			return false;
 	}
 	else if (type == NavmeshPolyTransferFlags::JUMP_FORWARD)
@@ -2059,7 +3026,10 @@ bool dtJmpNavMeshQuery::availableJmpTransfer(const AgentCharacteristics* info, c
 	return true;
 }
 
-std::shared_ptr<JmpPathEntry> dtJmpNavMeshQuery::getLastPath() const { return m_calcedPath; }
+const std::shared_ptr<CalcedPathEntry>& dtJmpNavMeshQuery::getLastPath() const
+{
+	return m_calcedPath;
+}
 
 #endif // ZENGINE_NAVMESH
 

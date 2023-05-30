@@ -34,13 +34,15 @@ private:
     static constexpr float POLY_PICK_Y = 40.f;
 
 	BuildContext* m_ctx;
-    bool m_initError = false;
     Sample* m_sample;
 	
 	dtNavMesh* m_navMesh;
 	dtNavMeshQuery* m_navQuery;
 	dtQueryFilter m_filter;
 	dtStatus m_pathFindStatus;
+
+	dtJmpNavMeshQuery m_jmpPathFinder;
+	bool m_jmpPathFinderInited;
 
 	enum ToolMode
 	{
@@ -108,7 +110,6 @@ public:
 
 	virtual int type() { return TOOL_NAVMESH_TESTER; }
 	virtual void init(Sample* sample);
-    void init(dtNavMesh* navMesh, dtNavMeshQuery* navQuery);
 	virtual void reset();
 	virtual void handleMenu();
 	virtual void handleClick(const float* s, const float* p, bool shift);
@@ -122,12 +123,13 @@ public:
 	void drawAgent(const float* pos, float r, float h, float c, const unsigned int col);
 
 private:
+	void renderTextPathWithJumps(double* proj, double* model, int* view) const;
+	void renderPathWithJumps() const;
+	void initJmpPathFinder();
     bool findPathWithJumps(
         dtPolyRef startRef, dtPolyRef endRef, const float* spos, const float* epos
     );
-
-private:
-    void printNavmeshPolyId(double* proj, double* model, int* view, dtPolyRef ref) const;
+    void printNavmeshPolyId(double* proj, double* model, int* view, const dtPolyRef ref) const;
 };
 
 #endif // NAVMESHTESTERTOOL_H

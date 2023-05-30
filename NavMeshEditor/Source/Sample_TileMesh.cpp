@@ -898,7 +898,7 @@ void Sample_TileMesh::calcPreliminaryJumpData(
 		}
 		// double copy of first edge for easy edge processing
 		rcVcopy(baseVerts + vertsCount * std::ptrdiff_t(3), &ctile->verts[p->verts[0] * 3]);
-		calcPolyCenter(ctile, p, polyCenter);
+		dtNavMesh::calcPolyCenter(ctile, p, polyCenter);
 
 		dtPoly::JmpAbilityInfoPoly& polyData = outData[i];
 		for (int j = 0; j < vertsCount; ++j)
@@ -940,11 +940,11 @@ bool Sample_TileMesh::checkAbilityJumpDownOrForward(
 	geometry::vmul(center, 0.5f);
 	geometry::vsub(edgeDir, v2, v1);
 	geometry::vmad(end, center, outPerp, checkBboxFwdDst);
-	geometry::OBBExt be;
+	geometry::OBBExt obb;
 	const float edgeLen = geometry::vdist(v1, v2);
-	be.Init(center, end, edgeDir, edgeLen * 0.5f, checkBboxHeight * 0.5f, shrinkCoeff);
+	obb.init(center, end, edgeDir, edgeLen * 0.5f, checkBboxHeight * 0.5f, shrinkCoeff);
 	
-	return !m_geom->obbCollDetect(&be);
+	return !m_geom->obbCollDetect(&obb);
 }
 
 bool Sample_TileMesh::checkAbilityClimb(
@@ -967,9 +967,11 @@ bool Sample_TileMesh::checkAbilityClimb(
 		// too little poly
 		return false;
 	}
-	geometry::calcObbDirsAndPoints(v1, v2, outPerp, MAX_FWD_DST_FOR_CLIMB_BBOX, maxClimbHeight, dirs, NUM_DIRS, verts, NUM_VERTS);
+	geometry::calcObbDirsAndPoints(
+		v1, v2, outPerp, MAX_FWD_DST_FOR_CLIMB_BBOX, maxClimbHeight, dirs, NUM_DIRS, verts, NUM_VERTS
+	);
 	geometry::calcCenterAndHalfExtents(verts, NUM_VERTS, center, halfExtents);
-	dtFindCollidedPolysQuery<NUM_DIRS> query(m_navQuery, dirs, NUM_DIRS, verts, NUM_VERTS);
+	dtFindCollidedPolysQuery<NUM_DIRS, 1> query(m_navQuery, dirs, NUM_DIRS, verts, NUM_VERTS, 1);
 	// TODO replace to dtJmpNavMeshQuery::findCollidedPolys
 	dtStatus status = m_navQuery->queryPolygons(center, halfExtents, filter, &query);
 	if (dtStatusFailed(status)) {
@@ -989,7 +991,7 @@ bool Sample_TileMesh::checkAbilityClimbOverlapped(
 	const class dtQueryFilter* filter
 ) {
 	static const float EPS = 1e-3;
-	static const int NUM_DIRS = DT_MAX_PLANES_PER_BOUNDING_POLYHEDRON;
+	static const int NUM_DIRS = MAX_PLANES_PER_BOUNDING_POLYHEDRON;
 	static const int NUM_VERTS = (NUM_DIRS - 1) * 2;
 	float dirs[3 * NUM_DIRS];
 	float verts[3 * NUM_VERTS];
@@ -1025,7 +1027,9 @@ bool Sample_TileMesh::checkAbilityClimbOverlapped(
 	}
 
 	geometry::calcCenterAndHalfExtents(verts, nPolyVerts * 2, center, halfExtents);
-	dtFindCollidedPolysQuery<NUM_DIRS> query(m_navQuery, dirs, nPolyVerts + 1, verts, nPolyVerts * 2);
+	dtFindCollidedPolysQuery<NUM_DIRS, 1> query(
+		m_navQuery, dirs, nPolyVerts + 1, verts, nPolyVerts * 2, 1
+	);
 	// TODO replace to dtJmpNavMeshQuery::findCollidedPolys
 	dtStatus status = m_navQuery->queryPolygons(center, halfExtents, filter, &query);
 	if (dtStatusFailed(status)) {

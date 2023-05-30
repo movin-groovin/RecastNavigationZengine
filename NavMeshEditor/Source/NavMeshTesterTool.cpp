@@ -42,6 +42,7 @@
 #include <chrono>
 #include <string>
 #include <sstream>
+#include <cstring>
 
 #ifdef WIN32
 #	define snprintf _snprintf
@@ -217,118 +218,16 @@ static bool getSteerTarget(dtNavMeshQuery* navQuery, const float* startPos, cons
 	return true;
 }
 
-static bool canTransfer(const uint8_t from, const uint8_t to)
-{
-    switch(from)
-    {
-		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER: {
-			//assert(1 != 1);
-			//return false; // technical flag of water, normaly we can't meet it at this stage
-			return true;
-		}
-		case common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND:
-		case common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD:
-		case common::SamplePolyAreas::SAMPLE_POLYAREA_FOREST:
-		case common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR:
-		case common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER:
-		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING: {
-			return true;
-		}
-		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING: {
-			switch(to)
-			{
-				case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING:
-				case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING:
-				case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING:
-					return true;
-				default:
-					return false;
-			}
-		}
-		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING: {
-			switch(to)
-			{
-				case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING:
-				case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING:
-					return true;
-				default:
-					return false;
-			}
-		}
-		default: {
-			assert(1 != 1);
-			return false;
-		}
-    }
-}
-
-static bool canTransferJumping(const int /*jumpingType*/, const uint8_t /*from*/, const uint8_t /*to*/)
-{
-	return false;
-	//  switch(jumpingType)
-  //  {
-		//case JUMP_DOWN:
-		//case JUMP_FORWARD: {
-		//	switch(from)
-		//	{
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER: {
-		//			//assert(1 != 1);
-		//			// technical flag of water, normaly we can't meet it at this stage
-		//			return false;
-		//		}
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND:
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD:
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_FOREST:
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR:
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER:
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING: {
-		//			return true;
-		//		}
-		//		default: {
-		//			return false;
-		//		}
-		//	}
-		//}
-		//case CLIMB:
-		//case CLIMB_OVERLAPPED_POLYS: {
-		//	switch(from)
-		//	{
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER: {
-		//			//assert(1 != 1);
-		//			return false; // technical flag of water, normaly we can't meet it at this stage
-		//		}
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND:
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD:
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_FOREST:
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR:
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER:
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING:
-		//		case common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING: {
-		//			return to == common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND;
-		//		}
-		//		default: {
-		//			return false;
-		//		}
-		//	}
-		//}
-		//default: {
-		//	assert(1 != 1);
-		//	return false;
-		//}
-  //  }
-}
-
 NavMeshTesterTool::NavMeshTesterTool(InputGeom *inGeom, BuildContext* ctx):
 	m_ctx(ctx),
     m_sample(0),
 	m_navMesh(0),
 	m_navQuery(0),
 	m_pathFindStatus(DT_FAILURE),
+	m_jmpPathFinderInited(false),
 	m_toolMode(TOOLMODE_PATHFIND_FOLLOW),
 	m_straightPathOptions(0),
 	m_displayRefIdsInPath(false),
-    //m_straightWithJumpsPathOptions(false),
-    //m_collDet(inGeom, m_straightWithJumpsPathOptions),
 	m_startRef(0),
 	m_endRef(0),
 	m_npolys(0),
@@ -353,13 +252,69 @@ NavMeshTesterTool::NavMeshTesterTool(InputGeom *inGeom, BuildContext* ctx):
 	
 	m_neighbourhoodRadius = 2.5f;
 	m_randomRadius = 5.0f;
-
-    //m_filter.setCanTransfer(&canTransfer);
-    //m_filter.setCanTransferJumping(&canTransferJumping);
 }
 
 NavMeshTesterTool::~NavMeshTesterTool() {
 	;
+}
+
+void NavMeshTesterTool::initJmpPathFinder()
+{
+	if (!m_sample || !m_navMesh)
+		return;
+	
+	static const uint32_t AGENTS_ARR_SIZE = 1;
+	AgentCharacteristics agentsChars[AGENTS_ARR_SIZE];
+
+	std::memset(agentsChars, 0, sizeof(agentsChars));
+	AgentCharacteristics& entry = agentsChars[0];
+	entry.canJmpFwd = true;
+	entry.canJmpDown = true;
+	entry.canClimb = true;
+	entry.agentHeight = 180.f;
+	entry.agentLength = 50.f;
+	entry.agentWidth = 50.f;
+	entry.maxJmpFwdDistance = 300.f;
+	entry.maxJmpFwdHeight = 50.f;
+	entry.stepHeight = 50.f;
+	entry.maxClimbHeight = 350.f;
+	entry.maxJmpDownDistance = 500.f;
+	entry.maxJmpDownHeight = 700.f;
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND, 1.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD, 1.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR, 1.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER, 1.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER, 5.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING, 1.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING, 3.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING, 5.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_LAVA, 100000.0f);
+	entry.filter.setIncludeFlags(
+		common::SamplePolyFlags::SAMPLE_POLYFLAGS_ALL ^
+		common::SamplePolyFlags::SAMPLE_POLYFLAGS_DISABLED
+	);
+	entry.filter.setExcludeFlags(0);
+	uint32_t tilesNum;
+	uint32_t polysNum;
+	StdJmpTransferCache::calcTilesAndPolygons(m_navMesh, tilesNum, polysNum);
+
+	static const uint32_t CASHE_BLOCKS_SIZE =
+		(10 * 1024 * 1024) / StdJmpTransferCache::POOL_BLOCK_BYTES_SIZE + 1;
+	static const uint32_t NODE_POOL_SIZE = 1024 * 16;
+	static const float POLY_PICK_WIDTH = 10.f;
+	static const float POLY_PICK_HEIGHT = 50.f;
+	m_jmpPathFinderInited = m_jmpPathFinder.init(
+		m_navMesh,
+		&m_sample->getInputGeom()->getSpace(),
+		AGENTS_ARR_SIZE,
+		agentsChars,
+		tilesNum,
+		polysNum,
+		CASHE_BLOCKS_SIZE,
+		NODE_POOL_SIZE,
+		POLY_PICK_WIDTH,
+		POLY_PICK_HEIGHT
+	);
 }
 
 void NavMeshTesterTool::init(Sample* sample)
@@ -367,6 +322,7 @@ void NavMeshTesterTool::init(Sample* sample)
     m_sample = sample;
 	m_navMesh = sample->getNavMesh();
 	m_navQuery = sample->getNavMeshQuery();
+	initJmpPathFinder();
 	recalc();
 
 	if (m_navQuery)
@@ -385,30 +341,6 @@ void NavMeshTesterTool::init(Sample* sample)
 	
 	m_neighbourhoodRadius = sample->getAgentRadius() * 20.0f;
 	m_randomRadius = sample->getAgentRadius() * 30.0f;
-}
-
-void NavMeshTesterTool::init(dtNavMesh* navMesh, dtNavMeshQuery* navQuery)
-{
-    m_sample = nullptr;
-    m_navMesh = navMesh;
-    m_navQuery = navQuery;
-
-    if (m_navQuery)
-    {
-        // Change costs.
-        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND, 1.0f);
-        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD, 1.0f);
-        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR, 1.0f);
-        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER, 1.0f);
-        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER, 5.0f);
-        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING, 1.0f);
-        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING, 3.0f);
-        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING, 5.0f);
-        m_filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_LAVA, 100000.0f);
-    }
-
-    m_neighbourhoodRadius = 1.f;
-    m_randomRadius = 1.f;
 }
 
 void NavMeshTesterTool::handleMenu()
@@ -1100,7 +1032,7 @@ void NavMeshTesterTool::recalc()
             if (!findPathWithJumps(m_startRef, m_endRef, m_spos, m_epos)) {
                 m_npolys = 0;
                 m_nstraightPath = 0;
-                m_ctx->log(RC_LOG_PROGRESS, "Error of pathfinding with jumps\n");
+                m_ctx->log(RC_LOG_PROGRESS, "Error of pathfinding with jumps");
             } else {
                 auto tp2 = std::chrono::steady_clock::now();
 				  uint32_t diffVal = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::microseconds>(tp2 - tp1).count());
@@ -1259,160 +1191,70 @@ void NavMeshTesterTool::recalc()
 bool NavMeshTesterTool::findPathWithJumps(
     dtPolyRef startRef, dtPolyRef endRef, const float* spos, const float* epos
 ) {
-    //if (m_initError) {
-    //    m_ctx->log(RC_LOG_PROGRESS, "Can't run findPathWithJumps, error of initialization");
-    //    return false;
-    //}
-    ////m_collDet.disable();
-    //m_navQuery->findPathWithJumps(
-    //    &m_collDet, startRef, endRef, spos, epos, &m_filter, JUMPING_SIZE,
-    //    m_polysJumping, &m_infoPolysJumping, &m_npolys
-    //);
-    //if (!m_npolys) {
-    //    m_ctx->log(RC_LOG_PROGRESS, "Error of pathfinding, dtNavMeshQuery::findPathWithJumps");
-    //    return false;
-    //}
-    //m_collDet.clearCallsNum();
+    if (!m_jmpPathFinderInited) {
+        m_ctx->log(RC_LOG_PROGRESS, "Can't run findPathWithJumps, error of initialization");
+        return false;
+    }
 
-    //float spos_coords[3];
-    //float epos_coords[3];
-    //int current_max_size = MAX_POLYS;
-    //int current_size = 0;
-    //m_nstraightPath = 0;
-    //m_npolys = 0;
-    //for (int i = 0, sz = m_infoPolysJumping.size(); i < sz; ++i)
-    //{
-    //    InfoPathEntry& info = m_infoPolysJumping[i];
-    //    if (MAX_POLYS - m_npolys <= 0)
-    //        break;
-    //    if (info.normal) {
-    //        auto dat = (const NormalPathEntry*)info.data;
-    //        assert(dat->actionType == NO_ACTION);
-    //        dtPolyRef firstPolyRef = 0, endPolyRef = 0;
-    //        if (i != 0) {
-    //            dtVcopy(spos_coords, m_straightPathJumping[m_nstraightPath - 1].point);
-    //            InfoPathEntry& prev_info = m_infoPolysJumping[i - 1];
-    //            auto prev_dat = ((const JumpingPathEntry*)prev_info.data + prev_info.size - 1);
-    //            firstPolyRef = prev_dat->polyRefTo;
-    //            m_polys[m_npolys] = firstPolyRef;
-    //            if (i + 1 != sz) {
-    //                auto next_dat = (const JumpingPathEntry*)m_infoPolysJumping[i + 1].data;
-    //                dtVcopy(epos_coords, next_dat->posFrom);
-    //                endPolyRef = next_dat->polyRefFrom;
-    //                m_polys[m_npolys + info.size + 1] = endPolyRef;
-    //            } else {
-    //                dtVcopy(epos_coords, epos);
-    //            }
-    //        } else {
-    //            dtVcopy(spos_coords, spos);
-    //            if (sz == 1) {
-    //                dtVcopy(epos_coords, epos);
-    //            } else {
-    //                auto next_dat = (const JumpingPathEntry*)m_infoPolysJumping[i + 1].data;
-    //                dtVcopy(epos_coords, next_dat->posFrom);
-    //                endPolyRef = next_dat->polyRefFrom;
-    //                m_polys[m_npolys + info.size] = endPolyRef;
-    //            }
-    //        }
-
-    //        std::transform(
-    //            dat,
-    //            dat + info.size,
-    //            m_polys + m_npolys + static_cast<bool>(firstPolyRef),
-    //            [] (const NormalPathEntry& ref) {return ref.polyRef;}
-    //        );
-    //        if (endPolyRef == m_polys[m_npolys + info.size])
-    //            endPolyRef = 0;
-    //        m_navQuery->findStraightPath(
-    //            spos_coords,
-    //            epos_coords,
-    //            m_polys + m_npolys,
-    //            info.size + static_cast<bool>(firstPolyRef) + static_cast<bool>(endPolyRef),
-    //            m_straightPath + m_nstraightPath * NCOORDS,
-    //            m_straightPathFlags + m_nstraightPath,
-    //            m_straightPathPolys + m_nstraightPath,
-    //            &current_size,
-    //            current_max_size,
-    //            m_straightPathOptions
-    //        );
-
-    //        for (int j = 0; j < current_size; ++j) {
-    //            m_straightPathJumping[m_nstraightPath + j].actionType = NO_ACTION;
-    //            dtVcopy(
-    //                m_straightPathJumping[m_nstraightPath + j].point,
-    //                m_straightPath + (m_nstraightPath + j) * NCOORDS
-    //            );
-    //        }
-    //        current_max_size -= current_size;
-    //        m_nstraightPath += current_size;
-    //        m_npolys += info.size + static_cast<bool>(firstPolyRef) + static_cast<bool>(endPolyRef);
-    //        if (current_max_size < 2)
-    //            break;
-    //    } else {
-    //        bool first = true;
-    //        for (int j = 0; j < info.size; ++j) {
-    //            auto dat = (const JumpingPathEntry*)info.data + j;
-    //            assert(dat->actionType != NO_ACTION);
-    //            if (!first) {
-    //                m_straightPathJumping[m_nstraightPath].actionType = dat->actionType;
-    //                dtVcopy(m_straightPathJumping[m_nstraightPath].point, dat->posFrom);
-    //                ++m_nstraightPath;
-    //                m_straightPathJumping[m_nstraightPath].actionType = NO_ACTION;
-    //                dtVcopy(m_straightPathJumping[m_nstraightPath].point, dat->posTo);
-    //                ++m_nstraightPath;
-    //                m_polys[m_npolys] = dat->polyRefFrom;
-    //                ++m_npolys;
-    //                current_max_size -= 2;
-    //            } else {
-    //                m_straightPathJumping[m_nstraightPath - 1].actionType = dat->actionType;
-    //                dtVcopy(m_straightPathJumping[m_nstraightPath - 1].point, dat->posFrom);
-    //                m_straightPathJumping[m_nstraightPath].actionType = NO_ACTION;
-    //                dtVcopy(m_straightPathJumping[m_nstraightPath].point, dat->posTo);
-    //                ++m_nstraightPath;
-    //                first = false;
-    //                current_max_size -= 1;
-    //            }
-    //            if (current_max_size < 2)
-    //                break;
-    //        }
-    //        if (i + 1 == sz) {
-    //            auto dat = (const JumpingPathEntry*)info.data + (info.size - 1);
-    //            m_straightPathJumping[m_nstraightPath].actionType = NO_ACTION;
-    //            dtVcopy(m_straightPathJumping[m_nstraightPath].point, epos);
-    //            ++m_nstraightPath;
-    //            m_polys[m_npolys] = dat->polyRefTo;
-    //            ++m_npolys;
-    //        }
-    //    }
-    //}
-    //assert(m_straightPathJumping[m_nstraightPath - 1].actionType == NO_ACTION);
+	uint32_t ret = m_jmpPathFinder.calcPathWithJumps(0, spos, epos);
+	if (ret != m_jmpPathFinder.CALC_PATH_OK)
+	{
+		m_ctx->log(RC_LOG_PROGRESS, "Can't run findPathWithJumps, error of calcPathWithJumps, code: %u", ret);
+		return false;
+	}
 
     return true;
 }
 
 static void getPolyCenter(dtNavMesh* navMesh, dtPolyRef ref, float* center)
 {
-	center[0] = 0;
-	center[1] = 0;
-	center[2] = 0;
-	
 	const dtMeshTile* tile = 0;
 	const dtPoly* poly = 0;
 	dtStatus status = navMesh->getTileAndPolyByRef(ref, &tile, &poly);
 	if (dtStatusFailed(status))
 		return;
-		
-	for (int i = 0; i < (int)poly->vertCount; ++i)
-	{
-		const float* v = &tile->verts[poly->verts[i]*3];
-		center[0] += v[0];
-		center[1] += v[1];
-		center[2] += v[2];
+
+	dtNavMesh::calcPolyCenter(tile, poly, center);
+}
+
+void NavMeshTesterTool::renderPathWithJumps() const
+{
+	static const unsigned int pathCol = duRGBA(0, 0, 0, 64);
+	static const unsigned int spathCol = duRGBA(64, 16, 0, 220);
+
+	duDebugDraw& dd = m_sample->getDebugDraw();
+	std::shared_ptr<CalcedPathEntry> pathEntry = m_jmpPathFinder.getLastPath();
+	while (pathEntry) {
+		uint32_t trType = pathEntry->getTransferType();
+		assert(trType != NavmeshPolyTransferFlags::MAX_ACTION);
+		assert(trType != NavmeshPolyTransferFlags::NO_ACTION);
+
+		duDebugDrawNavMeshPoly(&dd, *m_navMesh, pathEntry->getPolyFrom(), pathCol);
+
+		if (trType == NavmeshPolyTransferFlags::WALKING)
+		{
+			unsigned int col = spathCol;
+			const float* from = pathEntry->getPointFrom();
+			const float* to = pathEntry->getPointTo();
+
+			dd.begin(DU_DRAW_LINES, 2.0f);
+			dd.vertex(from[0], from[1] + 0.4f, from[2], col);
+			dd.vertex(to[0], to[1] + 0.4f, to[2], col);
+			dd.end();
+
+			pathEntry = pathEntry->getNext();
+			continue;
+		}
+
+		// jumping/climbing
+		const float* from = pathEntry->getPointFrom();
+		const float* to = pathEntry->getPointTo();
+		duDebugDrawArc(
+			&dd, from[0], from[1], from[2], to[0], to[1], to[2],
+			0.25f, 0.0f, 0.4f, duRGBA(0, 0, 0, 192), 2.0f);
+
+		pathEntry = pathEntry->getNext();
 	}
-	const float s = 1.0f / poly->vertCount;
-	center[0] *= s;
-	center[1] *= s;
-	center[2] *= s;
 }
 
 void NavMeshTesterTool::handleRender()
@@ -1509,6 +1351,13 @@ void NavMeshTesterTool::handleRender()
         duDebugDrawNavMeshPoly(&dd, *m_navMesh, m_startRef, startCol);
 		duDebugDrawNavMeshPoly(&dd, *m_navMesh, m_endRef, endCol);
 
+		if (m_toolMode == TOOLMODE_PATHFIND_STRAIGHT_WITH_JUMPS)
+		{
+			renderPathWithJumps();
+			duDebugDrawNavMeshPolyPrelimData(&dd, *m_navMesh, m_startRef);
+			duDebugDrawNavMeshPolyPrelimData(&dd, *m_navMesh, m_endRef);
+		}
+
         if (m_npolys)
 		{
             for (int i = 0; i < m_npolys; ++i)
@@ -1524,60 +1373,20 @@ void NavMeshTesterTool::handleRender()
             const unsigned int spathCol = duRGBA(64,16,0,220);
             const unsigned int offMeshCol = duRGBA(128,96,0,220);
 
-            if (m_toolMode == TOOLMODE_PATHFIND_STRAIGHT_WITH_JUMPS) {
-                //dd.depthMask(false);
-                //dd.begin(DU_DRAW_LINES, 2.0f);
-                //std::vector<int> jumpIndices;
-                //for (int i = 0; i < m_nstraightPath - 1; ++i)
-                //{
-                //    if (m_straightPathJumping[i].actionType != NO_ACTION) {
-                //        jumpIndices.emplace_back(i);
-                //        continue;
-                //    }
+            dd.depthMask(false);
+            dd.begin(DU_DRAW_LINES, 2.0f);
+            for (int i = 0; i < m_nstraightPath-1; ++i)
+            {
+                unsigned int col;
+                if (m_straightPathFlags[i] & DT_STRAIGHTPATH_OFFMESH_CONNECTION)
+                    col = offMeshCol;
+                else
+                    col = spathCol;
 
-                //    unsigned int col;
-                //    if (m_straightPathFlags[i] & DT_STRAIGHTPATH_OFFMESH_CONNECTION)
-                //        col = offMeshCol;
-                //    else
-                //        col = spathCol;
-                //    dd.vertex(
-                //        m_straightPathJumping[i].point[0],
-                //        m_straightPathJumping[i].point[1] + 0.4f,
-                //        m_straightPathJumping[i].point[2],
-                //        col
-                //    );
-                //    dd.vertex(
-                //        m_straightPathJumping[i + 1].point[0],
-                //        m_straightPathJumping[i + 1].point[1] + 0.4f,
-                //        m_straightPathJumping[i + 1].point[2],
-                //        col
-                //    );
-                //}
-                //dd.end();
-
-                //for (int i : jumpIndices) {
-                //    const float* v0 = m_straightPathJumping[i].point;
-                //    const float* v1 = m_straightPathJumping[i + 1].point;
-                //    auto& dd = m_sample->getDebugDraw();
-                //    duDebugDrawArc(&dd, v0[0],v0[1],v0[2], v1[0],v1[1],v1[2],
-                //                        0.25f, 0.0f, 0.4f, duRGBA(0,0,0,192), 2.0f);
-                //}
-            } else {
-                dd.depthMask(false);
-                dd.begin(DU_DRAW_LINES, 2.0f);
-                for (int i = 0; i < m_nstraightPath-1; ++i)
-                {
-                    unsigned int col;
-                    if (m_straightPathFlags[i] & DT_STRAIGHTPATH_OFFMESH_CONNECTION)
-                        col = offMeshCol;
-                    else
-                        col = spathCol;
-
-                    dd.vertex(m_straightPath[i*3], m_straightPath[i*3+1]+0.4f, m_straightPath[i*3+2], col);
-                    dd.vertex(m_straightPath[(i+1)*3], m_straightPath[(i+1)*3+1]+0.4f, m_straightPath[(i+1)*3+2], col);
-                }
-                dd.end();
+                dd.vertex(m_straightPath[i*3], m_straightPath[i*3+1]+0.4f, m_straightPath[i*3+2], col);
+                dd.vertex(m_straightPath[(i+1)*3], m_straightPath[(i+1)*3+1]+0.4f, m_straightPath[(i+1)*3+2], col);
             }
+            dd.end();
 
 			dd.begin(DU_DRAW_POINTS, 6.0f);
 			for (int i = 0; i < m_nstraightPath; ++i)
@@ -1799,7 +1608,7 @@ void NavMeshTesterTool::handleRender()
 	}
 }
 
-void NavMeshTesterTool::printNavmeshPolyId(double* proj, double* model, int* view, dtPolyRef ref) const
+void NavMeshTesterTool::printNavmeshPolyId(double* proj, double* model, int* view, const dtPolyRef ref) const
 {
     const dtMeshTile* tile = 0;
     const dtPoly* poly = 0;
@@ -1808,8 +1617,8 @@ void NavMeshTesterTool::printNavmeshPolyId(double* proj, double* model, int* vie
     }
     float center[3];
     char buf[64];
-    calcPolyCenter(tile, poly, center);
-    std::sprintf(buf, "ref_id = %llu", ref);
+	dtNavMesh::calcPolyCenter(tile, poly, center);
+    std::sprintf(buf, "id = %llu", ref);
     GLdouble x, y, z;
     if (gluProject(
         (GLdouble)center[0], (GLdouble)center[1], (GLdouble)center[2],
@@ -1838,58 +1647,73 @@ void NavMeshTesterTool::handleRenderOverlay(double* proj, double* model, int* vi
 		imguiDrawText((int)x, (int)(y-25), IMGUI_ALIGN_CENTER, "End", imguiRGBA(0,0,0,220));
 	}
 
-    // ==================================================
-    if (m_npolys && m_displayRefIdsInPath)
-    {
-        for (int i = 0; i < m_npolys; ++i) {
-            printNavmeshPolyId(proj, model, view, m_polys[i]);
-        }
-    }
-    for (int i = 0; i < m_nstraightPath - 1; ++i)
-    {
-        //if (m_straightPathJumping[i].actionType != NO_ACTION) {
-        //    const float* v0 = m_straightPathJumping[i].point;
-        //    const float* v1 = m_straightPathJumping[i + 1].point;
-        //    float center[3] = {
-        //        (v0[0] + v1[0]) * 0.5f,
-        //        (v0[1] + v1[1]) * 0.5f,
-        //        (v0[2] + v1[2]) * 0.5f
-        //    };
-        //    double x, y, z;
-        //    if (gluProject((double)center[0], (double)center[1], (double)center[2],
-        //                                model, proj, view, &x, &y, &z)
-        //    ) {
-        //        //const char* text;
-        //        std::string text;
-        //        if (m_straightPathJumping[i].actionType == JUMP_DOWN)
-        //            text = "jump down";
-        //        else if (m_straightPathJumping[i].actionType == JUMP_FORWARD)
-        //            text = "jump forward";
-        //        else if (m_straightPathJumping[i].actionType == CLIMB)
-        //            text = "climb";
-        //        else if (m_straightPathJumping[i].actionType == CLIMB_OVERLAPPED_POLYS)
-        //            text = "climb overlapped";
-        //        else
-        //            text = "unknown";
-        //        if (text != "unknown" && i != m_nstraightPath - 1) {
-        //            const float* start = m_straightPathJumping[i].point;
-        //            const float* end = m_straightPathJumping[i + 1].point;
-        //            std::ostringstream oss;
-        //            oss << ", d: " << dtVdist2D(start, end) << ", h: "
-        //                << end[1] - start[1];
-        //            text.append(oss.str());
-        //        }
-        //        imguiDrawText(
-        //            (int)x, (int)y, IMGUI_ALIGN_CENTER, text.c_str(), imguiRGBA(0,0,0,220)
-        //        );
-        //    }
-        //}
-    }
-    // ==================================================
+	if (m_toolMode == TOOLMODE_PATHFIND_STRAIGHT_WITH_JUMPS)
+	{
+		renderTextPathWithJumps(proj, model, view);
+	}
 	
 	// Tool help
 	const int h = view[3];
 	imguiDrawText(280, h-40, IMGUI_ALIGN_LEFT, "LMB+SHIFT: Set start location  LMB: Set end location", imguiRGBA(255,255,255,192));	
+}
+
+void NavMeshTesterTool::renderTextPathWithJumps(double* proj, double* model, int* view) const
+{
+	char string[512];
+	const char* text;
+	auto curEntry = m_jmpPathFinder.getLastPath();
+	while (curEntry)
+	{
+		uint32_t trType = curEntry->getTransferType();
+		if (trType != NavmeshPolyTransferFlags::MAX_ACTION)
+		{
+			printNavmeshPolyId(proj, model, view, curEntry->getPolyFrom());
+		}
+
+		if (trType > NavmeshPolyTransferFlags::WALKING && trType < NavmeshPolyTransferFlags::MAX_ACTION)
+		{
+			const float* from = curEntry->getPointFrom();
+			const float* to = curEntry->getPointTo();
+			float center[3] = {
+				(from[0] + to[0]) * 0.5f,
+				(from[1] + to[1]) * 0.5f,
+				(from[2] + to[2]) * 0.5f
+			};
+			double x, y, z;
+			auto res = gluProject((double)center[0], (double)center[1], (double)center[2],
+				model, proj, view, &x, &y, &z);
+			if (!res)
+				continue;
+
+			if (trType == NavmeshPolyTransferFlags::JUMP_DOWN) {
+				text = "jump down";
+			}
+			else if (trType == NavmeshPolyTransferFlags::JUMP_FORWARD) {
+				text = "jump forward";
+			}
+			else if (trType == NavmeshPolyTransferFlags::CLIMB) {
+				text = "climb";
+			}
+			else if (trType == NavmeshPolyTransferFlags::CLIMB_OVERLAPPED_POLYS) {
+				text = "climb overlapped";
+			}
+			else {
+				text = "unknown";
+			}
+			if (std::strcmp(text, "unknown")) {
+				std::sprintf(string, "%s, XZ d: %f, Y h: %f", text, dtVdist2D(from, to), (to[1] - from[1]));
+			}
+			else {
+				std::strcpy(string, text);
+			}
+
+			imguiDrawText(
+				(int)x, (int)y, IMGUI_ALIGN_CENTER, string, imguiRGBA(0, 0, 0, 220)
+			);
+		}
+
+		curEntry = curEntry->getNext();
+	}
 }
 
 void NavMeshTesterTool::drawAgent(const float* pos, float r, float h, float c, const unsigned int col)

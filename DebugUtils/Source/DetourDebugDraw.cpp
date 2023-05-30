@@ -288,6 +288,74 @@ static void drawAverageNavmeshPolysTile(
 	dd->depthMask(true);
 }
 
+void duDebugDrawNavMeshPolyPrelimData(struct duDebugDraw* dd, const dtNavMesh& mesh, const dtPolyRef ref)
+{
+	if (!dd)
+		return;
+
+	const dtMeshTile* tile = 0;
+	const dtPoly* poly = 0;
+	if (dtStatusFailed(mesh.getTileAndPolyByRef(ref, &tile, &poly)))
+		return;
+
+	const float lineWidth = 2.0f;
+	unsigned int green = duRGBA(0, 0xFF, 0, 0xFF);
+	unsigned int blue = duRGBA(0, 0, 0xFF, 0xFF);
+	//for (int i = 0; i < tile->header->polyCount; ++i)
+	//{
+	//	const dtPoly* poly = &tile->polys[i];
+	//}
+	if (poly->getType() == DT_POLYTYPE_OFFMESH_CONNECTION) { // Skip off-mesh links.
+		//continue;
+		return;
+	}
+
+	dd->depthMask(false);
+	dd->begin(DU_DRAW_LINES, lineWidth);
+	// process poly edges
+	const int n = poly->vertCount - 1;
+	for (int j = 0; j < n; ++j)
+	{
+		const float* v0 = &tile->verts[poly->verts[j] * 3];
+		const float* v1 = &tile->verts[poly->verts[j + 1] * 3];
+		if (poly->neis[j])
+			continue;
+
+		if (poly->getEdgeJmpClimbFlags(j)) {
+			dd->vertex(v0, green);
+			dd->vertex(v1, green);
+		}
+		else {
+			dd->vertex(v0, blue);
+			dd->vertex(v1, blue);
+		}
+	}
+	// process poly last edge
+	if (!poly->neis[n])
+	{
+		const float* v0 = &tile->verts[poly->verts[n] * 3];
+		const float* v1 = &tile->verts[poly->verts[0] * 3];
+		if (poly->getEdgeJmpClimbFlags(n)) {
+			dd->vertex(v0, green);
+			dd->vertex(v1, green);
+		}
+		else {
+			dd->vertex(v0, blue);
+			dd->vertex(v1, blue);
+		}
+	}
+	dd->end();
+
+	if (poly->getClimbOverlappedFlag())
+	{
+		float center[3];
+		dtNavMesh::calcPolyCenter(tile, poly, center);
+		duDebugDrawCircle(dd, center[0], center[1], center[2], 3.f, green, lineWidth);
+	}
+
+	dd->depthMask(true);
+}
+
 void duDebugDrawNavMeshWithClosedListFast(
 	duDebugDraw* dd,
 	const dtNavMesh& mesh,
@@ -565,7 +633,6 @@ void duDebugDrawNavMeshPoly(duDebugDraw* dd, const dtNavMesh& mesh, dtPolyRef re
 	}
 	
 	dd->depthMask(true);
-
 }
 
 static void debugDrawTileCachePortals(struct duDebugDraw* dd, const dtTileCacheLayer& layer, const float cs, const float ch)

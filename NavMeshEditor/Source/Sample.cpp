@@ -436,6 +436,13 @@ dtNavMesh* Sample::loadAll(FILE* fp)
 			return 0;
 		}
 
+		if (!((dtMeshHeader*)data)->bvNodeCount)
+		{
+			dtFree(data);
+			dtFreeNavMesh(mesh);
+			m_ctx->log(RC_LOG_ERROR, "Error of Sample::loadAll, can't load tile without BVH");
+			return 0;
+		}
 		mesh->addTile(
 			data, tileHeader.dataSize, DT_TILE_FREE_DATA, tileHeader.tileRef, 0
 		);
