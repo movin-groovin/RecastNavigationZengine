@@ -2588,8 +2588,9 @@ uint32_t dtJmpNavMeshQuery::getPoolNodesSize() const
 	return m_nodePool->getMaxNodes();
 }
 
-uint32_t dtJmpNavMeshQuery::calcPathWithJumps(const uint32_t agentIdx, const float* startPos, const float* endPos)
-{
+uint32_t dtJmpNavMeshQuery::calcPathWithJumps(
+	const uint32_t agentIdx, const float* startPos, const float* endPos, const uint32_t flags
+) {
 	assert(m_agentCharsSize > agentIdx);
 	uint32_t polyPathNum = 0;
 	dtPolyRef startRef = 0;
@@ -2644,7 +2645,7 @@ uint32_t dtJmpNavMeshQuery::calcPathWithJumps(const uint32_t agentIdx, const flo
 
 		// jump/climb
 		status = findStraightPath(
-			curStartPos, arrEntry.posFrom, m_finPathData.rawPolyPath, rawPolyPathNum, 0, &straightPathNum
+			curStartPos, arrEntry.posFrom, m_finPathData.rawPolyPath, rawPolyPathNum, flags, &straightPathNum
 		);
 		if (dtStatusFailed(status))
 			return CALC_PATH_ERROR_FIND_STRAIGHT_PATH;
@@ -2675,7 +2676,7 @@ uint32_t dtJmpNavMeshQuery::calcPathWithJumps(const uint32_t agentIdx, const flo
 	}
 
 	status = findStraightPath(
-		curStartPos, endPos, m_finPathData.rawPolyPath, rawPolyPathNum, 0, &straightPathNum
+		curStartPos, endPos, m_finPathData.rawPolyPath, rawPolyPathNum, flags, &straightPathNum
 	);
 	if (dtStatusFailed(status))
 		return CALC_PATH_ERROR_FIND_STRAIGHT_PATH;
@@ -3024,6 +3025,11 @@ bool dtJmpNavMeshQuery::availableJmpTransfer(const AgentCharacteristics* info, c
 	}
 #endif
 	return true;
+}
+
+void dtJmpNavMeshQuery::clearLastPath()
+{
+	m_calcedPath.reset();
 }
 
 const std::shared_ptr<CalcedPathEntry>& dtJmpNavMeshQuery::getLastPath() const

@@ -44,7 +44,8 @@ void duDebugDrawNavMeshWithClosedListFast(
 	const dtNavMesh& mesh,
     const dtNavMeshQuery& query,
 	unsigned char flags,
-	bool showAverageNavmeshPolys
+	bool showAverageNavmeshPolys,
+	bool showPreliminaryJumpData
 );
 void duDebugDrawNavMeshPolyPrelimData(struct duDebugDraw* dd, const dtNavMesh& mesh, const dtPolyRef ref);
 #endif // ZENGINE_NAVMESH

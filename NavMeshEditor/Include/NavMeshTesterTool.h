@@ -26,6 +26,7 @@
 #include "SampleInterfaces.h"
 
 #include <string>
+#include <cstdint>
 
 
 class NavMeshTesterTool : public SampleTool
@@ -43,6 +44,7 @@ private:
 
 	dtJmpNavMeshQuery m_jmpPathFinder;
 	bool m_jmpPathFinderInited;
+	uint32_t m_straightWithJumpsPathOptions;
 
 	enum ToolMode
 	{
@@ -124,7 +126,9 @@ public:
 
 private:
 	void renderTextPathWithJumps(double* proj, double* model, int* view) const;
-	void renderPathWithJumps() const;
+	void renderPathWithJumps(
+		const uint32_t startCol, const uint32_t endCol, const uint32_t pathCol
+	) const;
 	void initJmpPathFinder();
     bool findPathWithJumps(
         dtPolyRef startRef, dtPolyRef endRef, const float* spos, const float* epos

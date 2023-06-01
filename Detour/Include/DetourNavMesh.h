@@ -493,8 +493,8 @@ public:
 		int& nTiles, int& nPolys, int& nConnectedEdges, int& nNonConnectedEdges
 	) const;
 	void closestPointOnPoly(dtPolyRef ref, const float* pos, float* closest, bool* posOverPoly) const;
-	static void calcPolyCenter(const dtMeshTile* tile, const dtPoly* poly, float* center);
 #endif // ZENGINE_NAVMESH
+	static void calcPolyCenter(const dtMeshTile* tile, const dtPoly* poly, float* center);
 
 	/// Gets the tile for the specified tile reference.
 	///  @param[in]	ref		The tile reference of the tile to retrieve.

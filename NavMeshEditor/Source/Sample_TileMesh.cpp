@@ -183,7 +183,7 @@ Sample_TileMesh::Sample_TileMesh() :
     m_showNonTriPolys(false),
     m_highlightLiquidPolys(false),
 	m_showAverageNavmeshPolys(false),
-	m_displayRefIdsInPath(false),
+	m_showPreliminaryJumpData(false),
 	m_continueMeshGenWhileTileError(true),
     m_maxTiles(0),
     m_maxPolysPerTile(0),
@@ -405,6 +405,12 @@ void Sample_TileMesh::handleDebugMode()
 		m_ddVboNvm.reset();
 		m_ddVboNvmTile.reset();
 	}
+	if (imguiCheck("Show preliminary info jump/climb", m_showPreliminaryJumpData))
+	{
+		m_showPreliminaryJumpData = !m_showPreliminaryJumpData;
+		m_ddVboNvm.reset();
+		m_ddVboNvmTile.reset();
+	}
 	if (imguiCheck("Navmesh Invis", m_drawMode == DRAWMODE_NAVMESH_INVIS, valid[DRAWMODE_NAVMESH_INVIS]))
 	{
 		if (m_drawMode != DRAWMODE_NAVMESH_INVIS)
@@ -595,7 +601,8 @@ void Sample_TileMesh::handleRender(const float* cameraPos)
 			if (!m_ddVboNvm)
 			{
 				duDebugDrawNavMeshWithClosedListFast(
-					&m_ddVboNvm, *m_navMesh, *m_navQuery, m_navMeshDrawFlags, m_showAverageNavmeshPolys
+					&m_ddVboNvm, *m_navMesh, *m_navQuery, m_navMeshDrawFlags,
+					m_showAverageNavmeshPolys, m_showPreliminaryJumpData
 				);
 			}
 			m_ddVboNvm.draw();
@@ -1366,26 +1373,44 @@ void Sample_TileMesh::buildAllTilesDo(
 			if (tile->header->polyCount > maxPolyPerTile) maxPolyPerTile = tile->header->polyCount;
 		}
 		std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]> polyArr(new(std::nothrow) dtPoly::JmpAbilityInfoPoly[maxPolyPerTile]);
+		bool postProcessError = false;
 		if (!polyArr)
 		{
-			for (int j = 0; j < n; ++j) {
-				AsyncBuildContext& e = tilesData[j];
-				m_navMesh->removeTile(m_navMesh->getTileRefAt(e.x, e.y, 0), 0, 0);
-			}
-			m_ctx->log(RC_LOG_ERROR, "Error of memory allocation for polys preliminary jump data");
+			postProcessError = true;
+			m_ctx->log(RC_LOG_ERROR, "Error of memory allocation for polys preliminary jump data calculation");
 		}
 		else {
-			std::memset(polyArr.get(), 0, maxPolyPerTile * sizeof(dtPoly::JmpAbilityInfoPoly));
 			for (int j = 0; j < m_navMesh->getMaxTiles(); ++j)
 			{
 				const dtMeshTile* tile = static_cast<const dtNavMesh*>(m_navMesh)->getTile(j);
 				if (!tile->header)
 					continue;
+
+				dtStatus status = m_navMesh->calcAveragePolyPlanes(tile);
+				if (dtStatusFailed(status))
+				{
+					postProcessError = true;
+					m_ctx->log(
+						RC_LOG_ERROR,
+						"Error of calculating average navmesh planes for tile, x: %d, y: %d):",
+						tile->header->x, tile->header->y
+					);
+					break;
+				}
+
+				std::memset(polyArr.get(), 0, maxPolyPerTile * sizeof(dtPoly::JmpAbilityInfoPoly));
 				// TODO make name constants
 				calcPreliminaryJumpData(
 					polyArr, tile, CHECK_BBOX_FWD_DST, CHECK_BBOX_HEIGHT, MIN_CLIMB_HEIGHT, MAX_CLIMB_HEIGHT, SHRINK_COEFF
 				);
 				m_navMesh->setPreliminaryJumpData(tile, polyArr, tile->header->polyCount);
+			}
+		}
+
+		if (postProcessError) {
+			for (int j = 0; j < n; ++j) {
+				AsyncBuildContext& e = tilesData[j];
+				m_navMesh->removeTile(m_navMesh->getTileRefAt(e.x, e.y, 0), 0, 0);
 			}
 		}
 

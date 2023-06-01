@@ -2077,6 +2077,8 @@ void dtNavMesh::collectInfo(
 	}
 }
 
+#endif // ZENGINE_NAVMESH
+
 void dtNavMesh::calcPolyCenter(const dtMeshTile* tile, const dtPoly* poly, float* center)
 {
 	center[0] = center[1] = center[2] = 0.f;
@@ -2093,7 +2095,6 @@ void dtNavMesh::calcPolyCenter(const dtMeshTile* tile, const dtPoly* poly, float
 	center[1] *= mul;
 	center[2] *= mul;
 }
-#endif // ZENGINE_NAVMESH
 
 /// @par
 ///

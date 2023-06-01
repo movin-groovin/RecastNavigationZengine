@@ -150,7 +150,7 @@ protected:
     bool m_showNonTriPolys;
     bool m_highlightLiquidPolys;
 	bool m_showAverageNavmeshPolys;
-	bool m_displayRefIdsInPath;
+	bool m_showPreliminaryJumpData;
 	
 	bool m_continueMeshGenWhileTileError;
 	int m_maxTiles;

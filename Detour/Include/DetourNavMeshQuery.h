@@ -1259,7 +1259,9 @@ public:
 
 	const dtNavMesh* getAttachedNavMesh() const { return m_nav; }
 	// Finds path points from polygons corridor from findPathWithJumps
-	uint32_t calcPathWithJumps(const uint32_t agentIdx, const float* startPos, const float* endPos);
+	uint32_t calcPathWithJumps(
+		const uint32_t agentIdx, const float* startPos, const float* endPos, const uint32_t flags = 0
+	);
 	dtStatus findCollidedPolys(
 		const float* center, const float* halfExtents, const dtQueryFilter* filter, dtPolyQuery* query
 	);
@@ -1269,6 +1271,7 @@ public:
 		dtPolyRef* foundRef
 	) const;
 
+	void clearLastPath();
 	const std::shared_ptr<CalcedPathEntry>& getLastPath() const;
 	uint64_t incFindPathWithJumpsCounter() const;
 	uint64_t getFindPathWithJumpsCounter() const;
