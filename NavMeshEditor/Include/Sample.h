@@ -32,13 +32,14 @@ enum SampleToolType
 {
 	TOOL_NONE = 0,
 	TOOL_TILE_EDIT,
-	TOOL_TILE_HIGHLIGHT,
-	TOOL_TEMP_OBSTACLE,
+	//TOOL_TILE_HIGHLIGHT,
+	//TOOL_TEMP_OBSTACLE,
 	TOOL_NAVMESH_TESTER,
-	TOOL_NAVMESH_PRUNE,
-	TOOL_OFFMESH_CONNECTION,
+	//TOOL_NAVMESH_PRUNE,
+	//TOOL_OFFMESH_CONNECTION,
 	TOOL_CONVEX_VOLUME,
-	TOOL_CROWD,
+	//TOOL_CROWD,
+	TOOL_NAVMESH_VISUALIZER,
 	MAX_TOOLS
 };
 
@@ -131,6 +132,7 @@ protected:
 	class InputGeom* m_geom;
 	class dtNavMesh* m_navMesh;
 	class dtNavMeshQuery* m_navQuery;
+	class dtJmpNavMeshQuery* m_JmpNavQuery;
 	class dtCrowd* m_crowd;
 
 	unsigned char m_navMeshDrawFlags;
@@ -214,6 +216,7 @@ public:
 	virtual class InputGeom* getInputGeom() { return m_geom; }
 	virtual class dtNavMesh* getNavMesh() { return m_navMesh; }
 	virtual class dtNavMeshQuery* getNavMeshQuery() { return m_navQuery; }
+	virtual class dtJmpNavMeshQuery* getJmpNavMeshQuery() { return m_JmpNavQuery; }
 	virtual class dtCrowd* getCrowd() { return m_crowd; }
 	virtual float getAgentRadius() { return m_agentRadius; }
 	virtual float getAgentHeight() { return m_agentHeight; }

@@ -74,6 +74,7 @@ Sample::Sample() :
 	m_geom(0),
 	m_navMesh(0),
 	m_navQuery(0),
+	m_JmpNavQuery(0),
 	m_crowd(0),
 	m_navMeshDrawFlags(DU_DRAWNAVMESH_OFFMESHCONS|DU_DRAWNAVMESH_CLOSEDLIST),
 	m_camSpeed(1.f),
@@ -91,6 +92,7 @@ Sample::Sample() :
 {
 	resetCommonSettings();
 	m_navQuery = dtAllocNavMeshQuery();
+	m_JmpNavQuery = new dtJmpNavMeshQuery;
 	m_crowd = dtAllocCrowd();
 
 	for (int i = 0; i < MAX_TOOLS; i++)
@@ -109,6 +111,8 @@ Sample::~Sample()
 {
 	dtFreeNavMeshQuery(m_navQuery);
 	dtFreeNavMesh(m_navMesh);
+	delete m_JmpNavQuery;
+	m_JmpNavQuery = nullptr;
 	dtFreeCrowd(m_crowd);
 	delete m_tool;
 	for (int i = 0; i < MAX_TOOLS; i++)

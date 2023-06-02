@@ -42,8 +42,7 @@ private:
 	dtQueryFilter m_filter;
 	dtStatus m_pathFindStatus;
 
-	dtJmpNavMeshQuery m_jmpPathFinder;
-	bool m_jmpPathFinderInited;
+	dtJmpNavMeshQuery* m_jmpPathFinder;
 	uint32_t m_straightWithJumpsPathOptions;
 
 	enum ToolMode
@@ -129,7 +128,6 @@ private:
 	void renderPathWithJumps(
 		const uint32_t startCol, const uint32_t endCol, const uint32_t pathCol
 	) const;
-	void initJmpPathFinder();
     bool findPathWithJumps(
         dtPolyRef startRef, dtPolyRef endRef, const float* spos, const float* epos
     );

@@ -472,12 +472,12 @@ bool imguiItem(const char* text, bool enabled)
 	return res;
 }
 
-bool imguiCheck(const char* text, bool checked, bool enabled)
+bool imguiCheck(const char* text, bool checked, bool enabled, const int diffX)
 {
 	g_state.widgetId++;
 	unsigned int id = (g_state.areaId<<16) | g_state.widgetId;
 	
-	int x = g_state.widgetX;
+	int x = g_state.widgetX + diffX;
 	int y = g_state.widgetY - BUTTON_HEIGHT;
 	int w = g_state.widgetW;
 	int h = BUTTON_HEIGHT;

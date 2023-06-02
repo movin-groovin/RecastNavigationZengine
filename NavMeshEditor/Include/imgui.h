@@ -50,7 +50,7 @@ void imguiSeparatorLine();
 
 bool imguiButton(const char* text, bool enabled = true);
 bool imguiItem(const char* text, bool enabled = true);
-bool imguiCheck(const char* text, bool checked, bool enabled = true);
+bool imguiCheck(const char* text, bool checked, bool enabled = true, const int diffX = 0);
 bool imguiCollapse(const char* text, const char* subtext, bool checked, bool enabled = true);
 void imguiLabel(const char* text);
 void imguiValue(const char* text);

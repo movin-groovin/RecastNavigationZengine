@@ -25,22 +25,26 @@
 #include "InputGeom.h"
 #include "Mesh.h"
 
-#include <unordered_map>
+//#include <unordered_map>
 #include <string>
 #include <thread>
 #include <memory>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 
 class Sample_TileMesh : public Sample
 {
 private:
     static const int NAVMESH_QUERY_MAX_NODES = 2048 * 4;
+	static const uint32_t NAVMESH_DEFAULT_TILES_SIZE = 16;
+	static const uint32_t NAVMESH_DEFAULT_POLYS_SIZE = 32;
 
 	static constexpr float CHECK_BBOX_FWD_DST = 50.f;
 	static constexpr float CHECK_BBOX_HEIGHT = 250.f;
 	static constexpr float MIN_CLIMB_HEIGHT = 50.f;
-	static constexpr float MAX_CLIMB_HEIGHT = 400.f;
+	static constexpr float MIN_CLIMB_OVERLAPPED_HEIGHT = 180.f;
+	static constexpr float MAX_CLIMB_HEIGHT = 450.f;
 	static constexpr float SHRINK_COEFF = 0.95f;
 
 	struct AsyncBuildContext
@@ -208,6 +212,9 @@ public:
 private:
 	bool initNavMesh();
 	void initAsyncBuildData();
+	bool initJmpNavmeshQuery();
+	bool checkAndReinitJmpNavMeshQuery();
+
 	void buildAllTilesDo(const float* bmin, const float* bmax, int tw, int th, float tcs);
 	void collectNavmeshGenParams(common::NavmeshGenParams& params) const;
 	void handleRenderOverlayOffsetPlanes(double* proj, double* model, int* view);
@@ -217,6 +224,7 @@ private:
 		const float checkBboxFwdDst,
 		const float checkBboxHeight,
 		const float minClimbHeight,
+		const float minClimbOverlappedHeight,
 		const float maxClimbHeight,
 		const float shrinkCoeff
 	);
@@ -226,6 +234,7 @@ private:
 		const float checkBboxFwdDst,
 		const float checkBboxHeight,
 		const float minClimbHeight,
+		const float minClimbOverlappedHeight,
 		const float maxClimbHeight,
 		const float shrinkCoeff
 	);

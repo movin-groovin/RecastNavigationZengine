@@ -1391,12 +1391,16 @@ void dtJmpNavMeshQuery::clear()
 	m_agentCharsSize = 0;
 	m_collider.clear();
 	m_transfersCashe.clear();
-	m_nodePool->clear();
-	std::free(m_nodePool);
-	m_nodePool = nullptr;
-	m_openList->clear();
-	std::free(m_openList);
-	m_openList = nullptr;
+	if (m_nodePool) {
+		m_nodePool->clear();
+		std::free(m_nodePool);
+		m_nodePool = nullptr;
+	}
+	if (m_openList) {
+		m_openList->clear();
+		std::free(m_openList);
+		m_openList = nullptr;
+	}
 	m_finPathData.clear();
 	std::memset(m_polyPickExt, 0, sizeof(m_polyPickExt));
 }
@@ -1548,13 +1552,6 @@ dtStatus dtJmpNavMeshQuery::queryPolygonsAabb(
 	}
 
 	return DT_SUCCESS;
-}
-
-dtStatus dtJmpNavMeshQuery::findCollidedPolys(
-	const float* center, const float* halfExtents, const dtQueryFilter* filter, dtPolyQuery* query
-) {
-	assert(m_nav);
-	return queryPolygons(center, halfExtents, filter, query);
 }
 
 dtStatus dtJmpNavMeshQuery::getPortalPoints(
@@ -1896,8 +1893,8 @@ void dtJmpNavMeshQuery::JumpTransfersCommonData::init(
 
 dtStatus dtJmpNavMeshQuery::findPathWithJumps(
 	const uint32_t agentIdx,
-	dtPolyRef startRef,
-	dtPolyRef endRef,
+	const dtPolyRef startRef,
+	const dtPolyRef endRef,
 	const float* startPos,
 	const float* endPos,
 	uint32_t* polyPathNum
@@ -2675,15 +2672,21 @@ uint32_t dtJmpNavMeshQuery::calcPathWithJumps(
 		curStartPos = arrEntry.posTo;
 	}
 
+	float fixedEndPos[3];
+	geometry::vcopy(fixedEndPos, endPos);
+	const dtPolyRef lastPoly = m_finPathData.rawPolyPath[rawPolyPathNum - 1];
+	if (lastPoly != endRef) {
+		m_nav->closestPointOnPoly(lastPoly, endPos, fixedEndPos, nullptr);
+	}
 	status = findStraightPath(
-		curStartPos, endPos, m_finPathData.rawPolyPath, rawPolyPathNum, flags, &straightPathNum
+		curStartPos, fixedEndPos, m_finPathData.rawPolyPath, rawPolyPathNum, flags, &straightPathNum
 	);
 	if (dtStatusFailed(status))
 		return CALC_PATH_ERROR_FIND_STRAIGHT_PATH;
 	assert(straightPathNum > 0);
 	std::shared_ptr<CalcedPathEntry> startIterEntry;
 	std::shared_ptr<CalcedPathEntry> endIterEntry;
-	std::tie(startIterEntry, endIterEntry) = pathEntriesArrToList(straightPathNum, endPos);
+	std::tie(startIterEntry, endIterEntry) = pathEntriesArrToList(straightPathNum, fixedEndPos);
 	if (!m_calcedPath) {
 		m_calcedPath = startIterEntry;
 	}
@@ -3025,6 +3028,21 @@ bool dtJmpNavMeshQuery::availableJmpTransfer(const AgentCharacteristics* info, c
 	}
 #endif
 	return true;
+}
+
+uint32_t dtJmpNavMeshQuery::getTilesSize() const
+{
+	return m_transfersCashe.getTilesSize();
+}
+
+uint32_t dtJmpNavMeshQuery::getPolysSize() const
+{
+	return m_transfersCashe.getPolysSize();
+}
+
+const dtNavMesh* dtJmpNavMeshQuery::getAttachedNavMesh() const
+{
+	return m_nav;
 }
 
 void dtJmpNavMeshQuery::clearLastPath()

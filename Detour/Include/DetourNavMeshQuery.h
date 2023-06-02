@@ -806,6 +806,8 @@ public:
 			m_dataSize = 0;
 			return false;
 		}
+		m_tilesSize = tilesSize;
+		m_polysSize = polysSize;
 		m_nav = nav;
 		m_jmpTransferChecker = jmpTransferChecker;
 
@@ -849,6 +851,8 @@ public:
 		std::free(m_data);
 		m_data = nullptr;
 		m_dataSize = 0;
+		m_tilesSize = 0;
+		m_polysSize = 0;
 		m_tilesNum = 0;
 		m_jmpTransferChecker = nullptr;
 		m_cacheScore = 0;
@@ -1034,6 +1038,9 @@ public:
 	}
 
 	ScoreType getTileScore(const IndexType idx) const { return m_tiles[idx].heapScore; }
+
+	bool isTileActive(const IndexType idx) const { return m_tiles[idx].heapIdx != INVALID_HEAP_IDX; }
+
 	void setTileScore(const IndexType idx, const ScoreType val)
 	{
 		TileEntry* te = &m_tiles[idx];
@@ -1042,7 +1049,7 @@ public:
 			return;
 		m_pqTilesUsage.setScoreByIndex(te->heapIdx, val);
 	}
-	bool isTileActive(const IndexType idx) const { return m_tiles[idx].heapIdx != INVALID_HEAP_IDX; }
+
 	bool insertTile(const IndexType idx, const ScoreType val)
 	{
 		TileEntry* te = &m_tiles[idx];
@@ -1050,9 +1057,12 @@ public:
 		te->heapScore = val;
 		return m_pqTilesUsage.append(te);
 	}
+
 	void incrementScore() const { ++m_cacheScore; }
 	ScoreType getScore() const { return m_cacheScore; }
 	void setScore(const ScoreType val) const { m_cacheScore = val; }
+	uint32_t getTilesSize() const { return m_tilesSize; }
+	uint32_t getPolysSize() const { return m_polysSize; }
 
 private:
 	void* clearStateInternal()
@@ -1087,6 +1097,8 @@ private:
 	JmpTransferCheckerType* m_jmpTransferChecker = {};
 	uint32_t m_dataSize = {};
 	void* m_data = {};
+	uint32_t m_tilesSize = {};
+	uint32_t m_polysSize = {};
 	uint32_t m_tilesNum = {};
 	TileEntry* m_tiles = {};
 	mutable ScoreType m_cacheScore = {};
@@ -1255,51 +1267,14 @@ public:
 		const float polyPickWidth,
 		const float polyPickHeight
 	);
+	void clear();
 	bool clearState(const dtNavMesh* nav);
 
-	const dtNavMesh* getAttachedNavMesh() const { return m_nav; }
 	// Finds path points from polygons corridor from findPathWithJumps
 	uint32_t calcPathWithJumps(
 		const uint32_t agentIdx, const float* startPos, const float* endPos, const uint32_t flags = 0
 	);
-	dtStatus findCollidedPolys(
-		const float* center, const float* halfExtents, const dtQueryFilter* filter, dtPolyQuery* query
-	);
-	dtStatus findNearestPoly(
-		const float* center,
-		const dtQueryFilter* filter,
-		dtPolyRef* foundRef
-	) const;
-
-	void clearLastPath();
-	const std::shared_ptr<CalcedPathEntry>& getLastPath() const;
-	uint64_t incFindPathWithJumpsCounter() const;
-	uint64_t getFindPathWithJumpsCounter() const;
-	uint32_t getPoolNodesSize() const;
-
-private:
-	static bool availableWalkTransfer(const uint8_t from, const uint8_t to);
-	static bool availableJmpTransfer(const AgentCharacteristics* info, const TransferDataEntry* entry);
-
-	std::pair<std::shared_ptr<CalcedPathEntry>, std::shared_ptr<CalcedPathEntry>>
-		pathEntriesArrToList(const uint32_t straightPathNum, const float* endPos) const;
-	// Finds the straight path from the start to the end position within the polygon corridor
-	dtStatus findPathWithJumps(
-		const uint32_t agentIdx,
-		dtPolyRef startRef,
-		dtPolyRef endRef,
-		const float* startPos,
-		const float* endPos,
-		uint32_t* polyPathNum
-	);
-	dtStatus findStraightPath(
-		const float* startPos,
-		const float* endPos,
-		const dtPolyRef* polyPath,
-		const uint32_t polyPathNum,
-		const int options,
-		uint32_t* straightPathNum
-	) const;
+	dtStatus findNearestPoly(const float* center, const dtQueryFilter* filter, dtPolyRef* foundRef) const;
 	dtStatus queryPolygons(
 		const float* center,
 		const float* halfExtents,
@@ -1311,6 +1286,39 @@ private:
 		const float* aabbMax,
 		const dtQueryFilter* filter,
 		dtPolyQuery* query
+	) const;
+
+	const dtNavMesh* getAttachedNavMesh() const;
+	void clearLastPath();
+	const std::shared_ptr<CalcedPathEntry>& getLastPath() const;
+	uint64_t incFindPathWithJumpsCounter() const;
+	uint64_t getFindPathWithJumpsCounter() const;
+	uint32_t getPoolNodesSize() const;
+	uint32_t getTilesSize() const;
+	uint32_t getPolysSize() const;
+
+private:
+	static bool availableWalkTransfer(const uint8_t from, const uint8_t to);
+	static bool availableJmpTransfer(const AgentCharacteristics* info, const TransferDataEntry* entry);
+
+	std::pair<std::shared_ptr<CalcedPathEntry>, std::shared_ptr<CalcedPathEntry>>
+		pathEntriesArrToList(const uint32_t straightPathNum, const float* endPos) const;
+	// Finds the straight path from the start to the end position within the polygon corridor
+	dtStatus findPathWithJumps(
+		const uint32_t agentIdx,
+		const dtPolyRef startRef,
+		const dtPolyRef endRef,
+		const float* startPos,
+		const float* endPos,
+		uint32_t* polyPathNum
+	);
+	dtStatus findStraightPath(
+		const float* startPos,
+		const float* endPos,
+		const dtPolyRef* polyPath,
+		const uint32_t polyPathNum,
+		const int options,
+		uint32_t* straightPathNum
 	) const;
 	void queryPolygonsInTile(
 		const dtMeshTile* tile,
@@ -1439,8 +1447,6 @@ private:
 		const uint32_t maxStraightPath,
 		const int options
 	) const;
-
-	void clear();
 
 private:
 	const dtNavMesh* m_nav{};

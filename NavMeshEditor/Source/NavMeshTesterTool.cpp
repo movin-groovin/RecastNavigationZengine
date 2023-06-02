@@ -224,7 +224,7 @@ NavMeshTesterTool::NavMeshTesterTool(InputGeom *inGeom, BuildContext* ctx):
 	m_navMesh(0),
 	m_navQuery(0),
 	m_pathFindStatus(DT_FAILURE),
-	m_jmpPathFinderInited(false),
+	m_jmpPathFinder(0),
 	m_straightWithJumpsPathOptions(0),
 	m_toolMode(TOOLMODE_PATHFIND_FOLLOW),
 	m_straightPathOptions(0),
@@ -259,71 +259,12 @@ NavMeshTesterTool::~NavMeshTesterTool() {
 	;
 }
 
-void NavMeshTesterTool::initJmpPathFinder()
-{
-	if (!m_sample || !m_navMesh)
-		return;
-	
-	static const uint32_t AGENTS_ARR_SIZE = 1;
-	AgentCharacteristics agentsChars[AGENTS_ARR_SIZE];
-
-	std::memset(agentsChars, 0, sizeof(agentsChars));
-	AgentCharacteristics& entry = agentsChars[0];
-	entry.canJmpFwd = true;
-	entry.canJmpDown = true;
-	entry.canClimb = true;
-	entry.agentHeight = 180.f;
-	entry.agentLength = 50.f;
-	entry.agentWidth = 50.f;
-	entry.maxJmpFwdDistance = 300.f;
-	entry.maxJmpFwdHeight = 50.f;
-	entry.stepHeight = 50.f;
-	entry.maxClimbHeight = 350.f;
-	entry.maxJmpDownDistance = 500.f;
-	entry.maxJmpDownHeight = 700.f;
-	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND, 1.0f);
-	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD, 1.0f);
-	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR, 1.0f);
-	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER, 1.0f);
-	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER, 5.0f);
-	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING, 1.0f);
-	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING, 3.0f);
-	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING, 5.0f);
-	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_LAVA, 100000.0f);
-	entry.filter.setIncludeFlags(
-		common::SamplePolyFlags::SAMPLE_POLYFLAGS_ALL ^
-		common::SamplePolyFlags::SAMPLE_POLYFLAGS_DISABLED
-	);
-	entry.filter.setExcludeFlags(0);
-	uint32_t tilesNum;
-	uint32_t polysNum;
-	StdJmpTransferCache::calcTilesAndPolygons(m_navMesh, tilesNum, polysNum);
-
-	static const uint32_t CASHE_BLOCKS_SIZE =
-		(10 * 1024 * 1024) / StdJmpTransferCache::POOL_BLOCK_BYTES_SIZE + 1;
-	static const uint32_t NODE_POOL_SIZE = 1024 * 16;
-	static const float POLY_PICK_WIDTH = 10.f;
-	static const float POLY_PICK_HEIGHT = 50.f;
-	m_jmpPathFinderInited = m_jmpPathFinder.init(
-		m_navMesh,
-		&m_sample->getInputGeom()->getSpace(),
-		AGENTS_ARR_SIZE,
-		agentsChars,
-		tilesNum,
-		polysNum,
-		CASHE_BLOCKS_SIZE,
-		NODE_POOL_SIZE,
-		POLY_PICK_WIDTH,
-		POLY_PICK_HEIGHT
-	);
-}
-
 void NavMeshTesterTool::init(Sample* sample)
 {
     m_sample = sample;
 	m_navMesh = sample->getNavMesh();
 	m_navQuery = sample->getNavMeshQuery();
-	initJmpPathFinder();
+	m_jmpPathFinder = sample->getJmpNavMeshQuery();
 	recalc();
 
 	if (m_navQuery)
@@ -1192,13 +1133,13 @@ void NavMeshTesterTool::recalc()
 bool NavMeshTesterTool::findPathWithJumps(
     dtPolyRef startRef, dtPolyRef endRef, const float* spos, const float* epos
 ) {
-    if (!m_jmpPathFinderInited) {
+    if (!m_jmpPathFinder) {
         m_ctx->log(RC_LOG_PROGRESS, "Can't run findPathWithJumps, error of initialization");
         return false;
     }
 
-	uint32_t ret = m_jmpPathFinder.calcPathWithJumps(0, spos, epos, m_straightWithJumpsPathOptions);
-	if (ret != m_jmpPathFinder.CALC_PATH_OK)
+	uint32_t ret = m_jmpPathFinder->calcPathWithJumps(0, spos, epos, m_straightWithJumpsPathOptions);
+	if (ret != dtJmpNavMeshQuery::CALC_PATH_OK)
 	{
 		m_ctx->log(RC_LOG_PROGRESS, "Can't run findPathWithJumps, error of calcPathWithJumps, code: %u", ret);
 		return false;
@@ -1218,6 +1159,13 @@ static void getPolyCenter(dtNavMesh* navMesh, dtPolyRef ref, float* center)
 	dtNavMesh::calcPolyCenter(tile, poly, center);
 }
 
+static void renderObpForOverlClimbing(
+	BuildContext* ctx, dtPolyRef ref, const dtJmpNavMeshQuery& jmpPathFinder, duDebugDraw& dd, const float* norm,
+	const float d, const float* verts, const int vertsNum, const float minh, const float maxh
+) {
+	;
+}
+
 void NavMeshTesterTool::renderPathWithJumps(
 	const uint32_t startCol, const uint32_t endCol, const uint32_t pathCol
 ) const {
@@ -1229,7 +1177,7 @@ void NavMeshTesterTool::renderPathWithJumps(
 	//duDebugDrawNavMeshPolyPrelimData(&dd, *m_navMesh, m_startRef);
 	//duDebugDrawNavMeshPolyPrelimData(&dd, *m_navMesh, m_endRef);
 
-	std::shared_ptr<CalcedPathEntry> pathEntry = m_jmpPathFinder.getLastPath();
+	std::shared_ptr<CalcedPathEntry> pathEntry = m_jmpPathFinder->getLastPath();
 	int cnt = 0;
 	while (pathEntry) {
 		++cnt;
@@ -1667,7 +1615,7 @@ void NavMeshTesterTool::renderTextPathWithJumps(double* proj, double* model, int
 {
 	char string[512];
 	const char* text;
-	auto curEntry = m_jmpPathFinder.getLastPath();
+	auto curEntry = m_jmpPathFinder->getLastPath();
 	while (curEntry)
 	{
 		uint32_t trType = curEntry->getTransferType();

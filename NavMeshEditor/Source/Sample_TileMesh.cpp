@@ -42,6 +42,7 @@
 #include "DetourNavMeshQuery.h"
 #include "NavMeshTesterTool.h"
 #include "ConvexVolumeTool.h"
+#include "NavMeshVisualizer.h"
 
 #ifdef WIN32
 	#define snprintf _snprintf
@@ -220,6 +221,70 @@ void Sample_TileMesh::initAsyncBuildData()
 	}
 }
 
+bool Sample_TileMesh::initJmpNavmeshQuery()
+{
+	if (!m_navMesh)
+		return false;
+
+	static const uint32_t AGENTS_ARR_SIZE = 1;
+	AgentCharacteristics agentsChars[AGENTS_ARR_SIZE];
+
+	std::memset(agentsChars, 0, sizeof(agentsChars));
+	AgentCharacteristics& entry = agentsChars[0];
+	entry.canJmpFwd = true;
+	entry.canJmpDown = true;
+	entry.canClimb = true;
+	entry.agentHeight = 180.f;
+	entry.agentLength = 50.f;
+	entry.agentWidth = 50.f;
+	entry.maxJmpFwdDistance = 300.f;
+	entry.maxJmpFwdHeight = 50.f;
+	entry.stepHeight = 50.f;
+	entry.maxClimbHeight = 350.f;
+	entry.maxJmpDownDistance = 500.f;
+	entry.maxJmpDownHeight = 700.f;
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_GROUND, 1.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_ROAD, 1.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_DOOR, 1.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_LADDER, 1.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER, 5.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_WALKING, 1.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_FORDING, 3.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_WATER_SWIMMING, 5.0f);
+	entry.filter.setAreaCost(common::SamplePolyAreas::SAMPLE_POLYAREA_LAVA, 100000.0f);
+	entry.filter.setIncludeFlags(
+		common::SamplePolyFlags::SAMPLE_POLYFLAGS_ALL ^
+		common::SamplePolyFlags::SAMPLE_POLYFLAGS_DISABLED
+	);
+	entry.filter.setExcludeFlags(0);
+	uint32_t tilesNum;
+	uint32_t polysNum;
+	StdJmpTransferCache::calcTilesAndPolygons(m_navMesh, tilesNum, polysNum);
+	if (!tilesNum) tilesNum = NAVMESH_DEFAULT_TILES_SIZE;
+	if (!polysNum) polysNum = NAVMESH_DEFAULT_POLYS_SIZE;
+
+	static const uint32_t CASHE_BLOCKS_SIZE =
+		(10 * 1024 * 1024) / StdJmpTransferCache::POOL_BLOCK_BYTES_SIZE + 1;
+	static const uint32_t NODE_POOL_SIZE = 1024 * 16;
+	static const float POLY_PICK_WIDTH = 10.f;
+	static const float POLY_PICK_HEIGHT = 50.f;
+	m_JmpNavQuery->clear();
+	bool res = m_JmpNavQuery->init(
+		m_navMesh,
+		&getInputGeom()->getSpace(),
+		AGENTS_ARR_SIZE,
+		agentsChars,
+		tilesNum,
+		polysNum,
+		CASHE_BLOCKS_SIZE,
+		NODE_POOL_SIZE,
+		POLY_PICK_WIDTH,
+		POLY_PICK_HEIGHT
+	);
+
+	return res;
+}
+
 void Sample_TileMesh::handleSettings()
 {
     Sample::handleCommonSettings();
@@ -274,16 +339,27 @@ void Sample_TileMesh::handleSettings()
     imguiIndent();
     imguiIndent();
 
-    if (imguiButton("Save"))
+    if (imguiButton("Save navmesh"))
     {
 		saveAll(m_geom->getNavMeshName(), m_navMesh);
     }
 
-    if (imguiButton("Load"))
+    if (imguiButton("Load navmesh"))
     {
         dtFreeNavMesh(m_navMesh);
-		m_navMesh = loadAll(m_geom->getNavMeshName());
-		m_navQuery->init(m_navMesh, NAVMESH_QUERY_MAX_NODES);
+		if (!(m_navMesh = loadAll(m_geom->getNavMeshName())))
+		{
+			m_ctx->log(RC_LOG_ERROR, __FUNCTION__": Could not load navmesh");
+		}
+		dtStatus status = m_navQuery->init(m_navMesh, NAVMESH_QUERY_MAX_NODES);
+		if (dtStatusFailed(status))
+		{
+			m_ctx->log(RC_LOG_ERROR, __FUNCTION__": Could not init navmesh query");
+		}
+		if (!initJmpNavmeshQuery())
+		{
+			m_ctx->log(RC_LOG_ERROR, __FUNCTION__": Could not init jump navmesh query");
+		}
 		resetNavMeshDrawers();
     }
 
@@ -317,6 +393,10 @@ void Sample_TileMesh::handleTools()
     {
         setTool(new ConvexVolumeTool);
     }
+	if (imguiCheck("Visualize navmesh polygons", type == TOOL_NAVMESH_VISUALIZER))
+	{
+		setTool(new NavMeshVisualizerTool);
+	}
 
     imguiSeparatorLine();
 
@@ -823,7 +903,12 @@ bool Sample_TileMesh::initNavMesh()
 	status = m_navQuery->init(m_navMesh, NAVMESH_QUERY_MAX_NODES);
 	if (dtStatusFailed(status))
 	{
-		m_ctx->log(RC_LOG_ERROR, "initNavMesh: Could not init Detour navmesh query");
+		m_ctx->log(RC_LOG_ERROR, __FUNCTION__": Could not init navmesh query");
+		return false;
+	}
+	if (!initJmpNavmeshQuery())
+	{
+		m_ctx->log(RC_LOG_ERROR, __FUNCTION__": Could not init jump navmesh query");
 		return false;
 	}
 
@@ -861,6 +946,7 @@ std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]> Sample_TileMesh::calcPreliminaryJu
 	const float checkBboxFwdDst,
 	const float checkBboxHeight,
 	const float minClimbHeight,
+	const float minClimbOverlappedHeight,
 	const float maxClimbHeight,
 	const float shrinkCoeff
 ) {
@@ -872,7 +958,7 @@ std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]> Sample_TileMesh::calcPreliminaryJu
 	}
 	std::memset(data.get(), 0, polyCount * sizeof(dtPoly::JmpAbilityInfoPoly));
 
-	calcPreliminaryJumpData(data, ctile, checkBboxFwdDst, checkBboxHeight, minClimbHeight, maxClimbHeight, shrinkCoeff);
+	calcPreliminaryJumpData(data, ctile, checkBboxFwdDst, checkBboxHeight, minClimbHeight, minClimbOverlappedHeight, maxClimbHeight, shrinkCoeff);
 
 	return data;
 }
@@ -883,6 +969,7 @@ void Sample_TileMesh::calcPreliminaryJumpData(
 	const float checkBboxFwdDst,
 	const float checkBboxHeight,
 	const float minClimbHeight,
+	const float minClimbOverlappedHeight,
 	const float maxClimbHeight,
 	const float shrinkCoeff
 ) {
@@ -918,10 +1005,10 @@ void Sample_TileMesh::calcPreliminaryJumpData(
 			dtPoly::JmpAbilityInfoEdge& edge = polyData.edges[j];
 			edge.jmpDown = checkAbilityJumpDownOrForward(v1, v2, polyCenter, checkBboxFwdDst, checkBboxHeight, shrinkCoeff);
 			edge.jmpFwd = checkAbilityJumpDownOrForward(v1, v2, polyCenter, checkBboxFwdDst, checkBboxHeight, shrinkCoeff);
-			edge.climb = checkAbilityClimb(v1, v2, polyCenter, 50.f, maxClimbHeight, &filter);
+			edge.climb = checkAbilityClimb(v1, v2, polyCenter, minClimbHeight, maxClimbHeight, &filter);
 		}
 		polyData.climbOverlapped = checkAbilityClimbOverlapped(
-			p->norm, p->dist, baseVerts, vertsCount, 50.f, maxClimbHeight, &filter
+			p->norm, p->dist, baseVerts, vertsCount, minClimbHeight, maxClimbHeight, &filter
 		);
 	}
 }
@@ -1046,6 +1133,22 @@ bool Sample_TileMesh::checkAbilityClimbOverlapped(
 	return query.getPolysNum();
 }
 
+bool Sample_TileMesh::checkAndReinitJmpNavMeshQuery()
+{
+	uint32_t tilesNum;
+	uint32_t polysNum;
+	StdJmpTransferCache::calcTilesAndPolygons(m_navMesh, tilesNum, polysNum);
+	if (tilesNum > m_JmpNavQuery->getTilesSize() || polysNum > m_JmpNavQuery->getPolysSize())
+	{
+		if (!initJmpNavmeshQuery())
+		{
+			m_ctx->log(RC_LOG_ERROR, __FUNCTION__": Could not init jump navmesh query");
+			return false;
+		}
+	}
+	return true;
+}
+
 void Sample_TileMesh::buildTile(const float* pos)
 {
 	if (!m_geom)
@@ -1113,9 +1216,9 @@ void Sample_TileMesh::buildTile(const float* pos)
 			status = m_navMesh->calcAveragePolyPlanes(tile);
 			if (dtStatusSucceed(status))
 			{
-				// TODO make name constants
 				auto data = calcPreliminaryJumpData(
-					tile, CHECK_BBOX_FWD_DST, CHECK_BBOX_HEIGHT, MIN_CLIMB_HEIGHT, MAX_CLIMB_HEIGHT, SHRINK_COEFF
+					tile, CHECK_BBOX_FWD_DST, CHECK_BBOX_HEIGHT, MIN_CLIMB_HEIGHT,
+					MIN_CLIMB_OVERLAPPED_HEIGHT, MAX_CLIMB_HEIGHT, SHRINK_COEFF
 				);
 				if (!data) {
 					m_ctx->log(RC_LOG_ERROR, "Error of calculating preliminary jump data for tile, x: %d, y: %d):", tx, ty);
@@ -1138,6 +1241,11 @@ void Sample_TileMesh::buildTile(const float* pos)
 		}
     }
 	resetNavMeshDrawers();
+
+	if (!checkAndReinitJmpNavMeshQuery()) {
+		m_navMesh->removeTile(m_navMesh->getTileRefAt(tx, ty, 0), 0, 0);
+	}
+
 
 	m_ctx->log(RC_LOG_PROGRESS, "Build Tile, x: %d, y: %d):", tx, ty);
 }
@@ -1210,6 +1318,11 @@ void Sample_TileMesh::buildAllTiles()
 	);
 	m_asyncBuild.detach();
 	m_asyncNavMeshGeneration = true;
+
+	if (!checkAndReinitJmpNavMeshQuery()) {
+		dtFreeNavMesh(m_navMesh);
+		m_navMesh = nullptr;
+	}
 }
 
 void Sample_TileMesh::buildAllTilesDo(
@@ -1399,9 +1512,9 @@ void Sample_TileMesh::buildAllTilesDo(
 				}
 
 				std::memset(polyArr.get(), 0, maxPolyPerTile * sizeof(dtPoly::JmpAbilityInfoPoly));
-				// TODO make name constants
 				calcPreliminaryJumpData(
-					polyArr, tile, CHECK_BBOX_FWD_DST, CHECK_BBOX_HEIGHT, MIN_CLIMB_HEIGHT, MAX_CLIMB_HEIGHT, SHRINK_COEFF
+					polyArr, tile, CHECK_BBOX_FWD_DST, CHECK_BBOX_HEIGHT, MIN_CLIMB_HEIGHT,
+					MIN_CLIMB_OVERLAPPED_HEIGHT, MAX_CLIMB_HEIGHT, SHRINK_COEFF
 				);
 				m_navMesh->setPreliminaryJumpData(tile, polyArr, tile->header->polyCount);
 			}
