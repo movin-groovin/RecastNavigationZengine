@@ -1159,13 +1159,6 @@ static void getPolyCenter(dtNavMesh* navMesh, dtPolyRef ref, float* center)
 	dtNavMesh::calcPolyCenter(tile, poly, center);
 }
 
-static void renderObpForOverlClimbing(
-	BuildContext* ctx, dtPolyRef ref, const dtJmpNavMeshQuery& jmpPathFinder, duDebugDraw& dd, const float* norm,
-	const float d, const float* verts, const int vertsNum, const float minh, const float maxh
-) {
-	;
-}
-
 void NavMeshTesterTool::renderPathWithJumps(
 	const uint32_t startCol, const uint32_t endCol, const uint32_t pathCol
 ) const {
@@ -1178,9 +1171,7 @@ void NavMeshTesterTool::renderPathWithJumps(
 	//duDebugDrawNavMeshPolyPrelimData(&dd, *m_navMesh, m_endRef);
 
 	std::shared_ptr<CalcedPathEntry> pathEntry = m_jmpPathFinder->getLastPath();
-	int cnt = 0;
 	while (pathEntry) {
-		++cnt;
 		uint32_t trType = pathEntry->getTransferType();
 		assert(trType != NavmeshPolyTransferFlags::MAX_ACTION);
 		assert(trType != NavmeshPolyTransferFlags::NO_ACTION);
@@ -1211,9 +1202,6 @@ void NavMeshTesterTool::renderPathWithJumps(
 			0.25f, 0.0f, 0.4f, duRGBA(0, 0, 0, 192), 2.0f);
 
 		pathEntry = pathEntry->getNext();
-	}
-	if (cnt < 0) {
-		cnt = 0;
 	}
 }
 

@@ -11,6 +11,8 @@ private:
 	Sample* m_sample;
 	float m_hitPos[3];
 	dtPolyRef m_hitPoly;
+	bool m_extractPrelimData;
+	bool m_calcPrelimData;
 	bool m_polyConnectionEdges[DT_VERTS_PER_POLYGON];
 	bool m_polySelectionEdges[DT_VERTS_PER_POLYGON];
 	bool m_showPolyBbox;
@@ -35,4 +37,12 @@ public:
 
 private:
 	void renderClimbOverlappedBbox(const dtMeshTile* tile, const dtPoly* poly);
+	void renderClimbBbox(const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly);
+	void renderJumpFwdDownBbox(const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly);
+	void extractPreliminaryJumpData();
+	void calcPreliminaryJumpData();
+	void calcPreliminaryJumpFwdDownData(const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly);
+	void calcPreliminaryClimbData(const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly);
+	void calcPreliminaryClimbOverlappedData(const dtMeshTile* tile, const dtPoly* poly);
+	void renderObp(const float* vertices, const uint32_t verticesNum);
 };

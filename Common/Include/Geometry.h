@@ -19,6 +19,7 @@ namespace geometry
 struct Constants
 {
 	static constexpr float EPS = 1e-6f;
+	static constexpr float EPS_ZERO_NORMAL = 1e-4f;
 };
 
 // functions
@@ -301,7 +302,7 @@ public:
 		vmul(dir_6, scale); // 0.95 ?
 		_halfWidth[0] = vlen(dir);
 		_halfWidth[1] = vlen(dir_3);
-		_halfWidth[2] = deltaH;
+		_halfWidth[2] = vlen(dir_6); //deltaH;
 	}
 
 	void clear()
@@ -394,38 +395,56 @@ public:
 private:
 	void calcObbPoints()
 	{
-		// forward, left, up
-		vadd(m_verts, center, dir);
-		vadd(m_verts, dir + 3);
-		vadd(m_verts, dir + 6);
+		// directions: forward, side, up
+		const float* dirFwd = dir;
+		const float* dirSide = dir + 3;
+		const float* dirUp = dir + 6;
+		vadd(m_verts, center, dirSide);
+		vsub(m_verts, m_verts, dirFwd);
+		vmad(m_verts + 3, m_verts, dirFwd, 2.f);
+		vmad(m_verts + 6, m_verts + 3, dirSide, -2.f);
+		vmad(m_verts + 9, m_verts, dirSide, -2.f);
+		vadd(m_verts + 12, m_verts, dirUp);
+		vadd(m_verts + 15, m_verts + 3, dirUp);
+		vadd(m_verts + 18, m_verts + 6, dirUp);
+		vadd(m_verts + 21, m_verts + 9, dirUp);
+		vmad(m_verts, m_verts, dirUp, -1.f);
+		vmad(m_verts + 3, m_verts + 3, dirUp, -1.f);
+		vmad(m_verts + 6, m_verts + 6, dirUp, -1.f);
+		vmad(m_verts + 9, m_verts + 9, dirUp, -1.f);
 
-		vadd(m_verts + 3, center, dir);
-		vadd(m_verts + 3, dir + 3);
-		vsub(m_verts + 3, dir + 6);
+		//// forward, left, up
+		//vadd(m_verts, center, dir);
+		//vadd(m_verts, dir + 3);
+		//vadd(m_verts, dir + 6);
 
-		vadd(m_verts + 6, center, dir);
-		vsub(m_verts + 6, dir + 3);
-		vadd(m_verts + 6, dir + 6);
+		//vadd(m_verts + 3, center, dir);
+		//vadd(m_verts + 3, dir + 3);
+		//vsub(m_verts + 3, dir + 6);
 
-		vadd(m_verts + 9, center, dir);
-		vsub(m_verts + 9, dir + 3);
-		vsub(m_verts + 9, dir + 6);
+		//vadd(m_verts + 6, center, dir);
+		//vsub(m_verts + 6, dir + 3);
+		//vadd(m_verts + 6, dir + 6);
 
-		vsub(m_verts + 12, center, dir);
-		vadd(m_verts + 12, dir + 3);
-		vadd(m_verts + 12, dir + 6);
+		//vadd(m_verts + 9, center, dir);
+		//vsub(m_verts + 9, dir + 3);
+		//vsub(m_verts + 9, dir + 6);
 
-		vsub(m_verts + 15, center, dir);
-		vadd(m_verts + 15, dir + 3);
-		vsub(m_verts + 15, dir + 6);
+		//vsub(m_verts + 12, center, dir);
+		//vadd(m_verts + 12, dir + 3);
+		//vadd(m_verts + 12, dir + 6);
 
-		vsub(m_verts + 18, center, dir);
-		vsub(m_verts + 18, dir + 3);
-		vadd(m_verts + 18, dir + 6);
+		//vsub(m_verts + 15, center, dir);
+		//vadd(m_verts + 15, dir + 3);
+		//vsub(m_verts + 15, dir + 6);
 
-		vsub(m_verts + 21, center, dir);
-		vsub(m_verts + 21, dir + 3);
-		vsub(m_verts + 21, dir + 6);
+		//vsub(m_verts + 18, center, dir);
+		//vsub(m_verts + 18, dir + 3);
+		//vadd(m_verts + 18, dir + 6);
+
+		//vsub(m_verts + 21, center, dir);
+		//vsub(m_verts + 21, dir + 3);
+		//vsub(m_verts + 21, dir + 6);
 	}
 };
 
@@ -542,6 +561,7 @@ bool intersectionYaobpVsPolygon( // y aligned oriented bounding polyhedron
 
 bool calcDirOutOfPolyXz(const float* v1, const float* v2, const float* vThird, float* dir);
 
+// dirs consists 9 floats, points - 24 floats
 void calcObbDirsAndPoints(
 	const float* v1,
 	const float* v2,
@@ -549,9 +569,7 @@ void calcObbDirsAndPoints(
 	const float fwdDst,
 	const float height,
 	float* dirs,
-	const float dirsSize,
-	float* points,
-	const float pointsSize
+	float* points
 );
 
 inline void calcPerpToEdgeXz(const float* v1, const float* v2, float* perp)

@@ -40,10 +40,7 @@ private:
 	static const uint32_t NAVMESH_DEFAULT_TILES_SIZE = 16;
 	static const uint32_t NAVMESH_DEFAULT_POLYS_SIZE = 32;
 
-	static constexpr float CHECK_BBOX_FWD_DST = 50.f;
 	static constexpr float CHECK_BBOX_HEIGHT = 250.f;
-	static constexpr float MIN_CLIMB_HEIGHT = 50.f;
-	static constexpr float MIN_CLIMB_OVERLAPPED_HEIGHT = 180.f;
 	static constexpr float MAX_CLIMB_HEIGHT = 450.f;
 	static constexpr float SHRINK_COEFF = 0.95f;
 
@@ -241,7 +238,7 @@ private:
 	bool checkAbilityJumpDownOrForward(
 		const float* v1,
 		const float* v2,
-		const float* vInPoly,
+		const float* polyCenter,
 		const float checkBboxFwdDst,
 		const float checkBboxHeight,
 		const float shrinkCoeff
@@ -249,16 +246,17 @@ private:
 	bool checkAbilityClimb(
 		const float* v1,
 		const float* v2,
-		const float* vInPoly,
+		const float* polyCenter,
+		const float forwardDistance,
 		const float minClimbHeight,
 		const float maxClimbHeight,
 		const class dtQueryFilter* filter
 	);
 	bool checkAbilityClimbOverlapped(
+		const float* polyVertices,
+		const int verticesNum,
 		const float* polyNorm,
 		const float polyDist,
-		const float* polyVerts,
-		const int nPolyVerts,
 		const float minClimbHeight,
 		const float maxClimbHeight,
 		const class dtQueryFilter* filter

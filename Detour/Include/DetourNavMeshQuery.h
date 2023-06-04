@@ -1207,6 +1207,9 @@ public:
 		CALC_PATH_ERROR_FIND_STRAIGHT_PATH
 	};
 
+	static const int OBP_NUM_DIRS = MAX_PLANES_PER_BOUNDING_POLYHEDRON;
+	static const int OBP_NUM_VERTS = (OBP_NUM_DIRS - 1) * 2;
+
 private:
 	static const int POLY_ARR_SIZE_FOR_EXTRACTION = 512;
 	static const int MIN_RAW_PATH_SIZE = 1024;
@@ -1270,7 +1273,6 @@ public:
 	void clear();
 	bool clearState(const dtNavMesh* nav);
 
-	// Finds path points from polygons corridor from findPathWithJumps
 	uint32_t calcPathWithJumps(
 		const uint32_t agentIdx, const float* startPos, const float* endPos, const uint32_t flags = 0
 	);
@@ -1288,6 +1290,44 @@ public:
 		dtPolyQuery* query
 	) const;
 
+	static bool calcObbDataForJumpingForwardDown(
+		const float* edgeV1,
+		const float* edgeV2,
+		const float* polyCenter,
+		const float checkBboxFwdDst,
+		const float checkBboxHeight,
+		const float shrinkCoeff,
+		geometry::OBBExt* obb
+	);
+	static bool calcObbDataForClimbing(
+		const float* edgeV1,
+		const float* edgeV2,
+		const float* polyCenter,
+		const float forwardDistance,
+		const float minClimbHeight,
+		const float maxClimbHeight,
+		float* verts,
+		float* dirs
+	);
+	static void calcObpDataForOverlappedClimbing(
+		const dtMeshTile* tile,
+		const dtPoly* poly,
+		const float minClimbHeight,
+		const float maxClimbHeight,
+		float* verts,
+		float* dirs
+	);
+	static void calcObpDataForOverlappedClimbing(
+		const float* polyVertices,
+		const int verticesNum,
+		const float* polyNorm,
+		const float polyDist,
+		const float minClimbHeight,
+		const float maxClimbHeight,
+		float* verts,
+		float* dirs
+	);
+
 	const dtNavMesh* getAttachedNavMesh() const;
 	void clearLastPath();
 	const std::shared_ptr<CalcedPathEntry>& getLastPath() const;
@@ -1301,6 +1341,9 @@ private:
 	static bool availableWalkTransfer(const uint8_t from, const uint8_t to);
 	static bool availableJmpTransfer(const AgentCharacteristics* info, const TransferDataEntry* entry);
 
+	void fixEndPoint(
+		const dtPolyRef endRef, const dtPolyRef lastRef, const float* orig, float* fixed
+	) const;
 	std::pair<std::shared_ptr<CalcedPathEntry>, std::shared_ptr<CalcedPathEntry>>
 		pathEntriesArrToList(const uint32_t straightPathNum, const float* endPos) const;
 	// Finds the straight path from the start to the end position within the polygon corridor

@@ -70,7 +70,6 @@ static const int DT_VERTS_PER_POLYGON = 6; // max verts per navmesh polygon
 #ifdef ZENGINE_NAVMESH
 static_assert(DT_VERTS_PER_POLYGON == 6, "DT_VERTS_PER_POLYGON assumed is equal to 6");
 static const int MAX_PLANES_PER_BOUNDING_POLYHEDRON = DT_VERTS_PER_POLYGON + 1;
-static const float MAX_FWD_DST_FOR_CLIMB_BBOX = 50.f;
 #endif // ZENGINE_NAVMESH
 
 /// @{
@@ -188,23 +187,23 @@ struct dtPoly
 	unsigned char areaAndtype;
 
 #ifdef ZENGINE_NAVMESH
-	static const uint32_t EMPTY_JMP_ABILITY_FLAG = 0;
-
 	/// average plane of poly
 	float norm[3];
 	float dist;
 	float miny;
 	float maxy;
 
+	static const uint32_t EMPTY_JMP_ABILITY_FLAG = 0;
 	static_assert(DT_VERTS_PER_POLYGON == 6, "Change size of availabilityFlags for constant increasing");
-	static const uint32_t IDX_JMP_DOWN = 1;
-	static const uint32_t IDX_JMP_FWD = 2;
-	static const uint32_t IDX_CLIMB = 4;
+	static const uint32_t IDX_JMP_DOWN = 0;
+	static const uint32_t IDX_JMP_FWD = 1;
+	static const uint32_t IDX_CLIMB = 2;
 	static const uint32_t IDX_CLIMB_OVERLAPPED = 24;
+	static const uint32_t CLIMB_OVERLAPPED_FLAG = 1 << IDX_CLIMB_OVERLAPPED;
 	static const uint32_t EDGE_BITS_SIZE = 4;
 	// 0000000|x|edge5|edge4|edge3|edge2|edge1|edge0|
 	// x - climb overlapped bit
-	// edge - 4 bits, |reserved|jmp_down|jmp_fwd|climb|
+	// edge - 4 bits, |reserved|climb|jmp_fwd|jmp_down|
 	uint32_t jmpAbilityFlags;
 
 	struct JmpAbilityInfoEdge
@@ -234,20 +233,42 @@ struct dtPoly
 
 #ifdef ZENGINE_NAVMESH
 	inline bool isAveragePolyInited() const { return norm[0] != FLT_MAX; }
-	inline bool canJumpFromPoly() const { return jmpAbilityFlags; /*!= EMPTY_JMP_ABILITY_FLAG;*/ }
-	inline void setJmpAbilityFlags(const uint32_t v) { jmpAbilityFlags = v; }
-	inline uint32_t getEdgeJmpClimbFlags(int edgeIdx) const {
-		assert(edgeIdx >= 0 && edgeIdx <= 6);
-		return (jmpAbilityFlags >> edgeIdx * EDGE_BITS_SIZE) & 0xF;
+
+	inline uint32_t getJumpAbilityFlags() { return jmpAbilityFlags; }
+	inline uint32_t getEdgeJumpClimbFlags(uint32_t edgeIdx) const {
+		assert(edgeIdx >= 0 && edgeIdx <= 5);
+		static const uint32_t MASK =
+			((uint32_t)1 << IDX_JMP_DOWN) | ((uint32_t)1 << IDX_JMP_FWD) | ((uint32_t)1 << IDX_CLIMB);
+		return (jmpAbilityFlags >> (edgeIdx * EDGE_BITS_SIZE)) & MASK;
 	}
-	inline void setEdgeJmpClimbFlags(int edgeIdx, bool jmpDown, bool jmpFwd, bool climb)
+	inline bool getClimbOverlappedFlag() const { return jmpAbilityFlags & CLIMB_OVERLAPPED_FLAG; }
+
+	inline void setJumpAbilityFlags(uint32_t v) { jmpAbilityFlags = v; }
+	inline void setEdgeJumpClimbFlags(uint32_t edgeIdx, bool jmpDown, bool jmpFwd, bool climb)
 	{
 		assert(edgeIdx >= 0 && edgeIdx <= 5);
-		jmpAbilityFlags |= ((IDX_JMP_DOWN & (uint32_t)jmpDown) | (IDX_JMP_FWD & (uint32_t)jmpFwd) |
-							(IDX_CLIMB & (uint32_t)climb)) << edgeIdx * EDGE_BITS_SIZE;
+		jmpAbilityFlags |= (((uint32_t)jmpDown << IDX_JMP_DOWN) | ((uint32_t)jmpFwd << IDX_JMP_FWD) |
+							((uint32_t)climb << IDX_CLIMB)) << (edgeIdx * EDGE_BITS_SIZE);
 	}
-	inline bool getClimbOverlappedFlag() const { return jmpAbilityFlags & IDX_CLIMB_OVERLAPPED; }
-	inline void setClimbOverlappedFlag(bool v) { jmpAbilityFlags |= IDX_CLIMB_OVERLAPPED & (uint32_t)v; }
+	inline void setClimbOverlappedFlag(bool v) { jmpAbilityFlags |= (uint32_t)v << IDX_CLIMB_OVERLAPPED; }
+
+	inline bool canJumpFromPoly() const { return jmpAbilityFlags; }
+	inline bool canClimbOverlappedFromPoly() const
+	{
+		return jmpAbilityFlags & CLIMB_OVERLAPPED_FLAG;
+	}
+	inline bool canJumpDownFromPoly(uint32_t edgeIdx) const
+	{
+		return getEdgeJumpClimbFlags(edgeIdx) & (uint32_t(1) << IDX_JMP_DOWN);
+	}
+	inline bool canJumpForwardFromPoly(uint32_t edgeIdx) const
+	{
+		return getEdgeJumpClimbFlags(edgeIdx) & (uint32_t(1) << IDX_JMP_FWD);
+	}
+	inline bool canClimbFromPoly(uint32_t edgeIdx) const
+	{
+		return getEdgeJumpClimbFlags(edgeIdx) & (uint32_t(1) << IDX_CLIMB);
+	}
 #endif // ZENGINE_NAVMESH
 };
 

@@ -12,11 +12,18 @@
 #include "DetourDebugDraw.h"
 #include <cstring>
 #include <cstdio>
+#ifdef __APPLE__
+#	include <OpenGL/glu.h>
+#else
+#	include <GL/glu.h>
+#endif
 
 
 NavMeshVisualizerTool::NavMeshVisualizerTool():
 	m_sample(),
 	m_hitPoly(),
+	m_extractPrelimData(),
+	m_calcPrelimData(),
 	m_showPolyBbox(),
 	m_showJmpFwdBbox(),
 	m_showJmpDownBbox(),
@@ -61,7 +68,7 @@ void NavMeshVisualizerTool::handleMenu()
 
 	for (int i = 0; i < DT_VERTS_PER_POLYGON; ++i)
 	{
-		std::sprintf(msg, "Edge %d", i + 1);
+		std::sprintf(msg, "Edge %d", i);
 		if (m_polyConnectionEdges[i] && imguiCheck(msg, m_polySelectionEdges[i], true, 10))
 		{
 			m_polySelectionEdges[i] = !m_polySelectionEdges[i];
@@ -81,6 +88,15 @@ void NavMeshVisualizerTool::handleMenu()
 	{
 		m_showPolyBbox = false;
 	}
+	imguiSeparator();
+	if (imguiButton("Extract prelim. data"))
+	{
+		m_extractPrelimData = true;
+	}
+	if (imguiButton("Calc prelim. data"))
+	{
+		m_calcPrelimData = true;
+	}
 }
 
 void NavMeshVisualizerTool::handleClick(const float* s, const float* p, bool shift)
@@ -88,13 +104,14 @@ void NavMeshVisualizerTool::handleClick(const float* s, const float* p, bool shi
 	rcIgnoreUnused(s);
 	rcIgnoreUnused(shift);
 
-	if (!m_sample) return;
-	InputGeom* geom = m_sample->getInputGeom();
-	if (!geom) return;
+	if (!m_sample)
+		return;
 	dtNavMesh* nav = m_sample->getNavMesh();
-	if (!nav) return;
+	if (!nav)
+		return;
 	dtNavMeshQuery* query = m_sample->getNavMeshQuery();
-	if (!query) return;
+	if (!query)
+		return;
 
 	const float halfExtents[3] = { 20, 50, 20 };
 	dtQueryFilter filter;
@@ -136,105 +153,306 @@ void NavMeshVisualizerTool::handleStep()
 
 void NavMeshVisualizerTool::handleUpdate(const float dt)
 {
-	;
+	dtIgnoreUnused(dt);
+
+	if (!m_hitPoly)
+		return;
+	if (!m_sample->getNavMesh())
+		return;
+	if (!m_sample->getJmpNavMeshQuery())
+		return;
+	if (!m_sample->getInputGeom())
+		return;
+
+	if (m_extractPrelimData)
+	{
+		extractPreliminaryJumpData();
+		m_extractPrelimData = false;
+	}
+	if (m_calcPrelimData)
+	{
+		if(m_sample->getInputGeom())
+			calcPreliminaryJumpData();
+		m_calcPrelimData = false;
+	}
+}
+
+void NavMeshVisualizerTool::extractPreliminaryJumpData()
+{
+	const dtNavMesh* nav = m_sample->getNavMesh();
+	const dtMeshTile* tile{};
+	const dtPoly* poly{};
+	nav->getTileAndPolyByRefUnsafe(m_hitPoly, &tile, &poly);
+	rcContext* ctx = m_sample->getContext();
+
+	ctx->log(RC_LOG_PROGRESS, "Extraction preliminary data for poly ref: %llu", m_hitPoly);
+	for (int i = 0, n = poly->vertCount; i < n; ++i)
+	{
+		if (/*poly->neis[i] || */!poly->getEdgeJumpClimbFlags(i))
+			continue;
+
+		ctx->log(RC_LOG_PROGRESS, "   Edge: %d, jmp_down: %d, jmp_fwd: %d, climb: %d",
+			i, poly->canJumpDownFromPoly(i), poly->canJumpForwardFromPoly(i), poly->canClimbFromPoly(i));
+	}
+	ctx->log(RC_LOG_PROGRESS, "   Climb overlapped: %d", poly->canClimbOverlappedFromPoly());
+}
+
+void NavMeshVisualizerTool::calcPreliminaryJumpData()
+{
+	const dtNavMesh* nav = m_sample->getNavMesh();
+	const dtMeshTile* tile{};
+	const dtPoly* poly{};
+	nav->getTileAndPolyByRefUnsafe(m_hitPoly, &tile, &poly);
+	rcContext* ctx = m_sample->getContext();
+
+	ctx->log(RC_LOG_PROGRESS, "Calculation preliminary data for poly ref: %llu", m_hitPoly);
+	for (int i = 0, n = poly->vertCount; i < n; ++i)
+	{
+		if (poly->neis[i])
+			continue;
+		calcPreliminaryJumpFwdDownData(i, tile, poly);
+		calcPreliminaryClimbData(i, tile, poly);
+	}
+	calcPreliminaryClimbOverlappedData(tile, poly);
+}
+
+void NavMeshVisualizerTool::calcPreliminaryJumpFwdDownData(const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly)
+{
+	// TODO move such args to GUI
+	static constexpr float CHECK_BBOX_HEIGHT = 250.f;
+	static constexpr float SHRINK_COEFF = 0.95f;
+	//
+	const float checkBboxFwdDst = (tile->header->walkableRadius + 1.0f / tile->header->bvQuantFactor) * 2.f;
+	static const int DIRS_NUM = geometry::OBBExt::DIRS_NUM;
+	static const int VERTS_NUM = geometry::OBBExt::VERTS_NUM;
+	float v1[3], v2[3];
+	float polyCenter[3];
+	rcContext* ctx = m_sample->getContext();
+	dtJmpNavMeshQuery* query = m_sample->getJmpNavMeshQuery();
+	InputGeom* geom = m_sample->getInputGeom();
+
+	const int polyVertsNum = poly->vertCount;
+	geometry::vcopy(v1, &tile->verts[poly->verts[edgeIdx] * 3]);
+	geometry::vcopy(v2, &tile->verts[poly->verts[(edgeIdx + 1) % polyVertsNum] * 3]);
+	dtNavMesh::calcPolyCenter(tile, poly, polyCenter);
+	geometry::OBBExt obb;
+	bool res = dtJmpNavMeshQuery::calcObbDataForJumpingForwardDown(
+		v1, v2, polyCenter, checkBboxFwdDst, CHECK_BBOX_HEIGHT, SHRINK_COEFF, &obb
+	);
+	if (!res) {
+		// too little poly
+		return;
+	}
+
+	if (geom->obbCollDetect(&obb)) {
+		ctx->log(RC_LOG_PROGRESS, "Found collision for jumping forward/down at edge: %d", edgeIdx);
+	}
+	else {
+		ctx->log(RC_LOG_PROGRESS, "Not found collision for jumping forward/down at edge: %d", edgeIdx);
+	}
+}
+
+void NavMeshVisualizerTool::calcPreliminaryClimbData(const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly)
+{
+	// TODO move such args to GUI
+	const float CLIMB_OVERLAPPED_MAX_HEIGHT = 450.f;
+	//
+	const float checkBboxFwdDst = (tile->header->walkableRadius + 1.0f / tile->header->bvQuantFactor) * 2.f;
+	const float minClimbHeight = tile->header->walkableClimb - 1.0f / tile->header->bvQuantFactor;
+	static const int DIRS_NUM = geometry::OBBExt::DIRS_NUM;
+	static const int VERTS_NUM = geometry::OBBExt::VERTS_NUM;
+	float dirs[3 * DIRS_NUM];
+	float verts[3 * VERTS_NUM];
+	float v1[3], v2[3];
+	float polyCenter[3];
+	rcContext* ctx = m_sample->getContext();
+	dtJmpNavMeshQuery* query = m_sample->getJmpNavMeshQuery();
+
+	const int polyVertsNum = poly->vertCount;
+	geometry::vcopy(v1, &tile->verts[poly->verts[edgeIdx] * 3]);
+	geometry::vcopy(v2, &tile->verts[poly->verts[(edgeIdx + 1) % polyVertsNum] * 3]);
+	dtNavMesh::calcPolyCenter(tile, poly, polyCenter);
+	bool res = dtJmpNavMeshQuery::calcObbDataForClimbing(
+		v1, v2, polyCenter, checkBboxFwdDst, minClimbHeight,
+		CLIMB_OVERLAPPED_MAX_HEIGHT, verts, dirs
+	);
+	if (!res) {
+		// too little poly
+		return;
+	}
+
+	float min[3], max[3];
+	dtQueryFilter filter;
+	geometry::calcAabb(verts, VERTS_NUM, min, max);
+	dtFindCollidedPolysQuery<7, 256> collider(
+		query, dirs, DIRS_NUM, verts, VERTS_NUM, 256
+	);
+	dtStatus status = query->queryPolygonsAabb(min, max, &filter, &collider);
+	if (dtStatusSucceed(status)) {
+		const int n = collider.getPolysNum();
+		ctx->log(RC_LOG_PROGRESS, "Found for edge: %d climbing polys: %d", edgeIdx, n);
+		for (int i = 0; i < n; ++i)
+		{
+			dtPolyRef id = collider.getPoly(i);
+			ctx->log(RC_LOG_PROGRESS, "  Poly ref: %llu", id);
+		}
+	}
+	else {
+		ctx->log(RC_LOG_PROGRESS, __FUNCTION__": Error of polys finding");
+	}
+}
+
+void NavMeshVisualizerTool::calcPreliminaryClimbOverlappedData(const dtMeshTile* tile, const dtPoly* poly)
+{	
+	// TODO move such args to GUI
+	const float CLIMB_OVERLAPPED_MAX_HEIGHT = 450.f;
+	//
+	const float minClimbOverlappedHeight = tile->header->walkableHeight - 1.0f / tile->header->bvQuantFactor;
+	static const int NUM_DIRS = MAX_PLANES_PER_BOUNDING_POLYHEDRON;
+	static const int NUM_VERTS = (NUM_DIRS - 1) * 2;
+	float verts[3 * NUM_VERTS];
+	float dirs[3 * NUM_DIRS];
+	const int polyVertsNum = poly->vertCount;
+	float min[3], max[3];
+	dtQueryFilter filter;
+	rcContext* ctx = m_sample->getContext();
+	dtJmpNavMeshQuery* query = m_sample->getJmpNavMeshQuery();
+
+	dtJmpNavMeshQuery::calcObpDataForOverlappedClimbing(
+		tile, poly, minClimbOverlappedHeight, CLIMB_OVERLAPPED_MAX_HEIGHT, verts, dirs
+	);
+	geometry::calcAabb(verts, polyVertsNum * 2, min, max);
+	dtFindCollidedPolysQuery<7, 256> collider(
+		query, dirs, polyVertsNum + 1, verts, polyVertsNum * 2, 256
+	);
+
+	dtStatus status = query->queryPolygonsAabb(min, max, &filter, &collider);
+	if (dtStatusSucceed(status)) {
+		const int n = collider.getPolysNum();
+		ctx->log(RC_LOG_PROGRESS, "Found overlapped climbing polys: %d", n);
+		for (int i = 0; i < n; ++i)
+		{
+			dtPolyRef id = collider.getPoly(i);
+			ctx->log(RC_LOG_PROGRESS, "  Poly ref: %llu", id);
+		}
+	}
+	else {
+		ctx->log(RC_LOG_PROGRESS, __FUNCTION__": Error of polys finding");
+	}
 }
 
 void NavMeshVisualizerTool::renderClimbOverlappedBbox(const dtMeshTile* tile, const dtPoly* poly)
 {
-	const float CLIMB_OVERLAPPED_MIN_HEIGHT = 180.f;
-	const float CLIMB_OVERLAPPED_MAX_HEIGHT = 450.f;
-	static dtPolyRef oldRef = 0;
-
 	if (poly->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)
 		return;
 	dtJmpNavMeshQuery* query = m_sample->getJmpNavMeshQuery();
 	if (!query)
 		return;
 
-	rcContext* ctx = m_sample->getContext();
-	duDebugDraw& dd = m_sample->getDebugDraw();
-	float verts[3 * 6];
-	const int vertsNum = poly->vertCount;
-	for (int i = 0; i < vertsNum; ++i) {
-		geometry::vcopy(verts + i * 3, &tile->verts[poly->verts[i] * 3]);
+	// TODO move such args to GUI
+	const float CLIMB_OVERLAPPED_MAX_HEIGHT = 450.f;
+	//
+	const float minClimbOverlappedHeight = tile->header->walkableHeight - 1.0f / tile->header->bvQuantFactor;
+	static const int NUM_DIRS = MAX_PLANES_PER_BOUNDING_POLYHEDRON;
+	static const int NUM_VERTS = (NUM_DIRS - 1) * 2;
+	float verts[3 * NUM_VERTS];
+	float dirs[3 * NUM_DIRS];
+	const int polyVertsNum = poly->vertCount;
+
+	dtJmpNavMeshQuery::calcObpDataForOverlappedClimbing(
+		tile, poly, minClimbOverlappedHeight, CLIMB_OVERLAPPED_MAX_HEIGHT, verts, dirs
+	);
+
+	renderObp(verts, polyVertsNum * 2);
+}
+
+void NavMeshVisualizerTool::renderClimbBbox(const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly)
+{
+	if (poly->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)
+		return;
+	dtJmpNavMeshQuery* query = m_sample->getJmpNavMeshQuery();
+	if (!query)
+		return;
+	
+	// TODO move such args to GUI
+	const float CLIMB_OVERLAPPED_MAX_HEIGHT = 450.f;
+	//
+	const float checkBboxFwdDst = (tile->header->walkableRadius + 1.0f / tile->header->bvQuantFactor) * 2.f;
+	const float minClimbHeight = tile->header->walkableClimb - 1.0f / tile->header->bvQuantFactor;
+	static const int DIRS_NUM = geometry::OBBExt::DIRS_NUM;
+	static const int VERTS_NUM = geometry::OBBExt::VERTS_NUM;
+	float dirs[3 * DIRS_NUM];
+	float verts[3 * VERTS_NUM];
+	float v1[3], v2[3];
+	float polyCenter[3];
+
+	const int polyVertsNum = poly->vertCount;
+	assert(edgeIdx < polyVertsNum);
+	geometry::vcopy(v1, &tile->verts[poly->verts[edgeIdx] * 3]);
+	geometry::vcopy(v2, &tile->verts[poly->verts[(edgeIdx + 1) % polyVertsNum] * 3]);
+	dtNavMesh::calcPolyCenter(tile, poly, polyCenter);
+	bool res = dtJmpNavMeshQuery::calcObbDataForClimbing(
+		v1, v2, polyCenter, checkBboxFwdDst, minClimbHeight,
+		CLIMB_OVERLAPPED_MAX_HEIGHT, verts, dirs
+	);
+	if (!res) {
+		// too little poly
+		return;
 	}
 
-	//renderObpForOverlClimbing(m_ctx, m_startRef, m_jmpPathFinder, dd, poly->norm, poly->dist, verts, n, 180.f, 450.f);
-	float points[3 * 6 * 2];
-	float* halfPart = points + 3 * vertsNum;
-	for (int i = 0, n = 3 * vertsNum; i < n; i += 3)
-	{
-		geometry::calcVerticalVertexProjectionOnPlane(verts + i, poly->norm, poly->dist, points + i);
-		geometry::vcopy(halfPart + i, points + i);
-		(points + i)[1] += tile->header->walkableHeight;// CLIMB_OVERLAPPED_MIN_HEIGHT;
-		(halfPart + i)[1] += CLIMB_OVERLAPPED_MAX_HEIGHT;
+	renderObp(verts, geometry::OBBExt::VERTS_NUM);
+}
+
+void NavMeshVisualizerTool::renderJumpFwdDownBbox(
+	const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly
+) {
+	if (poly->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)
+		return;
+
+	// TODO move such args to GUI
+	static constexpr float CHECK_BBOX_HEIGHT = 250.f;
+	static constexpr float SHRINK_COEFF = 0.95f;
+	//
+	const float checkBboxFwdDst = (tile->header->walkableRadius + 1.0f / tile->header->bvQuantFactor) * 2.f;
+	static const int DIRS_NUM = geometry::OBBExt::DIRS_NUM;
+	static const int VERTS_NUM = geometry::OBBExt::VERTS_NUM;
+	float v1[3], v2[3];
+	float polyCenter[3];
+
+	const int polyVertsNum = poly->vertCount;
+	assert(edgeIdx < polyVertsNum);
+	geometry::vcopy(v1, &tile->verts[poly->verts[edgeIdx] * 3]);
+	geometry::vcopy(v2, &tile->verts[poly->verts[(edgeIdx + 1) % polyVertsNum] * 3]);
+	dtNavMesh::calcPolyCenter(tile, poly, polyCenter);
+	geometry::OBBExt obb;
+	bool res = dtJmpNavMeshQuery::calcObbDataForJumpingForwardDown(
+		v1, v2, polyCenter, checkBboxFwdDst, CHECK_BBOX_HEIGHT, SHRINK_COEFF, &obb
+	);
+	if (!res) {
+		// too little poly
+		return;
 	}
 
-	if (oldRef != m_hitPoly)
-	{
-		float dirs[3 * 7];
-		bool lastDirCalced = false;
-		float* lastDir = dirs + vertsNum * 3;
-		for (int i = 0, j = vertsNum - 1; i < vertsNum; ++i, ++j)
-		{
-			const float* v0 = points + (i + 1) * 3;
-			const float* v1 = points + i * 3;
-			const float* v2 = points + (j % vertsNum) * 3;
-			geometry::calcPerpToEdgeXz(v1, v2, dirs + i);
-			if (!lastDirCalced && i < vertsNum - 1)
-			{
-				float e1[3], e2[3];
-				geometry::vsub(e1, v0, v1);
-				geometry::vsub(e2, v2, v1);
-				geometry::vcross(lastDir, e1, e2);
-				if (geometry::vlen(lastDir) > 1e-3)
-					lastDirCalced = true;
-			}
-		}
-		if (!lastDirCalced)
-		{
-			assert(false);
-			lastDir[0] = lastDir[2] = 0.f;
-			lastDir[1] = 1.f;
-		}
+	renderObp(obb.getVerts(), geometry::OBBExt::VERTS_NUM);
+}
 
-		float min[3], max[3];
-		dtQueryFilter filter;
-		dtFindCollidedPolysQuery<7, 256> collider(
-			query, dirs, vertsNum + 1, points, vertsNum * 2, 256
-		);
-		filter.setIncludeFlags(common::SamplePolyFlags::SAMPLE_POLYFLAGS_ALL ^
-			common::SamplePolyFlags::SAMPLE_POLYFLAGS_DISABLED);
-		filter.setExcludeFlags(0);
-		geometry::calcAabb(points, vertsNum * 2, min, max);
-		dtStatus status = query->queryPolygonsAabb(min, max, &filter, &collider);
-		if (dtStatusSucceed(status)) {
-			int n = collider.getPolysNum();
-			ctx->log(RC_LOG_PROGRESS, "Found polys: %d", n);
-			for (int i = 0; i < n; ++i)
-			{
-				dtPolyRef id = collider.getPoly(i);
-				ctx->log(RC_LOG_PROGRESS, "  Poly ref: %llu", id);
-			}
-		}
-		else {
-			ctx->log(RC_LOG_PROGRESS, "Error of polys finding");
-		}
-		oldRef = m_hitPoly;
-	}
-
+void NavMeshVisualizerTool::renderObp(const float* vertices, const uint32_t verticesNum)
+{
+	assert((verticesNum & 1) == 0); // even verticesNum value
+	const uint32_t verticesNumHalf = verticesNum >> 1;
+	const float* first = vertices;
+	const float* second = vertices + 3 * verticesNumHalf;
 	const uint32_t color = duRGBA(0, 0, 255, 255);
-	const float* first = points;
-	const float* second = points + 3 * vertsNum;
+	duDebugDraw& dd = m_sample->getDebugDraw();
 	dd.begin(DU_DRAW_LINES, 2.0f);
-	for (int i = 0, j = vertsNum - 1; i < vertsNum; ++i, ++j)
+	for (uint32_t i = 0, j = verticesNumHalf - 1; i < verticesNumHalf; ++i, ++j)
 	{
 		const float* v1 = first + i * 3;
-		const float* v2 = first + (j % vertsNum) * 3;
+		const float* v2 = first + (j % verticesNumHalf) * 3;
 		dd.vertex(v1[0], v1[1], v1[2], color);
 		dd.vertex(v2[0], v2[1], v2[2], color);
 		v1 = second + i * 3;
-		v2 = second + (j % vertsNum) * 3;
+		v2 = second + (j % verticesNumHalf) * 3;
 		dd.vertex(v1[0], v1[1], v1[2], color);
 		dd.vertex(v2[0], v2[1], v2[2], color);
 		v1 = first + i * 3;
@@ -247,14 +465,14 @@ void NavMeshVisualizerTool::renderClimbOverlappedBbox(const dtMeshTile* tile, co
 
 void NavMeshVisualizerTool::handleRender()
 {
-	if (!m_hitPoly) return;
-	
-	duDebugDraw& dd = m_sample->getDebugDraw();
+	if (!m_hitPoly)
+		return;
 	const dtNavMesh* nav = m_sample->getNavMesh();
-	if (nav && m_hitPoly)
-	{
-		duDebugDrawNavMeshPoly(&dd, *nav, m_hitPoly, duRGBA(0, 0, 0, 128));
-	}
+	if (!nav)
+		return;
+
+	duDebugDraw& dd = m_sample->getDebugDraw();
+	duDebugDrawNavMeshPoly(&dd, *nav, m_hitPoly, duRGBA(0, 0, 0, 128));
 
 	const dtMeshTile* tile{};
 	const dtPoly* poly{};
@@ -267,13 +485,13 @@ void NavMeshVisualizerTool::handleRender()
 				continue;
 
 			if (m_showJmpFwdBbox) {
-				;
+				renderJumpFwdDownBbox(i, tile, poly);
 			}
 			if (m_showJmpDownBbox) {
-				;
+				renderJumpFwdDownBbox(i, tile, poly);
 			}
 			if (m_showClimbBbox) {
-				;
+				renderClimbBbox(i, tile, poly);
 			}
 		}
 		if (m_showClimbOverlappedBbox) {
@@ -284,11 +502,35 @@ void NavMeshVisualizerTool::handleRender()
 
 void NavMeshVisualizerTool::handleRenderOverlay(double* proj, double* model, int* view)
 {
-	rcIgnoreUnused(model);
-	rcIgnoreUnused(proj);
-
 	// Tool help
 	const int h = view[3];
-
 	imguiDrawText(280, h - 40, IMGUI_ALIGN_LEFT, "LMB: Click select poly", imguiRGBA(255, 255, 255, 192));
+
+	// draw edge indices
+	const dtNavMesh* nav = m_sample->getNavMesh();
+	if (!nav || !m_hitPoly)
+		return;
+	const dtMeshTile* tile{};
+	const dtPoly* poly{};
+	nav->getTileAndPolyByRefUnsafe(m_hitPoly, &tile, &poly);
+	float v1[3], v2[3];
+	float edgeCenter[3];
+	char text[32];
+	for (int i = 0, n = poly->vertCount; i < n; ++i)
+	{
+		geometry::vcopy(v1, &tile->verts[poly->verts[i] * 3]);
+		geometry::vcopy(v2, &tile->verts[poly->verts[(i + 1) % n] * 3]);
+		geometry::vadd(edgeCenter, v1, v2);
+		geometry::vmul(edgeCenter, 0.5f);
+
+		double x, y, z;
+		auto res = gluProject((double)edgeCenter[0], (double)edgeCenter[1], (double)edgeCenter[2],
+			model, proj, view, &x, &y, &z);
+		if (!res)
+			continue;
+		std::sprintf(text, "%d", i);
+		imguiDrawText(
+			(int)x, (int)y, IMGUI_ALIGN_CENTER, text, imguiRGBA(0, 0, 0, 220)
+		);
+	}
 }

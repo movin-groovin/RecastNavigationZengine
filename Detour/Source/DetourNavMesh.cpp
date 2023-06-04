@@ -1750,11 +1750,11 @@ void dtNavMesh::setPreliminaryJumpData(
 			continue;
 
 		const int vertsCount = static_cast<int>(p->vertCount);
-		dtPoly::JmpAbilityInfoPoly& polyData = data[i];
+		const dtPoly::JmpAbilityInfoPoly& polyData = data[i];
 		for (int j = 0; j < vertsCount; ++j)
 		{
-			dtPoly::JmpAbilityInfoEdge& edge = polyData.edges[j];
-			p->setEdgeJmpClimbFlags(j, edge.jmpDown, edge.jmpFwd, edge.climb);
+			const dtPoly::JmpAbilityInfoEdge& edge = polyData.edges[j];
+			p->setEdgeJumpClimbFlags(j, edge.jmpDown, edge.jmpFwd, edge.climb);
 		}
 		p->setClimbOverlappedFlag(polyData.climbOverlapped);
 	}

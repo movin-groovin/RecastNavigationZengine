@@ -61,7 +61,11 @@
 /// @see dtNavMeshQuery
 
 dtQueryFilter::dtQueryFilter() :
+#ifdef ZENGINE_NAVMESH
+	m_includeFlags(common::SamplePolyFlags::SAMPLE_POLYFLAGS_ALL ^ common::SamplePolyFlags::SAMPLE_POLYFLAGS_DISABLED),
+#else
 	m_includeFlags(0xffff),
+#endif // ZENGINE_NAVMESH
 	m_excludeFlags(0)
 {
 	for (int i = 0; i < DT_MAX_AREAS; ++i)
@@ -1891,6 +1895,111 @@ void dtJmpNavMeshQuery::JumpTransfersCommonData::init(
 	transfersData.clear();
 }
 
+bool dtJmpNavMeshQuery::calcObbDataForJumpingForwardDown(
+	const float* edgeV1,
+	const float* edgeV2,
+	const float* polyCenter,
+	const float checkBboxFwdDst,
+	const float checkBboxHeight,
+	const float shrinkCoeff,
+	geometry::OBBExt* obb
+) {
+	float outPerp[3];
+	float center[3];
+	float end[3];
+	float edgeDir[3];
+
+	if (!geometry::calcDirOutOfPolyXz(edgeV1, edgeV2, polyCenter, outPerp)) {
+		// too little poly
+		return false;
+	}
+	geometry::vadd(center, edgeV1, edgeV2);
+	geometry::vmul(center, 0.5f);
+	geometry::vsub(edgeDir, edgeV2, edgeV1);
+	geometry::vmad(end, center, outPerp, checkBboxFwdDst);
+	const float edgeLen = geometry::vdist(edgeV1, edgeV2);
+	obb->init(center, end, edgeDir, edgeLen * 0.5f, checkBboxHeight * 0.5f, shrinkCoeff);
+	return true;
+}
+
+bool dtJmpNavMeshQuery::calcObbDataForClimbing(
+	const float* edgeV1,
+	const float* edgeV2,
+	const float* polyCenter,
+	const float forwardDistance,
+	const float minClimbHeight,
+	const float maxClimbHeight,
+	float* verts,
+	float* dirs
+) {
+	float outPerp[3];
+	float v1[3], v2[3];
+
+	geometry::vcopy(v1, edgeV1);
+	geometry::vcopy(v2, edgeV2);
+	v1[1] += minClimbHeight;
+	v2[1] += minClimbHeight;
+	if (!geometry::calcDirOutOfPolyXz(v1, v2, polyCenter, outPerp)) {
+		// too little poly
+		return false;
+	}
+	geometry::calcObbDirsAndPoints(
+		v1, v2, outPerp, forwardDistance, maxClimbHeight - minClimbHeight, dirs, verts
+	);
+	return true;
+}
+
+void dtJmpNavMeshQuery::calcObpDataForOverlappedClimbing(
+	const dtMeshTile* tile,
+	const dtPoly* poly,
+	const float minClimbHeight,
+	const float maxClimbHeight,
+	float* verts,
+	float* dirs
+) {
+	float polyVertices[(DT_VERTS_PER_POLYGON + 1) * 3];
+	const int n = poly->vertCount;
+	for (int j = 0; j < n; ++j)
+	{
+		geometry::vcopy(polyVertices + j * 3, &tile->verts[poly->verts[j] * 3]);
+	}
+	// double copy of first edge for easy edge processing
+	geometry::vcopy(polyVertices + n * 3, polyVertices);
+	calcObpDataForOverlappedClimbing(
+		polyVertices, n, poly->norm, poly->dist, minClimbHeight, maxClimbHeight, verts, dirs
+	);
+}
+
+void dtJmpNavMeshQuery::calcObpDataForOverlappedClimbing(
+	const float* polyVertices,
+	const int verticesNum,
+	const float* polyNorm,
+	const float polyDist,
+	const float minClimbHeight,
+	const float maxClimbHeight,
+	float* verts,
+	float* dirs
+) {
+	// For optimization we don't check size of verts and dirs. Size of 'dirs' must be equal to OBP_NUM_DIRS.
+	// Size of 'verts' must be equal to OBP_NUM_VERTS.
+	// 'polyVertices' holds poly vertices + first vertex at it's end, so it holds poly verts number + 1.
+	// See another version of 'calcObpDataForOverlappedClimbing'.
+	float* dirsPtr = dirs;
+	float* firstPart = verts;
+	float* secondPart = verts + 3 * verticesNum;
+	for (const float* end = secondPart; firstPart < end; firstPart += 3, secondPart += 3, polyVertices += 3, dirsPtr += 3)
+	{
+		geometry::calcVerticalVertexProjectionOnPlane(polyVertices, polyNorm, polyDist, firstPart);
+		geometry::vcopy(secondPart, firstPart);
+		firstPart[1] += minClimbHeight;
+		secondPart[1] += maxClimbHeight;
+		// at last iteration there isn't undound 'polyVertices' access, because it holds + first vertex
+		geometry::calcPerpToEdgeXz(polyVertices, polyVertices + 3, dirsPtr);
+	}
+	geometry::vcopy(dirs + verticesNum * 3, polyNorm);
+}
+
+// description see in 'dtNavMeshQuery::findPath'
 dtStatus dtJmpNavMeshQuery::findPathWithJumps(
 	const uint32_t agentIdx,
 	const dtPolyRef startRef,
@@ -2310,9 +2419,18 @@ void dtJmpNavMeshQuery::findPolysReachableJumpingAndClimbing(
 		// too little poly
 		return;
 	}
-	findPolysReachableJumpingForward(edgeV1, edgeV2, outPerp, agentChars, commonData, transfers);
-	findPolysReachableJumpingDown(edgeV1, edgeV2, outPerp, agentChars, commonData, transfers);
-	findPolysReachableClimbing(edgeV1, edgeV2, outPerp, agentChars, commonData, transfers);
+	if (commonData.startPoly->canClimbFromPoly(edgeIdx))
+	{
+		findPolysReachableClimbing(edgeV1, edgeV2, outPerp, agentChars, commonData, transfers);
+	}
+	if (commonData.startPoly->canJumpForwardFromPoly(edgeIdx))
+	{
+		findPolysReachableJumpingForward(edgeV1, edgeV2, outPerp, agentChars, commonData, transfers);
+	}
+	if (commonData.startPoly->canJumpDownFromPoly(edgeIdx))
+	{
+		findPolysReachableJumpingDown(edgeV1, edgeV2, outPerp, agentChars, commonData, transfers);
+	}
 }
 
 void dtJmpNavMeshQuery::findPolysReachableJumpingForward(
@@ -2344,9 +2462,7 @@ void dtJmpNavMeshQuery::findPolysReachableJumpingForward(
 		agentChars->maxJmpFwdDistance,
 		agentChars->maxJmpFwdHeight * 2.f,
 		dirs,
-		geometry::OBBExt::DIRS_NUM,
-		verts,
-		geometry::OBBExt::VERTS_NUM
+		verts
 	);
 	geometry::calcAabb(verts, geometry::OBBExt::VERTS_NUM, aabbMin, aabbMax);
 	dtFindCollidedPolysQuery<geometry::OBBExt::DIRS_NUM, POLY_ARR_SIZE_FOR_EXTRACTION> jmpFwdQuery(
@@ -2399,9 +2515,7 @@ void dtJmpNavMeshQuery::findPolysReachableJumpingDown(
 		agentChars->maxJmpDownDistance,
 		agentChars->maxJmpDownHeight,
 		dirs,
-		geometry::OBBExt::DIRS_NUM,
-		verts,
-		geometry::OBBExt::VERTS_NUM
+		verts
 	);
 	geometry::calcAabb(verts, geometry::OBBExt::VERTS_NUM, aabbMin, aabbMax);
 	dtFindCollidedPolysQuery<geometry::OBBExt::DIRS_NUM, POLY_ARR_SIZE_FOR_EXTRACTION> jmpDownQuery(
@@ -2444,9 +2558,7 @@ void dtJmpNavMeshQuery::findPolysReachableClimbing(
 		agentChars->agentLength,
 		agentChars->maxClimbHeight,
 		dirs,
-		geometry::OBBExt::DIRS_NUM,
-		verts,
-		geometry::OBBExt::VERTS_NUM
+		verts
 	);
 	geometry::calcAabb(verts, geometry::OBBExt::VERTS_NUM, aabbMin, aabbMax);
 	dtFindCollidedPolysQuery<geometry::OBBExt::DIRS_NUM, POLY_ARR_SIZE_FOR_EXTRACTION> climbQuery(
@@ -2474,6 +2586,9 @@ void dtJmpNavMeshQuery::findPolysReachableClimbingOverlapped(
 	const AgentCharacteristics* agentChars,
 	JumpTransfersCommonData& commonData
 ) {
+	if (!commonData.startPoly->canClimbOverlappedFromPoly())
+		return;
+	
 	static const float EPS = 1e-3;
 	static const int DIRS_NUM = MAX_PLANES_PER_BOUNDING_POLYHEDRON;
 	static const int VERTS_NUM = (DIRS_NUM - 1) * 2;
@@ -2593,6 +2708,7 @@ uint32_t dtJmpNavMeshQuery::calcPathWithJumps(
 	dtPolyRef startRef = 0;
 	dtPolyRef endRef = 0;
 	const AgentCharacteristics& agentChars = m_agentChars[agentIdx];
+	float fixedEndPos[3];
 
 	// find polys corridor
 	findNearestPoly(startPos, &agentChars.filter, &startRef);
@@ -2610,10 +2726,11 @@ uint32_t dtJmpNavMeshQuery::calcPathWithJumps(
 	{
 		const PolyToPolyTransfer& entry = m_finPathData.polyPath[0];
 		assert(entry.transferTypeToNextPoly == NavmeshPolyTransferFlags::NO_ACTION);
+		fixEndPoint(endRef, entry.polyRefFrom, endPos, fixedEndPos);
 		m_calcedPath = CalcedPathEntry::makeEntry(
 			NavmeshPolyTransferFlags::WALKING,
 			startPos,
-			endPos,
+			fixedEndPos,
 			entry.polyRefFrom
 		);
 		return CALC_PATH_OK;
@@ -2672,12 +2789,7 @@ uint32_t dtJmpNavMeshQuery::calcPathWithJumps(
 		curStartPos = arrEntry.posTo;
 	}
 
-	float fixedEndPos[3];
-	geometry::vcopy(fixedEndPos, endPos);
-	const dtPolyRef lastPoly = m_finPathData.rawPolyPath[rawPolyPathNum - 1];
-	if (lastPoly != endRef) {
-		m_nav->closestPointOnPoly(lastPoly, endPos, fixedEndPos, nullptr);
-	}
+	fixEndPoint(endRef, m_finPathData.rawPolyPath[rawPolyPathNum - 1], endPos, fixedEndPos);
 	status = findStraightPath(
 		curStartPos, fixedEndPos, m_finPathData.rawPolyPath, rawPolyPathNum, flags, &straightPathNum
 	);
@@ -2695,6 +2807,15 @@ uint32_t dtJmpNavMeshQuery::calcPathWithJumps(
 	}
 	
 	return CALC_PATH_OK;
+}
+
+void dtJmpNavMeshQuery::fixEndPoint(
+	const dtPolyRef endRef, const dtPolyRef lastRef, const float* orig, float* fixed
+) const {
+	geometry::vcopy(fixed, orig);
+	if (lastRef != endRef) {
+		m_nav->closestPointOnPoly(lastRef, orig, fixed, nullptr);
+	}
 }
 
 std::pair<std::shared_ptr<CalcedPathEntry>, std::shared_ptr<CalcedPathEntry>>

@@ -609,6 +609,7 @@ bool calcDirOutOfPolyXz(const float* v1, const float* v2, const float* vThird, f
 	return true;
 }
 
+// dirs consists 9 floats, points - 24 floats
 void calcObbDirsAndPoints(
 	const float* v1,
 	const float* v2,
@@ -616,15 +617,8 @@ void calcObbDirsAndPoints(
 	const float fwdDst,
 	const float height,
 	float* dirs,
-	const float dirsSize,
-	float* points,
-	const float pointsSize
+	float* points
 ) {
-	static const float EPS = 1e-4;
-	assert(dirsSize >= 3);
-	assert(pointsSize >= 8);
-	assert(vlen(fwdDirNorm) > EPS); // TODO disable
-
 	vsub(dirs, v2, v1);
 	const float dstSide = vlen(dirs);
 	vnormalize(dirs);
@@ -638,13 +632,17 @@ void calcObbDirsAndPoints(
 	const float* dirUp = dirs + 6;
 	vcopy(points, v1);
 	vcopy(points + 3, v2);
-	vmad(points + 6, v1, dirFwd, fwdDst);
-	vmad(points + 9, v2, dirFwd, fwdDst);
+	vmad(points + 6, v2, dirFwd, fwdDst);
+	vmad(points + 9, v1, dirFwd, fwdDst);
 	float* v5 = points + 12;
+	float* v6 = points + 15;
 	vmad(v5, v1, dirUp, height);
-	vmad(points + 15, v5, dirSide, dstSide);
-	vmad(points + 18, v5, dirFwd, fwdDst);
-	vmad(points + 21, points + 15, dirFwd, fwdDst);
+	//vmad(points + 15, v5, dirSide, dstSide);
+	vmad(v6, v2, dirUp, height);
+	//vmad(points + 18, v5, dirFwd, fwdDst);
+	//vmad(points + 21, points + 15, dirFwd, fwdDst);
+	vmad(points + 18, v6, dirFwd, fwdDst);
+	vmad(points + 21, v5, dirFwd, fwdDst);
 }
 
 void calcCenterAndHalfExtents(const float* verts, const int vertsSize, float* center, float* halfExtents)

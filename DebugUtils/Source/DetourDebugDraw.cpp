@@ -288,11 +288,8 @@ static void drawAverageNavmeshPolysTile(
 	dd->depthMask(true);
 }
 
-static void drawPreliminaryJumpData(
-	duDebugDraw* dd,
-	const dtNavMesh& mesh,
-	const dtMeshTile* tile
-) {
+static void drawPreliminaryJumpData(duDebugDraw* dd, const dtMeshTile* tile)
+{
 	const float lineWidth = 2.0f;
 	unsigned int green = duRGBA(0, 0xFF, 0, 0xFF);
 	unsigned int blue = duRGBA(0, 0, 0xFF, 0xFF);
@@ -314,7 +311,7 @@ static void drawPreliminaryJumpData(
 			if (poly->neis[j])
 				continue;
 
-			if (poly->getEdgeJmpClimbFlags(j)) {
+			if (poly->getEdgeJumpClimbFlags(j)) {
 				dd->vertex(v0, green);
 				dd->vertex(v1, green);
 			}
@@ -328,7 +325,7 @@ static void drawPreliminaryJumpData(
 		{
 			const float* v0 = &tile->verts[poly->verts[n] * 3];
 			const float* v1 = &tile->verts[poly->verts[0] * 3];
-			if (poly->getEdgeJmpClimbFlags(n)) {
+			if (poly->getEdgeJumpClimbFlags(n)) {
 				dd->vertex(v0, green);
 				dd->vertex(v1, green);
 			}
@@ -376,7 +373,7 @@ void duDebugDrawNavMeshPolyPrelimData(struct duDebugDraw* dd, const dtNavMesh& m
 		if (poly->neis[j])
 			continue;
 
-		if (poly->getEdgeJmpClimbFlags(j)) {
+		if (poly->getEdgeJumpClimbFlags(j)) {
 			dd->vertex(v0, green);
 			dd->vertex(v1, green);
 		}
@@ -390,7 +387,7 @@ void duDebugDrawNavMeshPolyPrelimData(struct duDebugDraw* dd, const dtNavMesh& m
 	{
 		const float* v0 = &tile->verts[poly->verts[n] * 3];
 		const float* v1 = &tile->verts[poly->verts[0] * 3];
-		if (poly->getEdgeJmpClimbFlags(n)) {
+		if (poly->getEdgeJumpClimbFlags(n)) {
 			dd->vertex(v0, green);
 			dd->vertex(v1, green);
 		}
@@ -432,7 +429,7 @@ void duDebugDrawNavMeshWithClosedListFast(
 		}
 		if (showPreliminaryJumpData)
 		{
-			drawPreliminaryJumpData(dd, mesh, tile);
+			drawPreliminaryJumpData(dd, tile);
 		}
     }
 }
