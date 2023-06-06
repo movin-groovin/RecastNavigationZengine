@@ -25,6 +25,13 @@ void duDebugDrawTriMesh(struct duDebugDraw* dd, const float* verts, int nverts, 
 void duDebugDrawTriMeshSlope(struct duDebugDraw* dd, const float* verts, int nverts, const int* tris, const float* normals, int ntris, const float walkableSlopeAngle, const float texScale, const float* cameraPos = nullptr);
 
 #ifdef ZENGINE_NAVMESH
+void duDebugDrawVobsAabbsFast(
+	duDebugDraw* dd,
+	const float* verts,
+	const int* tris,
+	const int ntris
+);
+
 void duDebugDrawTriMeshSlopeFast(
 	struct duDebugDraw* dd,
     const float* verts,

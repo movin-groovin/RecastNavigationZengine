@@ -613,6 +613,7 @@ public:
 	void clearStatPerCall() const;
 #endif
 #ifdef RENDERING_ENABLED
+	const TrianglesData& getVobsAabbsData() const;
 	const TrianglesData& getRenderingData() const;
 #endif
 	const MarkedArea* getMarkedArea(int i) const;
@@ -650,6 +651,7 @@ private:
 	int constructVobs(MeshLoaderInterface* mesh);
 #ifdef RENDERING_ENABLED
 	int constructRenderingData(MeshLoaderInterface* mesh);
+	void constructVobsAbbsData(MeshLoaderInterface* mesh);
 #endif
 	int constructOverlappingRectData(
 		std::unique_ptr<std::pair<int, int>[]> trisVertsPerCellStatic
@@ -741,6 +743,7 @@ private:
 	common::ArrayBuffer<MarkedEntry> m_markedAreas;
 	OffMeshData m_offMeshConns;
 #ifdef RENDERING_ENABLED
+	TrianglesData m_vobsAabbsData;
 	TrianglesData m_renderingData;
 #endif
 #ifdef LOGGING_ENABLED

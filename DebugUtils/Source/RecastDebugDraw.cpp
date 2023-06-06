@@ -82,6 +82,31 @@ void duDebugDrawTriMesh(duDebugDraw* dd, const float* verts, int /*nverts*/,
 }
 
 #ifdef ZENGINE_NAVMESH
+void duDebugDrawVobsAabbsFast(
+	duDebugDraw* dd,
+	const float* verts,
+	const int* tris,
+	const int ntris
+) {
+	uint32_t color = duRGBA(255, 255, 255, 128);
+	dd->begin(DU_DRAW_LINES, 2.0f);
+	for (int i = 0; i < ntris; i += 1)
+	{
+		const int* vIds = tris + i * 3;
+		const float* v1 = verts + vIds[0];
+		const float* v2 = verts + vIds[1];
+		const float* v3 = verts + vIds[2];
+
+		dd->vertex(v1, color);
+		dd->vertex(v2, color);
+		dd->vertex(v2, color);
+		dd->vertex(v3, color);
+		dd->vertex(v3, color);
+		dd->vertex(v1, color);
+	}
+	dd->end();
+}
+
 void duDebugDrawTriMeshSlopeFast(
 	duDebugDraw* dd,
     const float* verts,

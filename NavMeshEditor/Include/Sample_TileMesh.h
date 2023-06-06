@@ -152,6 +152,7 @@ protected:
     bool m_highlightLiquidPolys;
 	bool m_showAverageNavmeshPolys;
 	bool m_showPreliminaryJumpData;
+	bool m_showVobsAabbs;
 	
 	bool m_continueMeshGenWhileTileError;
 	int m_maxTiles;

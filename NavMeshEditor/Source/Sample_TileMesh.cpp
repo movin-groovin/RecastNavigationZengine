@@ -176,15 +176,16 @@ public:
 };
 
 Sample_TileMesh::Sample_TileMesh() :
-    m_keepInterResults(false),
-    m_buildAll(true),
-    m_totalBuildTimeMs(0),
+	m_keepInterResults(false),
+	m_buildAll(true),
+	m_totalBuildTimeMs(0),
 	m_collected(false),
-    m_drawMode(DRAWMODE_NAVMESH),
-    m_showNonTriPolys(false),
-    m_highlightLiquidPolys(false),
+	m_drawMode(DRAWMODE_NAVMESH),
+	m_showNonTriPolys(false),
+	m_highlightLiquidPolys(false),
 	m_showAverageNavmeshPolys(false),
 	m_showPreliminaryJumpData(false),
+	m_showVobsAabbs(false),
 	m_continueMeshGenWhileTileError(true),
     m_maxTiles(0),
     m_maxPolysPerTile(0),
@@ -464,6 +465,11 @@ void Sample_TileMesh::handleDebugMode()
 		m_highlightLiquidPolys = !m_highlightLiquidPolys;
 		m_ddVboMesh.reset();
 	}
+	if (imguiCheck("Show aabbs of vobs", m_showVobsAabbs))
+	{
+		m_showVobsAabbs = !m_showVobsAabbs;
+		m_ddVboMesh.reset();
+	}
 
 	// navmesh
 	if (imguiCheck("Input Mesh", m_drawMode == DRAWMODE_MESH, valid[DRAWMODE_MESH]))
@@ -642,6 +648,12 @@ void Sample_TileMesh::handleRender(const float* cameraPos)
 				rndData.triFlags, rndData.normals, rndData.trisNumCurrent,
 				m_agentMaxSlope, texScale, cameraPos, m_showNonTriPolys, m_highlightLiquidPolys
 			);
+
+			if (m_showVobsAabbs)
+			{
+				const mesh::Grid2dBvh::TrianglesData& aabbsData = space.getVobsAabbsData();
+				duDebugDrawVobsAabbsFast(&m_ddVboMesh, aabbsData.verts, aabbsData.tris, aabbsData.trisNumCurrent);
+			}
 		}
         m_geom->drawOffMeshConnections(&m_dd);
 		m_geom->drawCutPlanes(&m_dd);

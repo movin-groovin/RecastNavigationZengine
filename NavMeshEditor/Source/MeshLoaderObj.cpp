@@ -927,7 +927,7 @@ ErrorCode4 MeshLoaderObjExt::addVobBboxesToStaticMesh()
 			const float dX = pos.aabbMax[0] - pos.aabbMin[0];
 			const float dY = pos.aabbMax[1] - pos.aabbMin[1];
 			const float dZ = pos.aabbMax[2] - pos.aabbMin[2];
-			const float* v = &pos.aabbMin[0];
+			const float* min = &pos.aabbMin[0];
 
 			if (vertCnt == vertsNum) {
 				vertsNum *= 2;
@@ -938,21 +938,23 @@ ErrorCode4 MeshLoaderObjExt::addVobBboxesToStaticMesh()
 				verts.reset(vertsNew);
 			}
 			int n = vertCnt * 3;
-			verts[n] = v[0]; verts[n + 1] = v[1] + dY; verts[n + 2] = v[2] + dZ; // 0
+			verts[n] = min[0]; verts[n + 1] = min[1]; verts[n + 2] = min[2]; // 0
 			n += 3;
-			verts[n] = v[0]; verts[n + 1] = v[1] + dY; verts[n + 2] = v[2]; // 1
+			verts[n] = min[0] + dX; verts[n + 1] = min[1]; verts[n + 2] = min[2]; // 1
 			n += 3;
-			verts[n] = v[0]; verts[n + 1] = v[1]; verts[n + 2] = v[2] + dZ; // 2
+			verts[n] = min[0] + dX; verts[n + 1] = min[1]; verts[n + 2] = min[2] + dZ; // 2
 			n += 3;
-			verts[n] = v[0]; verts[n + 1] = v[1]; verts[n + 2] = v[2]; // 3
+			verts[n] = min[0]; verts[n + 1] = min[1]; verts[n + 2] = min[2] + dZ; // 3
 			n += 3;
-			verts[n] = v[0] + dX; verts[n + 1] = v[1] + dY; verts[n + 2] = v[2] + dZ; // 4
+
+			verts[n] = min[0]; verts[n + 1] = min[1] + dY; verts[n + 2] = min[2]; // 4
 			n += 3;
-			verts[n] = v[0] + dX; verts[n + 1] = v[1] + dY; verts[n + 2] = v[2]; // 5
+			verts[n] = min[0] + dX; verts[n + 1] = min[1] + dY; verts[n + 2] = min[2]; // 5
 			n += 3;
-			verts[n] = v[0] + dX; verts[n + 1] = v[1]; verts[n + 2] = v[2] + dZ; // 6
+			verts[n] = min[0] + dX; verts[n + 1] = min[1] + dY; verts[n + 2] = min[2] + dZ; // 6
 			n += 3;
-			verts[n] = v[0] + dX; verts[n + 1] = v[1]; verts[n + 2] = v[2]; // 7
+			verts[n] = min[0]; verts[n + 1] = min[1] + dY; verts[n + 2] = min[2] + dZ; // 7
+
 			//n += 3;
 
 			if (polyCnt == polysNum) {
@@ -971,42 +973,43 @@ ErrorCode4 MeshLoaderObjExt::addVobBboxesToStaticMesh()
 				flags.reset(flagsNew);
 			}
 			int m = polyCnt * 3;
-			tris[m] = vertCnt; tris[m+1] = vertCnt + 1; tris[m+2] = vertCnt + 2;
+			tris[m] = vertCnt; tris[m + 1] = vertCnt + 1; tris[m + 2] = vertCnt + 2;
 			pos.aabbTris[0] = polyCnt;
 			m += 3;
-			tris[m] = vertCnt + 1; tris[m+1] = vertCnt + 3; tris[m+2] = vertCnt + 2;
+			tris[m] = vertCnt + 0; tris[m + 1] = vertCnt + 2; tris[m + 2] = vertCnt + 3;
 			pos.aabbTris[1] = polyCnt + 1;
 			m += 3;
-			tris[m] = vertCnt + 4; tris[m+1] = vertCnt + 5; tris[m+2] = vertCnt + 6;
+			tris[m] = vertCnt + 4; tris[m + 1] = vertCnt + 5; tris[m + 2] = vertCnt + 6;
 			pos.aabbTris[2] = polyCnt + 2;
 			m += 3;
-			tris[m] = vertCnt + 5; tris[m+1] = vertCnt + 7; tris[m+2] = vertCnt + 6;
+			tris[m] = vertCnt + 4; tris[m + 1] = vertCnt + 6; tris[m + 2] = vertCnt + 7;
 			pos.aabbTris[3] = polyCnt + 3;
 			m += 3;
-			tris[m] = vertCnt + 6; tris[m+1] = vertCnt + 7; tris[m+2] = vertCnt + 2;// 672 - 4
+
+			tris[m] = vertCnt + 0; tris[m + 1] = vertCnt + 1; tris[m + 2] = vertCnt + 5;
 			pos.aabbTris[4] = polyCnt + 4;
 			m += 3;
-			tris[m] = vertCnt + 2; tris[m+1] = vertCnt + 7; tris[m+2] = vertCnt + 3;//273 - 5
+			tris[m] = vertCnt + 0; tris[m + 1] = vertCnt + 5; tris[m + 2] = vertCnt + 4;
 			pos.aabbTris[5] = polyCnt + 5;
 			m += 3;
-			tris[m] = vertCnt + 4; tris[m+1] = vertCnt + 5; tris[m+2] = vertCnt;
+			tris[m] = vertCnt + 3; tris[m + 1] = vertCnt + 2; tris[m + 2] = vertCnt + 6;
 			pos.aabbTris[6] = polyCnt + 6;
 			m += 3;
-			tris[m] = vertCnt; tris[m+1] = vertCnt + 5; tris[m+2] = vertCnt + 1;
+			tris[m] = vertCnt + 3; tris[m + 1] = vertCnt + 6; tris[m + 2] = vertCnt + 7;
 			pos.aabbTris[7] = polyCnt + 7;
 			m += 3;
-			tris[m] = vertCnt + 2; tris[m+1] = vertCnt + 6; tris[m+2] = vertCnt;
+
+			tris[m] = vertCnt + 1; tris[m + 1] = vertCnt + 2; tris[m + 2] = vertCnt + 6;
 			pos.aabbTris[8] = polyCnt + 8;
 			m += 3;
-			tris[m] = vertCnt; tris[m+1] = vertCnt + 6; tris[m+2] = vertCnt + 4;
+			tris[m] = vertCnt + 1; tris[m + 1] = vertCnt + 6; tris[m + 2] = vertCnt + 5;
 			pos.aabbTris[9] = polyCnt + 9;
 			m += 3;
-			tris[m] = vertCnt + 1; tris[m+1] = vertCnt + 3; tris[m+2] = vertCnt + 7;
+			tris[m] = vertCnt + 0; tris[m + 1] = vertCnt + 3; tris[m + 2] = vertCnt + 7;
 			pos.aabbTris[10] = polyCnt + 10;
 			m += 3;
-			tris[m] = vertCnt + 1; tris[m+1] = vertCnt + 7; tris[m+2] = vertCnt + 5;
+			tris[m] = vertCnt + 0; tris[m + 1] = vertCnt + 7; tris[m + 2] = vertCnt + 4;
 			pos.aabbTris[11] = polyCnt + 11;
-			//m += 3;
 
 			for (int k = polyCnt; k < polyCnt + 12; ++k) {
 				flags[k] =
@@ -1022,8 +1025,8 @@ ErrorCode4 MeshLoaderObjExt::addVobBboxesToStaticMesh()
 					assert(1 != 1);
 					flagValue = 0;
 				}
-                flags[polyCnt + 4].polyFlags = flagValue;
-                flags[polyCnt + 5].polyFlags = flagValue;
+				flags[polyCnt + 0].polyFlags = flagValue;
+				flags[polyCnt + 1].polyFlags = flagValue;
                 /*
                 // Doors and ladders by mean convex areas
                 std::unique_ptr<float[]> bottomVerts(new(std::nothrow) float [3 * 4]);

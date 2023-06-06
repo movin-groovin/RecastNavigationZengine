@@ -312,6 +312,13 @@ public:
 		std::memset(_halfWidth, 0, sizeof(_halfWidth));
 	}
 
+	void copy(OBB& to) const
+	{
+		std::memcpy(to.dir, dir, sizeof(dir));
+		std::memcpy(to.center, center, sizeof(center));
+		std::memcpy(to._halfWidth, _halfWidth, sizeof(_halfWidth));
+	}
+
 	const float* getDirs() const { return dir; }
 	const float* getDir(const int idx) const { assert(idx >= 0 && idx < 3); return &dir[idx * 3]; }
 	void setDir(const int idx, const float* dat)
@@ -372,6 +379,12 @@ public:
 	{
 		OBB::clear();
 		std::memset(m_verts, 0, sizeof(m_verts));
+	}
+
+	void copy(OBBExt& to) const
+	{
+		OBB::copy(to);
+		std::memcpy(to.m_verts, m_verts, sizeof(m_verts));
 	}
 
 	const float* getVerts() const { return m_verts; }
