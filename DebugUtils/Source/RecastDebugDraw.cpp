@@ -86,25 +86,37 @@ void duDebugDrawVobsAabbsFast(
 	duDebugDraw* dd,
 	const float* verts,
 	const int* tris,
-	const int ntris
+	const int ntris,
+	const int trisNumPerIter
 ) {
 	uint32_t color = duRGBA(255, 255, 255, 128);
-	dd->begin(DU_DRAW_LINES, 2.0f);
-	for (int i = 0; i < ntris; i += 1)
+	//dd->begin(DU_DRAW_LINES, 2.0f);
+	for (int i = 0, n = ntris / trisNumPerIter; i < n; ++i)
 	{
-		const int* vIds = tris + i * 3;
-		const float* v1 = verts + vIds[0];
-		const float* v2 = verts + vIds[1];
-		const float* v3 = verts + vIds[2];
-
-		dd->vertex(v1, color);
-		dd->vertex(v2, color);
-		dd->vertex(v2, color);
-		dd->vertex(v3, color);
-		dd->vertex(v3, color);
-		dd->vertex(v1, color);
+		float bmin[3] = { FLT_MAX, FLT_MAX , FLT_MAX };
+		float bmax[3] = { -FLT_MAX, -FLT_MAX , -FLT_MAX };
+		for (int j = 0; j < trisNumPerIter; ++j)
+		{
+			const int* vIds = tris + (i * trisNumPerIter + j) * 3;
+			const float* v1 = verts + vIds[0];
+			const float* v2 = verts + vIds[1];
+			const float* v3 = verts + vIds[2];
+			rcVmin(bmin, v1);
+			rcVmin(bmin, v2);
+			rcVmin(bmin, v3);
+			rcVmax(bmax, v1);
+			rcVmax(bmax, v2);
+			rcVmax(bmax, v3);
+		}
+		duDebugDrawBoxWire(dd, bmin[0], bmin[1], bmin[2], bmax[0], bmax[1], bmax[2], color, 2.0f);
+			//dd->vertex(v1, color);
+			//dd->vertex(v2, color);
+			//dd->vertex(v2, color);
+			//dd->vertex(v3, color);
+			//dd->vertex(v3, color);
+			//dd->vertex(v1, color);
 	}
-	dd->end();
+	//dd->end();
 }
 
 void duDebugDrawTriMeshSlopeFast(

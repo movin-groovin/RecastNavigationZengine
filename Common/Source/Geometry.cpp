@@ -578,33 +578,34 @@ bool checkPolyVsPolyXz(
 	return true;
 }
 
-bool calcDirOutOfPolyXz(const float* v1, const float* v2, const float* vThird, float* dir)
+bool calcDirOutOfPolyXz(const float* v1, const float* v2, const float* inPoly, float* dir)
 {
 	static const float EPS = 1e-4;
-	float p[3];
-	//float ep1[3], ep2[3];
+	float e[3], p[3];
+	float toInPoly[3], toPoint[3];
 
-	vsub(dir, v2, v1);
-	if (vlen(dir) < EPS) {
-		std::memset(dir, 0, sizeof(float) * 3);
+	vsub(e, v2, v1);
+	if (vlen(e) < EPS) {
 		return false;
 	}
+	vcopy(dir, e);
 	dir[1] = 0.f;
 	float tmp = dir[0];
 	dir[0] = dir[2];
 	dir[2] = -tmp;
-	vadd(p, v1, dir);
-	// points are on one side, change direction of perp
-	tmp = vdotXz(dir, vThird);
-	if (std::abs(tmp) < EPS) {
-		std::memset(dir, 0, sizeof(float) * 3);
-		return false;
-	}
-	if (vdotXz(dir, p) * tmp > 0)
+
+	// perp product (XZ plane) test to check direction of dir
+	vsub(toInPoly, inPoly, v1);
+	vadd(p, v2, dir);
+	vsub(toPoint, p, v1);
+	tmp = e[0] * toInPoly[2] - toInPoly[0] * e[2];
+	float tmp1 = e[0] * toPoint[2] - toPoint[0] * e[2];
+	if (tmp * tmp1 > 0)
 	{
 		dir[0] *= -1.f;
 		dir[2] *= -1.f;
 	}
+
 	vnormalize(dir);
 	return true;
 }

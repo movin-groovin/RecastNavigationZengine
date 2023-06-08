@@ -151,6 +151,7 @@ inline void vnormalize(float* v)
 	float d = 1.0f / vlen(v);
 	v[0] *= d;
 	v[1] *= d;
+	v[1] *= d;
 	v[2] *= d;
 }
 
@@ -370,8 +371,8 @@ public:
 		setCenter(stub);
 		setHalfWidth(stub);
 		setDir(0, dirs);
-		setDir(0, dirs + 3);
-		setDir(0, dirs + 6);
+		setDir(1, dirs + 3);
+		setDir(2, dirs + 6);
 		std::memcpy(m_verts, verts, sizeof(float) * 3 * VERTS_NUM);
 	}
 
@@ -572,7 +573,7 @@ bool intersectionYaobpVsPolygon( // y aligned oriented bounding polyhedron
 	return true;
 }
 
-bool calcDirOutOfPolyXz(const float* v1, const float* v2, const float* vThird, float* dir);
+bool calcDirOutOfPolyXz(const float* v1, const float* v2, const float* inPoly, float* dir);
 
 // dirs consists 9 floats, points - 24 floats
 void calcObbDirsAndPoints(

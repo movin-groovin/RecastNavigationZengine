@@ -1902,23 +1902,32 @@ bool dtJmpNavMeshQuery::calcObbDataForJumpingForwardDown(
 	const float checkBboxFwdDst,
 	const float checkBboxHeight,
 	const float shrinkCoeff,
-	geometry::OBBExt* obb
+	float* verts,
+	float* dirs
 ) {
 	float outPerp[3];
-	float center[3];
-	float end[3];
-	float edgeDir[3];
+	//float center[3];
+	//float end[3];
+	//float edgeDir[3];
+	float v1[3], v2[3];
 
 	if (!geometry::calcDirOutOfPolyXz(edgeV1, edgeV2, polyCenter, outPerp)) {
 		// too little poly
 		return false;
 	}
-	geometry::vadd(center, edgeV1, edgeV2);
-	geometry::vmul(center, 0.5f);
-	geometry::vsub(edgeDir, edgeV2, edgeV1);
-	geometry::vmad(end, center, outPerp, checkBboxFwdDst);
-	const float edgeLen = geometry::vdist(edgeV1, edgeV2);
-	obb->init(center, end, edgeDir, edgeLen * 0.5f, checkBboxHeight * 0.5f, shrinkCoeff);
+	geometry::vmad(v1, edgeV1, outPerp, 10.f/*checkBboxFwdDst / 2*/);
+	geometry::vmad(v2, edgeV2, outPerp, 10.f/*checkBboxFwdDst / 2*/);
+	v1[1] += 10.f;
+	v2[1] += 10.f;
+	geometry::calcObbDirsAndPoints(
+		v1, v2, outPerp, checkBboxFwdDst, checkBboxHeight, dirs, verts
+	);
+	//geometry::vadd(center, edgeV1, edgeV2);
+	//geometry::vmul(center, 0.5f);
+	//geometry::vsub(edgeDir, edgeV2, edgeV1);
+	//geometry::vmad(end, center, outPerp, checkBboxFwdDst);
+	//const float edgeLen = geometry::vdist(edgeV1, edgeV2);
+	//obb->init(center, end, edgeDir, edgeLen * 0.5f, checkBboxHeight * 0.5f, shrinkCoeff);
 	return true;
 }
 

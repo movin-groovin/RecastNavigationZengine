@@ -195,15 +195,17 @@ void Octree::printStat() const
 bool Octree::detectSegmentPolyCollision(
     const float* start, const float* end, float& t, int n
 ) const {
+#ifdef PRINT_TOTAL_COLLISION_STAT
     m_totalNodes = 0;
     m_leafNodes = 0;
     m_polys = 0;
     auto tp1 = std::chrono::steady_clock::now();
+#endif
     bool res = detectSegmentPolyCollisionDo(start, end, &m_root, t);
+#ifdef PRINT_TOTAL_COLLISION_STAT
     auto tp2 = std::chrono::steady_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();
     m_totalNodes += m_leafNodes;
-#ifdef PRINT_TOTAL_COLLISION_STAT
 	m_log->log(
 		common::LogCategory::LOG_PROGRESS,
 		"%d = time diff ns: %d, total nodes: %d, total leafes: %d, total polys: %d",
@@ -216,13 +218,20 @@ bool Octree::detectSegmentPolyCollision(
 bool Octree::detectSegmentPolyCollisionDo(
     const float* start, const float* end, const Node* cur, float& t
 ) const {
-    if (!checkOverlapAabb(start, end, cur->bmin, cur->bmax)) return false;
+    if (!checkOverlapAabb(start, end, cur->bmin, cur->bmax))
+		return false;
+#ifdef PRINT_TOTAL_COLLISION_STAT
     ++m_totalNodes;
+#endif
     if(cur->isLeaf()) {
+#ifdef PRINT_TOTAL_COLLISION_STAT
         ++m_leafNodes;
+#endif
         for (int i = 0; i < cur->m_num; ++i) {
             const int* vIds = &m_tris[cur->m_trianglePolys[i] * 3];
+#ifdef PRINT_TOTAL_COLLISION_STAT
             ++m_polys;
+#endif
             if (geometry::intersectSegmentTriangle(
                 start,
                 end,
@@ -235,7 +244,8 @@ bool Octree::detectSegmentPolyCollisionDo(
     } else {
         for (int i = 0; i < 8; ++i) {
             if (!cur->childs[i]) continue;
-            if (detectSegmentPolyCollisionDo(start, end, cur->childs[i], t)) return true;
+            if (detectSegmentPolyCollisionDo(start, end, cur->childs[i], t))
+				return true;
         }
     }
     return false;
@@ -433,7 +443,7 @@ int Grid2dBvh::constructVobs(MeshLoaderInterface* mesh)
 			return ERROR_NO_MEMORY;
 		}
 		for (int j = 0; j < vobTo.posCnt; ++j) {
-			Position& pos = vobTo.positions[j];
+			VobPosition& pos = vobTo.positions[j];
 			float* mat = pos.invTrafo;
 			mat[2] *= -1.f;
 			mat[6] *= -1.f;
@@ -560,7 +570,7 @@ void Grid2dBvh::transformVertex(const float* vertex, const float* trafo, float* 
 }
 
 void Grid2dBvh::transformVertex(
-	const float* vertex, const Position* pos, float* vertexNew
+	const float* vertex, const VobPosition* pos, float* vertexNew
 ) {
 	if (pos)
 		transformVertex(vertex, pos->trafo, vertexNew);
@@ -769,7 +779,7 @@ void Grid2dBvh::copyDataFromBvh(
 	int& vertsPos,
 	const BvhNode* curNode,
 	const BvhNode* endNode,
-	const Position* pos,
+	const VobPosition* pos,
 	const float* verts,
 	const int* tris,
 	const FlagType* triFlags
@@ -843,7 +853,7 @@ void Grid2dBvh::extractOverlappingRectData(
 		}
 		const BvhVobMeshEntry& vMesh = m_vobsMeshes[vob.meshIndex];
 		assert(vob.activePosIndex < vob.posCnt);
-		const Position* pos = &vob.positions[vob.activePosIndex];
+		const VobPosition* pos = &vob.positions[vob.activePosIndex];
 		curNode = vMesh.childs;
 		endNode = curNode + vMesh.childsNumber;
 		// TODO replace to explicit extracting from mesh of resident vobs
@@ -886,12 +896,12 @@ void Grid2dBvh::moverStateUpdate(const char* name, int stateId)
 		VobEntry& vob = m_vobs[moverIds[i]];
 		assert(stateId < vob.posCnt);
 		const auto& posOld = vob.positions[vob.activePosIndex];
-		for (int j = 0; j < Position::POS_TRIS_NUM; ++j) {
+		for (int j = 0; j < VobPosition::POS_TRIS_NUM; ++j) {
 			m_triFlags[posOld.aabbTris[i]].isActiveVobPos = false;
 		}
 		vob.activePosIndex = stateId;
 		const auto& posNew = vob.positions[vob.activePosIndex];
-		for (int j = 0; j < Position::POS_TRIS_NUM; ++j) {
+		for (int j = 0; j < VobPosition::POS_TRIS_NUM; ++j) {
 			m_triFlags[posNew.aabbTris[i]].isActiveVobPos = true;
 		}
 #ifdef RENDERING_ENABLED
@@ -907,16 +917,29 @@ void Grid2dBvh::moverStateUpdate(const char* name, int stateId)
 
 Grid2dBvh::XzGridBorders Grid2dBvh::calcXzGridBorders(const float* min, const float* max) const
 {
+#ifdef USAGE_SSE_1_0
+	__m128 composite1 = _mm_setr_ps(min[0], min[2], max[0], max[2]);
+	composite1 = _mm_mul_ps(_mm_sub_ps(composite1, m_worldMinVecXzXz), m_cellSizeInvVec);
+	__m128 composite2 = _mm_shuffle_ps(composite1, composite1, _MM_SHUFFLE(0, 1, 3, 2));
+	__m128 vecMin = _mm_min_ps(composite1, composite2);
+	__m128 vecMax = _mm_max_ps(composite1, composite2);
+	int xiMin = static_cast<int>(*(const float*)&vecMin);
+	int xiMax = static_cast<int>(*(const float*)&vecMax);
+	int ziMin = static_cast<int>(*((const float*)&vecMin + 1));
+	int ziMax = static_cast<int>(*((const float*)&vecMax + 1));
+#else
 	int xiMin = static_cast<int>((min[0] - m_worldMin[0]) * m_cellSizeInv);
 	int xiMax = static_cast<int>((max[0] - m_worldMin[0]) * m_cellSizeInv);
 	if (xiMin > xiMax) std::swap(xiMin, xiMax);
 	int ziMin = static_cast<int>((min[2] - m_worldMin[2]) * m_cellSizeInv);
 	int ziMax = static_cast<int>((max[2] - m_worldMin[2]) * m_cellSizeInv);
 	if (ziMin > ziMax) std::swap(ziMin, ziMax);
+#endif
 	if (xiMin < 0) xiMin = 0;
 	if (ziMin < 0) ziMin = 0;
 	if (xiMax >= m_wszCellsX) xiMax = m_wszCellsX - 1;
 	if (ziMax >= m_wszCellsZ) ziMax = m_wszCellsZ - 1;
+
 	return { xiMin, xiMax, ziMin, ziMax };
 }
 
@@ -1180,7 +1203,7 @@ int Grid2dBvh::constructOffmeshesOnLadders()
 		}
 
 		const float* verts = mesh.verts;
-		const Position& vobPos = vob.positions[vob.activePosIndex];
+		const VobPosition& vobPos = vob.positions[vob.activePosIndex];
 		int nVerts = mesh.vertCount;
 		std::unique_ptr<std::pair<float, int>[]> dat(
 			new(std::nothrow) std::pair<float, int>[nVerts]
@@ -1969,27 +1992,7 @@ std::pair<Grid2dBvh::BvhNode*, int> Grid2dBvh::makeBvh(
 
 bool Grid2dBvh::segTriCollisionFirstHit(const float* start, const float* end, float& t) const
 {
-#ifdef USAGE_SSE_1_0
-	__m128 composite1 = _mm_setr_ps(start[0], start[2], end[0], end[2]);
-	composite1 = _mm_mul_ps(_mm_sub_ps(composite1, m_worldMinVecXzXz), m_cellSizeInvVec);
-	__m128 composite2 = _mm_shuffle_ps(composite1, composite1, _MM_SHUFFLE(0, 1, 3, 2));
-	__m128 min = _mm_min_ps(composite1, composite2);
-	__m128 max = _mm_max_ps(composite1, composite2);
-	int xiMin = static_cast<int>(*(const float*)&min);
-	int xiMax = static_cast<int>(*(const float*)&max);
-	int ziMin = static_cast<int>(*((const float*)&min + 1));
-	int ziMax = static_cast<int>(*((const float*)&max + 1));
-	if (xiMin < 0) xiMin = 0;
-	if (ziMin < 0) ziMin = 0;
-	if (xiMax >= m_wszCellsX) xiMax = m_wszCellsX - 1;
-	if (ziMax >= m_wszCellsZ) ziMax = m_wszCellsZ - 1;
-#else
 	XzGridBorders ret = calcXzGridBorders(start, end);
-	int xiMin = ret.xiMin;
-	int xiMax = ret.xiMax;
-	int ziMin = ret.ziMin;
-	int ziMax = ret.ziMin;
-#endif
 	geometry::IsectAabbArgs aabbArgs;
 	geometry::calcIsectAabbArgs(aabbArgs, start, end);
 	geometry::IsectTriArgs triArgs;
@@ -1997,9 +2000,9 @@ bool Grid2dBvh::segTriCollisionFirstHit(const float* start, const float* end, fl
 	int vobIds[VOBS_NUM_COLLIDE_CHEKING] = { 0 };
 	int vobIdsIdx = 0;
 
-	for (int i = xiMin; i <= xiMax; ++i) {
+	for (int i = ret.xiMin; i <= ret.xiMax; ++i) {
 		const GridCell* xShift = m_grid + m_wszCellsZ * i;
-		for (int j = ziMin; j <= ziMax; ++j) {
+		for (int j = ret.ziMin; j <= ret.ziMax; ++j) {
 			const GridCell* cell = xShift + j;
 			bool ret = geometry::isectSegXzAabbRed(aabbArgs, cell->bmin, cell->bmax);
 			if (!ret) continue;
@@ -2010,40 +2013,38 @@ bool Grid2dBvh::segTriCollisionFirstHit(const float* start, const float* end, fl
 				const bool boxIntersect =
 					geometry::isectSegAabbRed(aabbArgs, curNode->min, curNode->max);
 				if (leaf && boxIntersect) {
-					const int* vIds = m_tris + curNode->triId;
-					ret = geometry::intersectSegmentTriangleRed(
-						triArgs,
-						m_verts + vIds[0],
-						m_verts + vIds[1],
-						m_verts + vIds[2],
-						t
-					);
-					if (ret) { // TODO last collide id checking
-						FlagType flag = m_triFlags[curNode->triId / 3];
-						if (flag.isVobPos) {
-							if (flag.isActiveVobPos) {
-								int vobId = flag.vobIdOrCollFlags;
-								// TODO realize at sse instructions
-								bool checked = false;
-								// TODO % by bitwise
-								for (int k = 0; k < VOBS_NUM_COLLIDE_CHEKING && vobIds[k]; ++k) {
-									checked = vobIds[k] == vobId;
-									if (checked) break;
-								}
-								if (!checked) {
-									vobIds[vobIdsIdx & VNC_CHK] = vobId;
-									++vobIdsIdx;
-									if (segTriCollisionVobFirstHit(vobId, start, end, t)) {
-										return true;
-									}
-								}
+					FlagType flag = m_triFlags[curNode->triId / 3];
+					if (flag.isVobPos && flag.isActiveVobPos) {
+						int vobId = flag.vobIdOrCollFlags;
+						// TODO realize at sse instructions
+						bool checked = false;
+						for (int k = 0; k < VOBS_NUM_COLLIDE_CHEKING && vobIds[k]; ++k) {
+							checked = vobIds[k] == vobId;
+							if (checked) break;
+						}
+						if (!checked) {
+							vobIds[vobIdsIdx & VNC_CHK] = vobId;
+							++vobIdsIdx;
+							if (segTriCollisionVobFirstHit(vobId, start, end, t)) {
+								return true;
 							}
 						}
-						else {
+					}
+					else {
+						const int* vIds = m_tris + curNode->triId;
+						ret = geometry::intersectSegmentTriangleRed(
+							triArgs,
+							m_verts + vIds[0],
+							m_verts + vIds[1],
+							m_verts + vIds[2],
+							t
+						);
+						if (ret) { // TODO last collide id checking
 							return true;
 						}
 					}
 				}
+
 				if (leaf || boxIntersect)
 					++curNode;
 				else
@@ -2060,7 +2061,7 @@ bool Grid2dBvh::segTriCollisionVobFirstHit(
 ) const {
 	const VobEntry& vob = m_vobs[vobId];
 	const BvhVobMeshEntry& vobMesh = m_vobsMeshes[vob.meshIndex];
-	const auto& vobPos = vob.positions[vob.activePosIndex];
+	const VobPosition& vobPos = vob.positions[vob.activePosIndex];
 	float startReal[3], endReal[3];
 	transformVertex(start, vobPos.invTrafo, startReal);
 	transformVertex(end, vobPos.invTrafo, endReal);
@@ -2102,40 +2103,19 @@ bool Grid2dBvh::segTriCollisionVobFirstHit(
 
 bool Grid2dBvh::segTriCollisionNearestHit(const float* start, const float* end, float& t) const
 {
-	static constexpr float TINIT_VAL = 2.f;
-#ifdef USAGE_SSE_1_0
-	__m128 composite1 = _mm_setr_ps(start[0], start[2], end[0], end[2]);
-	composite1 = _mm_mul_ps(_mm_sub_ps(composite1, m_worldMinVecXzXz), m_cellSizeInvVec);
-	__m128 composite2 = _mm_shuffle_ps(composite1, composite1, _MM_SHUFFLE(0, 1, 3, 2));
-	__m128 min = _mm_min_ps(composite1, composite2);
-	__m128 max = _mm_max_ps(composite1, composite2);
-	int xiMin = static_cast<int>(*(const float*)&min);
-	int xiMax = static_cast<int>(*(const float*)&max);
-	int ziMin = static_cast<int>(*((const float*)&min + 1));
-	int ziMax = static_cast<int>(*((const float*)&max + 1));
-	if (xiMin < 0) xiMin = 0;
-	if (ziMin < 0) ziMin = 0;
-	if (xiMax >= m_wszCellsX) xiMax = m_wszCellsX - 1;
-	if (ziMax >= m_wszCellsZ) ziMax = m_wszCellsZ - 1;
-#else
 	XzGridBorders ret = calcXzGridBorders(start, end);
-	int xiMin = ret.xiMin;
-	int xiMax = ret.xiMax;
-	int ziMin = ret.ziMin;
-	int ziMax = ret.ziMin;
-#endif
 	float tCur;
 	geometry::IsectAabbArgs aabbArgs;
 	geometry::calcIsectAabbArgs(aabbArgs, start, end);
 	geometry::IsectTriArgs triArgs;
 	calcIsectTriArgs(triArgs, start, end);
-	t = TINIT_VAL;
 	int vobIds[VOBS_NUM_COLLIDE_CHEKING] = { 0 };
 	int vobIdsIdx = 0;
 
-	for (int i = xiMin; i <= xiMax; ++i) {
+	t = FLT_MAX;
+	for (int i = ret.xiMin; i <= ret.xiMax; ++i) {
 		const GridCell* xShift = m_grid + m_wszCellsZ * i;
-		for (int j = ziMin; j <= ziMax; ++j) {
+		for (int j = ret.ziMin; j <= ret.ziMax; ++j) {
 			const GridCell* cell = xShift + j;
 			bool ret = geometry::isectSegXzAabbRed(aabbArgs, cell->bmin, cell->bmax);
 			if (!ret) continue;
@@ -2146,39 +2126,38 @@ bool Grid2dBvh::segTriCollisionNearestHit(const float* start, const float* end, 
 				const bool boxIntersect =
 					geometry::isectSegAabbRed(aabbArgs, curNode->min, curNode->max);
 				if (leaf && boxIntersect) {
-					const int* vIds = m_tris + curNode->triId;
-					ret = geometry::intersectSegmentTriangleRed(
-						triArgs,
-						m_verts + vIds[0],
-						m_verts + vIds[1],
-						m_verts + vIds[2],
-						tCur
-					);
-					if (ret) { // TODO last collide id checking
-						FlagType flag = m_triFlags[curNode->triId / 3];
-						if (flag.isVobPos) {
-							if (flag.isActiveVobPos) {
-								int vobId = flag.vobIdOrCollFlags;
-								// TODO realize at sse instructions
-								bool checked = false;
-								for (int k = 0; k < VOBS_NUM_COLLIDE_CHEKING && vobIds[k]; ++k) {
-									checked = vobIds[k] == vobId;
-									if (checked) break;
-								}
-								if (!checked) {
-									vobIds[vobIdsIdx & VNC_CHK] = vobId;
-									++vobIdsIdx;
-									if (segTriCollisionVobNearestHit(vobId, start, end, tCur)) {
-										if (tCur < t) t = tCur;
-									}
-								}
+					FlagType flag = m_triFlags[curNode->triId / 3];
+					if (flag.isVobPos && flag.isActiveVobPos) {
+						int vobId = flag.vobIdOrCollFlags;
+						// TODO realize at sse instructions
+						bool checked = false;
+						for (int k = 0; k < VOBS_NUM_COLLIDE_CHEKING && vobIds[k]; ++k) {
+							checked = vobIds[k] == vobId;
+							if (checked) break;
+						}
+						if (!checked) {
+							vobIds[vobIdsIdx & VNC_CHK] = vobId;
+							++vobIdsIdx;
+							if (segTriCollisionVobNearestHit(vobId, start, end, tCur)) {
+								if (tCur < t) t = tCur;
 							}
 						}
-						else {
+					}
+					else {
+						const int* vIds = m_tris + curNode->triId;
+						ret = geometry::intersectSegmentTriangleRed(
+							triArgs,
+							m_verts + vIds[0],
+							m_verts + vIds[1],
+							m_verts + vIds[2],
+							tCur
+						);
+						if (ret) { // TODO last collide id checking
 							if (tCur < t) t = tCur;
 						}
 					}
 				}
+
 				if (leaf || boxIntersect)
 					++curNode;
 				else
@@ -2188,13 +2167,12 @@ bool Grid2dBvh::segTriCollisionNearestHit(const float* start, const float* end, 
 		}
 	}
 
-	return t != TINIT_VAL;
+	return t != FLT_MAX;
 }
 
 bool Grid2dBvh::segTriCollisionVobNearestHit(
 	int vobId, const float* start, const float* end, float& t
 ) const {
-	static constexpr float TINIT_VAL = 2.f;
 	const VobEntry& vob = m_vobs[vobId];
 	const BvhVobMeshEntry& vobMesh = m_vobsMeshes[vob.meshIndex];
 	const auto& vobPos = vob.positions[vob.activePosIndex];
@@ -2208,7 +2186,7 @@ bool Grid2dBvh::segTriCollisionVobNearestHit(
 	const float* verts = vobMesh.verts;
 	const int* tris = vobMesh.tris;
 
-	t = TINIT_VAL;
+	t = FLT_MAX;
 	float tCur;
 	const BvhNode* curNode = vobMesh.childs;
 	const BvhNode* endNode = curNode + vobMesh.childsNumber;
@@ -2236,7 +2214,7 @@ bool Grid2dBvh::segTriCollisionVobNearestHit(
 			curNode -= curNode->triId;
 	}
 
-	return t != TINIT_VAL;
+	return t != FLT_MAX;
 }
 
 bool Grid2dBvh::obbTriCollisionFirstHit(const geometry::OBBExt* be) const // TODO add robustness
@@ -2266,39 +2244,42 @@ bool Grid2dBvh::obbTriCollisionFirstHit(const geometry::OBBExt* be) const // TOD
 				const bool boxIntersect =
 					geometry::checkAabbsCollision(min, max, curNode->min, curNode->max);
 				if (leaf && boxIntersect) {
-					const int* vIds = m_tris + curNode->triId;
-					geometry::vcopy(triPoints, m_verts + vIds[0]);
-					geometry::vcopy(triPoints + 3, m_verts + vIds[1]);
-					geometry::vcopy(triPoints + 6, m_verts + vIds[2]);
-					ret = geometry::intersectionObbVsTriangle(be, triPoints);
-					if (ret) { // TODO last collide id checking
-						FlagType flag = m_triFlags[curNode->triId / 3];
-						if (flag.isVobPos && flag.isActiveVobPos) {
-							int vobId = flag.vobIdOrCollFlags;
-							// TODO realize at sse instructions
-							bool checked = false;
-							for (int k = 0; k < VOBS_NUM_COLLIDE_CHEKING && vobIds[k]; ++k) {
-								checked = vobIds[k] == vobId;
-								if (checked) break;
-							}
-							if (!checked) {
-								vobIds[vobIdsIdx & VNC_CHK] = vobId;
-								++vobIdsIdx;
-								if (obbTriCollisionVobFirstHit(vobId, be)) {
-									return true;
-								}
+					FlagType flag = m_triFlags[curNode->triId / 3];
+					if (flag.isVobPos && flag.isActiveVobPos) {
+						int vobId = flag.vobIdOrCollFlags;
+						// TODO realize at sse instructions
+						bool checked = false;
+						for (int k = 0; k < VOBS_NUM_COLLIDE_CHEKING && vobIds[k]; ++k) {
+							checked = vobIds[k] == vobId;
+							if (checked) break;
+						}
+						if (!checked) {
+							vobIds[vobIdsIdx & VNC_CHK] = vobId;
+							++vobIdsIdx;
+							if (obbTriCollisionVobFirstHit(vobId, be)) {
+								return true;
 							}
 						}
-						else {
+					}
+					else {
+						const int* vIds = m_tris + curNode->triId;
+						geometry::vcopy(triPoints, m_verts + vIds[0]);
+						geometry::vcopy(triPoints + 3, m_verts + vIds[1]);
+						geometry::vcopy(triPoints + 6, m_verts + vIds[2]);
+						ret = geometry::intersectionObbVsTriangle(be, triPoints);
+						if (ret) { // TODO last collide id checking
 							return true;
 						}
 					}
 				}
-				if (leaf || boxIntersect)
+
+				if (leaf || boxIntersect) {
 					++curNode;
-				else
+				}
+				else {
 					// triId stores negative number of inside triangles
 					curNode -= curNode->triId;
+				}
 			}
 		}
 	}

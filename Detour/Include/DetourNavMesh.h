@@ -459,7 +459,9 @@ public:
 	dtStatus calcAveragePolyPlanes(const dtMeshTile* ctile);
 	dtStatus doCalcAveragePolyPlanes_v1(const dtMeshTile* ctile);
 	dtStatus doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile);
-	void setPreliminaryJumpData(const dtMeshTile* ctile, std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]>& data, const int polyCount);
+	void setPreliminaryJumpData(
+		const dtMeshTile* ctile, const std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]>& data
+	);
 #endif // ZENGINE_NAVMESH
 	
 	/// Removes the specified tile from the navigation mesh.

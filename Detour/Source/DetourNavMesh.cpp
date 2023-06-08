@@ -1520,7 +1520,8 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes_v1(const dtMeshTile* ctile)
 	{
 		return DT_FAILURE | DT_INVALID_PARAM;
 	}
-	dtMeshTile* tile = const_cast<dtMeshTile*>(ctile);
+	dtMeshTile* tile = m_tiles + (ctile - m_tiles);
+	//dtMeshTile* tile = const_cast<dtMeshTile*>(ctile);
 	int size = 3;
 	int triEntriesSize = 1;
 	std::unique_ptr<float[]> verts(new(std::nothrow) float[size]);
@@ -1668,7 +1669,8 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile)
 	{
 		return DT_FAILURE | DT_INVALID_PARAM;
 	}
-	dtMeshTile* tile = const_cast<dtMeshTile*>(ctile);
+	dtMeshTile* tile = m_tiles + (ctile - m_tiles);
+	//dtMeshTile* tile = const_cast<dtMeshTile*>(ctile);
 	int size = 3;
 	std::unique_ptr<float[]> verts(new(std::nothrow) float[size]);
 	if (!verts)
@@ -1737,12 +1739,11 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile)
 
 void dtNavMesh::setPreliminaryJumpData(
 	const dtMeshTile* ctile,
-	std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]>& data,
-	const int polyCount
+	const std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]>& data
 ) {
-	assert(polyCount == ctile->header->polyCount);
+	dtMeshTile* tile = m_tiles + (ctile - m_tiles);
+	const int polyCount = tile->header->polyCount;
 
-	dtMeshTile* tile = const_cast<dtMeshTile*>(ctile);
 	for (int i = 0; i < polyCount; ++i)
 	{
 		dtPoly* p = &tile->polys[i];

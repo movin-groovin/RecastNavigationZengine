@@ -29,7 +29,8 @@ void duDebugDrawVobsAabbsFast(
 	duDebugDraw* dd,
 	const float* verts,
 	const int* tris,
-	const int ntris
+	const int ntris,
+	const int trisNumPerIter
 );
 
 void duDebugDrawTriMeshSlopeFast(

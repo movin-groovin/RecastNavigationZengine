@@ -82,9 +82,9 @@ struct MarkedArea
 	int area = -1;
 };
 
-struct Position
+struct VobPosition
 {
-	static const int POS_TRIS_NUM = 12;
+	static const int POS_TRIS_NUM = 3;
 
 	float aabbMin[3];
 	float aabbMax[3];
@@ -118,7 +118,7 @@ struct VobEntry
 
 	bool init(int posNum = INIT_POS_CNT) {
 		posCnt = posNum;
-		positions = new((std::nothrow)) Position[posCnt];
+		positions = new((std::nothrow)) VobPosition[posCnt];
 		return positions;
 	}
 
@@ -159,11 +159,11 @@ struct VobEntry
 		to.meshIndex = meshIndex;
 		to.posCnt = posCnt;
 		to.activePosIndex = activePosIndex;
-		to.positions = new(std::nothrow) Position[to.posCnt];
+		to.positions = new(std::nothrow) VobPosition[to.posCnt];
 		if (!to.positions)
 			return false;
 		for (int i = 0; i < to.posCnt; ++i) {
-			std::memcpy(&to.positions[i], &positions[i], sizeof(Position));
+			std::memcpy(&to.positions[i], &positions[i], sizeof(VobPosition));
 		}
 #ifdef RENDERING_ENABLED
 		to.vertsPosRendering = vertsPosRendering;
@@ -176,7 +176,7 @@ struct VobEntry
 	int meshIndex;
 	int posCnt;
 	int activePosIndex;
-	Position* positions;
+	VobPosition* positions;
 #ifdef RENDERING_ENABLED
 	int vertsPosRendering;
 #endif
@@ -692,7 +692,7 @@ private:
 		int& vertsPos,
 		const BvhNode* curNode,
 		const BvhNode* endNode,
-		const Position* pos,
+		const VobPosition* pos,
 		const float* verts,
 		const int* tris,
 		const FlagType* triFlags
@@ -710,7 +710,7 @@ private:
 
 	static void transformVertex(const float* vertex, const float* trafo, float* vertexNew);
 	static void transformDirection(const float* normal, const float* trafo, float* normalNew);
-	static void transformVertex(const float* vertex, const Position* pos, float* vertexNew);
+	static void transformVertex(const float* vertex, const VobPosition* pos, float* vertexNew);
 
 private:
 	int m_cellSize = 0;

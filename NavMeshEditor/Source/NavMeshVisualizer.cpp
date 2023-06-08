@@ -206,10 +206,14 @@ void NavMeshVisualizerTool::calcPreliminaryJumpData()
 	rcContext* ctx = m_sample->getContext();
 
 	ctx->log(RC_LOG_PROGRESS, "Calculation preliminary data for poly ref: %llu", m_hitPoly);
+
 	for (int i = 0, n = poly->vertCount; i < n; ++i)
 	{
 		if (poly->neis[i])
 			continue;
+		if (!m_polySelectionEdges[i])
+			continue;
+
 		calcPreliminaryJumpFwdDownData(i, tile, poly);
 		calcPreliminaryClimbData(i, tile, poly);
 	}
@@ -225,6 +229,8 @@ void NavMeshVisualizerTool::calcPreliminaryJumpFwdDownData(const int edgeIdx, co
 	const float checkBboxFwdDst = (tile->header->walkableRadius + 1.0f / tile->header->bvQuantFactor) * 2.f;
 	static const int DIRS_NUM = geometry::OBBExt::DIRS_NUM;
 	static const int VERTS_NUM = geometry::OBBExt::VERTS_NUM;
+	float dirs[3 * DIRS_NUM];
+	float verts[3 * VERTS_NUM];
 	float v1[3], v2[3];
 	float polyCenter[3];
 	rcContext* ctx = m_sample->getContext();
@@ -237,13 +243,14 @@ void NavMeshVisualizerTool::calcPreliminaryJumpFwdDownData(const int edgeIdx, co
 	dtNavMesh::calcPolyCenter(tile, poly, polyCenter);
 	geometry::OBBExt obb;
 	bool res = dtJmpNavMeshQuery::calcObbDataForJumpingForwardDown(
-		v1, v2, polyCenter, checkBboxFwdDst, CHECK_BBOX_HEIGHT, SHRINK_COEFF, &obb
+		v1, v2, polyCenter, checkBboxFwdDst, CHECK_BBOX_HEIGHT, SHRINK_COEFF, verts, dirs
 	);
 	if (!res) {
 		// too little poly
 		return;
 	}
 
+	obb.init(dirs, verts);
 	if (geom->obbCollDetect(&obb)) {
 		ctx->log(RC_LOG_PROGRESS, "Found collision for jumping forward/down at edge: %d", edgeIdx);
 	}
@@ -416,6 +423,8 @@ void NavMeshVisualizerTool::renderJumpFwdDownBbox(
 	const float checkBboxFwdDst = (tile->header->walkableRadius + 1.0f / tile->header->bvQuantFactor) * 2.f;
 	static const int DIRS_NUM = geometry::OBBExt::DIRS_NUM;
 	static const int VERTS_NUM = geometry::OBBExt::VERTS_NUM;
+	float dirs[3 * DIRS_NUM];
+	float verts[3 * VERTS_NUM];
 	float v1[3], v2[3];
 	float polyCenter[3];
 
@@ -424,39 +433,39 @@ void NavMeshVisualizerTool::renderJumpFwdDownBbox(
 	geometry::vcopy(v1, &tile->verts[poly->verts[edgeIdx] * 3]);
 	geometry::vcopy(v2, &tile->verts[poly->verts[(edgeIdx + 1) % polyVertsNum] * 3]);
 	dtNavMesh::calcPolyCenter(tile, poly, polyCenter);
-	geometry::OBBExt obb;
+	//geometry::OBBExt obb;
 	bool res = dtJmpNavMeshQuery::calcObbDataForJumpingForwardDown(
-		v1, v2, polyCenter, checkBboxFwdDst, CHECK_BBOX_HEIGHT, SHRINK_COEFF, &obb
+		v1, v2, polyCenter, checkBboxFwdDst, CHECK_BBOX_HEIGHT, SHRINK_COEFF, verts, dirs
 	);
 	if (!res) {
 		// too little poly
 		return;
 	}
 
-	renderObp(obb.getVerts(), geometry::OBBExt::VERTS_NUM);
+	renderObp(/*obb.getVerts()*/verts, geometry::OBBExt::VERTS_NUM);
 }
 
 void NavMeshVisualizerTool::renderObp(const float* vertices, const uint32_t verticesNum)
 {
 	assert((verticesNum & 1) == 0); // even verticesNum value
 	const uint32_t verticesNumHalf = verticesNum >> 1;
-	const float* first = vertices;
-	const float* second = vertices + 3 * verticesNumHalf;
+	const float* lowerPlane = vertices;
+	const float* upperPlane = vertices + 3 * verticesNumHalf;
 	const uint32_t color = duRGBA(0, 0, 255, 255);
 	duDebugDraw& dd = m_sample->getDebugDraw();
 	dd.begin(DU_DRAW_LINES, 2.0f);
 	for (uint32_t i = 0, j = verticesNumHalf - 1; i < verticesNumHalf; ++i, ++j)
 	{
-		const float* v1 = first + i * 3;
-		const float* v2 = first + (j % verticesNumHalf) * 3;
+		const float* v1 = lowerPlane + i * 3;
+		const float* v2 = lowerPlane + (j % verticesNumHalf) * 3;
 		dd.vertex(v1[0], v1[1], v1[2], color);
 		dd.vertex(v2[0], v2[1], v2[2], color);
-		v1 = second + i * 3;
-		v2 = second + (j % verticesNumHalf) * 3;
+		v1 = upperPlane + i * 3;
+		v2 = upperPlane + (j % verticesNumHalf) * 3;
 		dd.vertex(v1[0], v1[1], v1[2], color);
 		dd.vertex(v2[0], v2[1], v2[2], color);
-		v1 = first + i * 3;
-		v2 = second + i * 3;
+		v1 = lowerPlane + i * 3;
+		v2 = upperPlane + i * 3;
 		dd.vertex(v1[0], v1[1], v1[2], color);
 		dd.vertex(v2[0], v2[1], v2[2], color);
 	}

@@ -848,6 +848,7 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 			if (imguiButton("Clear log"))
 			{
 				ctx.resetLog();
+				logScroll = 0;
 			}
 			imguiSeparator();
 			if (imguiButton("Save log"))

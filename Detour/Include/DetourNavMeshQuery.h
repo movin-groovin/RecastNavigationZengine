@@ -1297,7 +1297,8 @@ public:
 		const float checkBboxFwdDst,
 		const float checkBboxHeight,
 		const float shrinkCoeff,
-		geometry::OBBExt* obb
+		float* verts,
+		float* dirs
 	);
 	static bool calcObbDataForClimbing(
 		const float* edgeV1,

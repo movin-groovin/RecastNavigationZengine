@@ -183,9 +183,9 @@ Sample_TileMesh::Sample_TileMesh() :
 	m_drawMode(DRAWMODE_NAVMESH),
 	m_showNonTriPolys(false),
 	m_highlightLiquidPolys(false),
+	m_showVobsAabbs(false),
 	m_showAverageNavmeshPolys(false),
 	m_showPreliminaryJumpData(false),
-	m_showVobsAabbs(false),
 	m_continueMeshGenWhileTileError(true),
     m_maxTiles(0),
     m_maxPolysPerTile(0),
@@ -264,11 +264,12 @@ bool Sample_TileMesh::initJmpNavmeshQuery()
 	if (!tilesNum) tilesNum = NAVMESH_DEFAULT_TILES_SIZE;
 	if (!polysNum) polysNum = NAVMESH_DEFAULT_POLYS_SIZE;
 
+	// TODO to args
 	static const uint32_t CASHE_BLOCKS_SIZE =
 		(10 * 1024 * 1024) / StdJmpTransferCache::POOL_BLOCK_BYTES_SIZE + 1;
 	static const uint32_t NODE_POOL_SIZE = 1024 * 16;
-	static const float POLY_PICK_WIDTH = 10.f;
-	static const float POLY_PICK_HEIGHT = 50.f;
+	static const float POLY_PICK_WIDTH = 2.f;
+	static const float POLY_PICK_HEIGHT = 40.f;
 	m_JmpNavQuery->clear();
 	bool res = m_JmpNavQuery->init(
 		m_navMesh,
@@ -652,7 +653,10 @@ void Sample_TileMesh::handleRender(const float* cameraPos)
 			if (m_showVobsAabbs)
 			{
 				const mesh::Grid2dBvh::TrianglesData& aabbsData = space.getVobsAabbsData();
-				duDebugDrawVobsAabbsFast(&m_ddVboMesh, aabbsData.verts, aabbsData.tris, aabbsData.trisNumCurrent);
+				duDebugDrawVobsAabbsFast(
+					&m_ddVboMesh, aabbsData.verts, aabbsData.tris,
+					aabbsData.trisNumCurrent, mesh::VobPosition::POS_TRIS_NUM
+				);
 			}
 		}
         m_geom->drawOffMeshConnections(&m_dd);
@@ -1031,14 +1035,20 @@ bool Sample_TileMesh::checkAbilityJumpDownOrForward(
 	const float checkBboxHeight,
 	const float shrinkCoeff
 ) {
+	static const int DIRS_NUM = geometry::OBBExt::DIRS_NUM;
+	static const int VERTS_NUM = geometry::OBBExt::VERTS_NUM;
+	float dirs[3 * DIRS_NUM];
+	float verts[3 * VERTS_NUM];
+	
 	geometry::OBBExt obb;
 	bool res = dtJmpNavMeshQuery::calcObbDataForJumpingForwardDown(
-		v1, v2, polyCenter, checkBboxFwdDst, checkBboxHeight, shrinkCoeff, &obb
+		v1, v2, polyCenter, checkBboxFwdDst, checkBboxHeight, shrinkCoeff, verts, dirs
 	);
 	if (!res) {
 		// too little poly
 		return false;
 	}
+	obb.init(dirs, verts);
 	return !m_geom->obbCollDetect(&obb);
 }
 
@@ -1199,7 +1209,7 @@ void Sample_TileMesh::buildTile(const float* pos)
 					m_navMesh->removeTile(m_navMesh->getTileRefAt(tx, ty, 0), 0, 0);
 				}
 				else {
-					m_navMesh->setPreliminaryJumpData(tile, data, tile->header->polyCount);
+					m_navMesh->setPreliminaryJumpData(tile, data);
 					int tIdx = m_navMesh->getTileIndex(tile) + 1;
 					collectNavmeshGenParams(m_navGenParams[tIdx]);
 					if (!m_collected) {
@@ -1492,7 +1502,7 @@ void Sample_TileMesh::buildAllTilesDo(
 					polyArr, tile, checkBboxFwdDst, CHECK_BBOX_HEIGHT, minClimbHeight,
 					minClimbOverlappedHeight, MAX_CLIMB_HEIGHT, SHRINK_COEFF
 				);
-				m_navMesh->setPreliminaryJumpData(tile, polyArr, tile->header->polyCount);
+				m_navMesh->setPreliminaryJumpData(tile, polyArr);
 			}
 		}
 
