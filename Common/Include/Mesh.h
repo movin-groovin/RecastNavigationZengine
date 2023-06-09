@@ -329,7 +329,7 @@ private:
 class alignas(__m128) Grid2dBvh
 {
 public:
-	enum : int {
+	enum: int {
 		SUCCESSFUL,
 		ERROR_NO_MEMORY,
 		ERROR_LOGIC_ERROR,
@@ -601,8 +601,8 @@ public:
 
 	bool segTriCollisionFirstHit(const float* start, const float* end, float& t) const;
 	bool segTriCollisionNearestHit(const float* start, const float* end, float& t) const;
-	//bool obbTriCollisionFirstHit(const geometry::OBB* b) const;
-	bool obbTriCollisionFirstHit(const geometry::OBBExt* be) const;
+	//bool obbTriCollisionFirstHit(const geometry::Obb* obb) const;
+	bool obbTriCollisionFirstHit(const geometry::Obb* obb) const;
 #ifdef PRINT_STRUCTURE_STAT
 	void printStat() const;
 #endif
@@ -644,7 +644,7 @@ public:
 private:
 	bool segTriCollisionVobFirstHit(int vobId, const float* start, const float* end, float& t) const;
 	bool segTriCollisionVobNearestHit(int vobId, const float* start, const float* end, float& t) const;
-	bool obbTriCollisionVobFirstHit(int vobId, const geometry::OBBExt* be) const;
+	bool obbTriCollisionVobFirstHit(int vobId, const geometry::Obb* obb) const;
 
 	void clearState();
 	int loadInternal(MeshLoaderInterface* mesh, int cellSize);

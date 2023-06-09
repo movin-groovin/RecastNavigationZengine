@@ -183,18 +183,18 @@ public:
 
 #ifdef ZENGINE_NAVMESH
 
-template <int MAX_PLANES_NUM, int FOUND_POLYS_ARR_SIZE>
+template <int MAX_PLANES_SIZE, int FOUND_POLYS_ARR_SIZE>
 class dtFindCollidedPolysQuery: public dtPolyQuery, private common::NonCopyable
 {
 public:
-	static const int MAX_PLANES_NUM_VAL = MAX_PLANES_NUM;
+	static const int MAX_PLANES_SIZE_VAL = MAX_PLANES_SIZE;
 	static const int FOUND_POLYS_ARR_SIZE_VAL = FOUND_POLYS_ARR_SIZE;
 
 private:
 	using ObpType = typename std::conditional<
-		MAX_PLANES_NUM == geometry::OBBExt::DIRS_NUM,
-		geometry::OBBExt,
-		geometry::YAlignedObp<MAX_PLANES_NUM>
+		MAX_PLANES_SIZE == geometry::Obb::DIRS_SIZE,
+		geometry::Obb,
+		geometry::YAlignedObp<MAX_PLANES_SIZE>
 	>::type;
 
 	template <int I>
@@ -210,7 +210,7 @@ private:
 		}
 	};
 	template <>
-	struct Strategy<geometry::OBBExt::DIRS_NUM>
+	struct Strategy<geometry::Obb::DIRS_SIZE>
 	{
 		template <typename ... Args>
 		static bool execute(Args&& ... args) {
@@ -218,8 +218,8 @@ private:
 		}
 		template <typename T>
 		static void init(T& obb, const float* dirs, const int dirsNum, const float* verts, const int vertsNum) {
-			assert(dirsNum == geometry::OBBExt::DIRS_NUM);
-			assert(vertsNum == geometry::OBBExt::VERTS_NUM);
+			assert(dirsNum == geometry::Obb::DIRS_SIZE);
+			assert(vertsNum == geometry::Obb::VERTS_SIZE);
 			obb.init(dirs, verts);
 		}
 	};
@@ -240,7 +240,7 @@ public:
 	{
 		assert(maxNumFoundPolys <= FOUND_POLYS_ARR_SIZE);
 		assert(maxNumFoundPolys >= 1);
-		Strategy<MAX_PLANES_NUM>::init(obp, dirs, dirsNum, verts, vertsNum);
+		Strategy<MAX_PLANES_SIZE>::init(obp, dirs, dirsNum, verts, vertsNum);
 	}
 
 	~dtFindCollidedPolysQuery() = default;
@@ -302,7 +302,7 @@ public:
 				geometry::calcVerticalVertexProjectionOnPlane(v, polyNorm, d, projVerts + j * 3);
 			}
 
-			if (Strategy<MAX_PLANES_NUM>::execute(&obp, polyNorm, projVerts, numPolyVerts)) {
+			if (Strategy<MAX_PLANES_SIZE>::execute(&obp, polyNorm, projVerts, numPolyVerts)) {
 				m_polys[m_polysNum++] = refs[i];
 			}
 		}

@@ -96,7 +96,7 @@ public:
 
 	// collisions
     bool raycastMesh(const float* src, const float* dst, float& tmin, bool nearestHit) const;
-    bool obbCollDetect(const geometry::OBBExt* be) const;
+    bool obbCollDetect(const geometry::Obb* obb) const;
 
 	// mesh extracting
     int getOverlappingRectCellIds(

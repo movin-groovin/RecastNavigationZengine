@@ -1528,7 +1528,7 @@ int Grid2dBvh::loadInternal(MeshLoaderInterface* mesh, int cellSize)
 		geometry::vcopy(cellMinMax[i].min, cellMin);
 		geometry::vcopy(cellMinMax[i].max, cellMax);
 	}
-	std::sort(boxIds.get(), boxIds.get() + m_trisNum, geometry::CoordComparer(0, bboxes.get()));
+	std::sort(boxIds.get(), boxIds.get() + m_trisNum, geometry::CoordComparator(0, bboxes.get()));
 	for (int i = 0, j = 0; j < m_trisNum; /*++j*/)
 	{
 		int cellStart = i;
@@ -1621,7 +1621,7 @@ int Grid2dBvh::loadInternal(MeshLoaderInterface* mesh, int cellSize)
 			geometry::vcopy(cellMinMax[j].min, cellMin);
 			geometry::vcopy(cellMinMax[j].max, cellMax);
 		}
-		std::sort(boxIds + 2, boxIds + boxIds[0], geometry::CoordComparer(2, bboxes.get()));
+		std::sort(boxIds + 2, boxIds + boxIds[0], geometry::CoordComparator(2, bboxes.get()));
 		for (int j = 0, k = 2; k < boxIds[0]; /*++k*/)
 		{
 			int cellStart = j;
@@ -1779,11 +1779,11 @@ void Grid2dBvh::subdivideMedian(
 		if (span[2] > span[maxAxis])
 			maxAxis = 2;
 		if (maxAxis == 0)
-			std::sort(boxIds + i, boxIds + j, geometry::CoordComparer(0, bboxes));
+			std::sort(boxIds + i, boxIds + j, geometry::CoordComparator(0, bboxes));
 		else if (maxAxis == 1)
-			std::sort(boxIds + i, boxIds + j, geometry::CoordComparer(1, bboxes));
+			std::sort(boxIds + i, boxIds + j, geometry::CoordComparator(1, bboxes));
 		else if (maxAxis == 2)
-			std::sort(boxIds + i, boxIds + j, geometry::CoordComparer(2, bboxes));
+			std::sort(boxIds + i, boxIds + j, geometry::CoordComparator(2, bboxes));
 		int k = i + n / 2;
 		subdivideMedian(bboxes, boxIds, bnodes, i, k, curNodeNum
 #ifdef PRINT_STRUCTURE_STAT
@@ -1896,7 +1896,7 @@ void Grid2dBvh::subdivideSah(
 		int bestSep = -1;
 		int bestAxis = -1;
 		for (int axis = 0; axis < 3; ++axis) {
-			std::sort(boxIds + i, boxIds + j, geometry::CoordComparer(axis, bboxes));
+			std::sort(boxIds + i, boxIds + j, geometry::CoordComparator(axis, bboxes));
 			geometry::BminBmaxSegmentTree tree;
 			tree.calcTree(i, j, bboxes, boxIds);
 			for (int k = i; k < j - 1; ++k) {
@@ -1914,7 +1914,7 @@ void Grid2dBvh::subdivideSah(
 		float totalSah = COST_CHECK_BBOX + calcPartSahValue(diff, diff, j - i);
 		if (totalSah > minSah) {
 			if (bestAxis != 2)
-				std::sort(boxIds + i, boxIds + j, geometry::CoordComparer(bestAxis, bboxes));
+				std::sort(boxIds + i, boxIds + j, geometry::CoordComparator(bestAxis, bboxes));
 			subdivideSah(bboxes, boxIds, bnodes, i, bestSep, curNodeNum
 #ifdef PRINT_STRUCTURE_STAT
 				, depth + 1, maxBoxesInGridCell
@@ -2217,15 +2217,15 @@ bool Grid2dBvh::segTriCollisionVobNearestHit(
 	return t != FLT_MAX;
 }
 
-bool Grid2dBvh::obbTriCollisionFirstHit(const geometry::OBBExt* be) const // TODO add robustness
+bool Grid2dBvh::obbTriCollisionFirstHit(const geometry::Obb* obb) const // TODO add robustness
 {
 	float triPoints[3 * 3];
 	float min[3], max[3];
-	geometry::vcopy(min, be->getVerts());
-	geometry::vcopy(max, be->getVerts());
+	geometry::vcopy(min, obb->getVerts());
+	geometry::vcopy(max, obb->getVerts());
 	for (int i = 1; i < 8; ++i) {
-		geometry::vmin(min, be->getVerts() + i * 3);
-		geometry::vmax(max, be->getVerts() + i * 3);
+		geometry::vmin(min, obb->getVerts() + i * 3);
+		geometry::vmax(max, obb->getVerts() + i * 3);
 	}
 	XzGridBorders ret = calcXzGridBorders(min, max);
 	int vobIds[VOBS_NUM_COLLIDE_CHEKING] = { 0 };
@@ -2256,7 +2256,7 @@ bool Grid2dBvh::obbTriCollisionFirstHit(const geometry::OBBExt* be) const // TOD
 						if (!checked) {
 							vobIds[vobIdsIdx & VNC_CHK] = vobId;
 							++vobIdsIdx;
-							if (obbTriCollisionVobFirstHit(vobId, be)) {
+							if (obbTriCollisionVobFirstHit(vobId, obb)) {
 								return true;
 							}
 						}
@@ -2266,7 +2266,7 @@ bool Grid2dBvh::obbTriCollisionFirstHit(const geometry::OBBExt* be) const // TOD
 						geometry::vcopy(triPoints, m_verts + vIds[0]);
 						geometry::vcopy(triPoints + 3, m_verts + vIds[1]);
 						geometry::vcopy(triPoints + 6, m_verts + vIds[2]);
-						ret = geometry::intersectionObbVsTriangle(be, triPoints);
+						ret = geometry::intersectionObbVsTriangle(obb, triPoints);
 						if (ret) { // TODO last collide id checking
 							return true;
 						}
@@ -2286,22 +2286,22 @@ bool Grid2dBvh::obbTriCollisionFirstHit(const geometry::OBBExt* be) const // TOD
 	return false;
 }
 
-bool Grid2dBvh::obbTriCollisionVobFirstHit(int vobId, const geometry::OBBExt* be) const
+bool Grid2dBvh::obbTriCollisionVobFirstHit(int vobId, const geometry::Obb* obb) const
 {
 	const VobEntry& vob = m_vobs[vobId];
 	const BvhVobMeshEntry& vobMesh = m_vobsMeshes[vob.meshIndex];
 	const auto& vobPos = vob.positions[vob.activePosIndex];
-	geometry::OBBExt localObb;
-	be->copy(localObb);
+	geometry::Obb localObb;
+	obb->copy(localObb);
 	float vertex[3];
 	for (int i = 0; i < 8; ++i) {
-		transformVertex(be->getVert(i), vobPos.invTrafo, vertex);
+		transformVertex(obb->getVert(i), vobPos.invTrafo, vertex);
 		localObb.setVert(i, vertex);
 	}
-	transformVertex(be->getCenter(), vobPos.invTrafo, vertex);
+	transformVertex(obb->getCenter(), vobPos.invTrafo, vertex);
 	localObb.setCenter(vertex);
 	for (int i = 0; i < 3; ++i) {
-		transformDirection(be->getDir(i), vobPos.invTrafo, vertex);
+		transformDirection(obb->getDir(i), vobPos.invTrafo, vertex);
 		localObb.setDir(i, vertex);
 	}
 	float triPoints[3 * 3];

@@ -229,14 +229,14 @@ const mesh::Grid2dBvh::TrianglesData& InputGeom::extractOverlappingRectData(
 	return m_space.extractOverlappingRectData(cellId);
 }
 
-bool InputGeom::obbCollDetect(const geometry::OBBExt* be) const
+bool InputGeom::obbCollDetect(const geometry::Obb* obb) const
 {
 #ifdef PRINT_TOTAL_COLLISION_STAT
 	static uint64_t callCnt = 0;
     static uint64_t nsCnt = 0;
     auto tp1 = std::chrono::steady_clock::now();
 #endif // PRINT_TOTAL_COLLISION_STAT
-	bool ret = m_space.obbTriCollisionFirstHit(be);
+	bool ret = m_space.obbTriCollisionFirstHit(obb);
 #ifdef PRINT_TOTAL_COLLISION_STAT
 	auto tp2 = std::chrono::steady_clock::now();
 	auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(tp2 - tp1).count();

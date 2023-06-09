@@ -227,8 +227,8 @@ void NavMeshVisualizerTool::calcPreliminaryJumpFwdDownData(const int edgeIdx, co
 	static constexpr float SHRINK_COEFF = 0.95f;
 	//
 	const float checkBboxFwdDst = (tile->header->walkableRadius + 1.0f / tile->header->bvQuantFactor) * 2.f;
-	static const int DIRS_NUM = geometry::OBBExt::DIRS_NUM;
-	static const int VERTS_NUM = geometry::OBBExt::VERTS_NUM;
+	static const int DIRS_NUM = geometry::Obb::DIRS_SIZE;
+	static const int VERTS_NUM = geometry::Obb::VERTS_SIZE;
 	float dirs[3 * DIRS_NUM];
 	float verts[3 * VERTS_NUM];
 	float v1[3], v2[3];
@@ -241,7 +241,7 @@ void NavMeshVisualizerTool::calcPreliminaryJumpFwdDownData(const int edgeIdx, co
 	geometry::vcopy(v1, &tile->verts[poly->verts[edgeIdx] * 3]);
 	geometry::vcopy(v2, &tile->verts[poly->verts[(edgeIdx + 1) % polyVertsNum] * 3]);
 	dtNavMesh::calcPolyCenter(tile, poly, polyCenter);
-	geometry::OBBExt obb;
+	geometry::Obb obb;
 	bool res = dtJmpNavMeshQuery::calcObbDataForJumpingForwardDown(
 		v1, v2, polyCenter, checkBboxFwdDst, CHECK_BBOX_HEIGHT, SHRINK_COEFF, verts, dirs
 	);
@@ -266,8 +266,8 @@ void NavMeshVisualizerTool::calcPreliminaryClimbData(const int edgeIdx, const dt
 	//
 	const float checkBboxFwdDst = (tile->header->walkableRadius + 1.0f / tile->header->bvQuantFactor) * 2.f;
 	const float minClimbHeight = tile->header->walkableClimb - 1.0f / tile->header->bvQuantFactor;
-	static const int DIRS_NUM = geometry::OBBExt::DIRS_NUM;
-	static const int VERTS_NUM = geometry::OBBExt::VERTS_NUM;
+	static const int DIRS_NUM = geometry::Obb::DIRS_SIZE;
+	static const int VERTS_NUM = geometry::Obb::VERTS_SIZE;
 	float dirs[3 * DIRS_NUM];
 	float verts[3 * VERTS_NUM];
 	float v1[3], v2[3];
@@ -386,8 +386,8 @@ void NavMeshVisualizerTool::renderClimbBbox(const int edgeIdx, const dtMeshTile*
 	//
 	const float checkBboxFwdDst = (tile->header->walkableRadius + 1.0f / tile->header->bvQuantFactor) * 2.f;
 	const float minClimbHeight = tile->header->walkableClimb - 1.0f / tile->header->bvQuantFactor;
-	static const int DIRS_NUM = geometry::OBBExt::DIRS_NUM;
-	static const int VERTS_NUM = geometry::OBBExt::VERTS_NUM;
+	static const int DIRS_NUM = geometry::Obb::DIRS_SIZE;
+	static const int VERTS_NUM = geometry::Obb::VERTS_SIZE;
 	float dirs[3 * DIRS_NUM];
 	float verts[3 * VERTS_NUM];
 	float v1[3], v2[3];
@@ -407,7 +407,7 @@ void NavMeshVisualizerTool::renderClimbBbox(const int edgeIdx, const dtMeshTile*
 		return;
 	}
 
-	renderObp(verts, geometry::OBBExt::VERTS_NUM);
+	renderObp(verts, geometry::Obb::VERTS_SIZE);
 }
 
 void NavMeshVisualizerTool::renderJumpFwdDownBbox(
@@ -421,8 +421,8 @@ void NavMeshVisualizerTool::renderJumpFwdDownBbox(
 	static constexpr float SHRINK_COEFF = 0.95f;
 	//
 	const float checkBboxFwdDst = (tile->header->walkableRadius + 1.0f / tile->header->bvQuantFactor) * 2.f;
-	static const int DIRS_NUM = geometry::OBBExt::DIRS_NUM;
-	static const int VERTS_NUM = geometry::OBBExt::VERTS_NUM;
+	static const int DIRS_NUM = geometry::Obb::DIRS_SIZE;
+	static const int VERTS_NUM = geometry::Obb::VERTS_SIZE;
 	float dirs[3 * DIRS_NUM];
 	float verts[3 * VERTS_NUM];
 	float v1[3], v2[3];
@@ -433,7 +433,7 @@ void NavMeshVisualizerTool::renderJumpFwdDownBbox(
 	geometry::vcopy(v1, &tile->verts[poly->verts[edgeIdx] * 3]);
 	geometry::vcopy(v2, &tile->verts[poly->verts[(edgeIdx + 1) % polyVertsNum] * 3]);
 	dtNavMesh::calcPolyCenter(tile, poly, polyCenter);
-	//geometry::OBBExt obb;
+	//geometry::Obb obb;
 	bool res = dtJmpNavMeshQuery::calcObbDataForJumpingForwardDown(
 		v1, v2, polyCenter, checkBboxFwdDst, CHECK_BBOX_HEIGHT, SHRINK_COEFF, verts, dirs
 	);
@@ -442,7 +442,7 @@ void NavMeshVisualizerTool::renderJumpFwdDownBbox(
 		return;
 	}
 
-	renderObp(/*obb.getVerts()*/verts, geometry::OBBExt::VERTS_NUM);
+	renderObp(/*obb.getVerts()*/verts, geometry::Obb::VERTS_SIZE);
 }
 
 void NavMeshVisualizerTool::renderObp(const float* vertices, const uint32_t verticesNum)

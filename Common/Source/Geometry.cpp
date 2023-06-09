@@ -194,8 +194,10 @@ bool intersectionAabbVsTriangle(
 	return true;
 }
 
-bool intersectionObbVsTriangle(const OBBExt* be, const float* triPoints)
+bool intersectionObbVsTriangle(const Obb* obb, const float* triPoints)
 {
+	static const int TRI_EDGES_SIZE = 3;
+	static const int TRI_VERTS_SIZE = 3;
 	float minMaxObb[2], minMaxTri[2];
 	float cross[3];
 	float e[3 * 3];
@@ -204,34 +206,35 @@ bool intersectionObbVsTriangle(const OBBExt* be, const float* triPoints)
 	vsub(e + 6, triPoints, triPoints + 6);
 
 	// edges
-	for (int i = 0; i < 3; ++i) {
-		vcross(cross, e + i * 3, be->getDir(0));
-		calcProjection(be->getVerts(), 8, cross, minMaxObb);
-		calcProjection(triPoints, 3, cross, minMaxTri);
+	for (int i = 0; i < TRI_EDGES_SIZE; ++i) {
+		vcross(cross, e + i * 3, obb->getDir(0));
+		calcProjection(obb->getVerts(), Obb::VERTS_SIZE, cross, minMaxObb);
+		calcProjection(triPoints, TRI_VERTS_SIZE, cross, minMaxTri);
 		if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
-		vcross(cross, e + i * 3, be->getDir(1));
-		calcProjection(be->getVerts(), 8, cross, minMaxObb);
-		calcProjection(triPoints, 3, cross, minMaxTri);
+		vcross(cross, e + i * 3, obb->getDir(1));
+		calcProjection(obb->getVerts(), Obb::VERTS_SIZE, cross, minMaxObb);
+		calcProjection(triPoints, TRI_VERTS_SIZE, cross, minMaxTri);
 		if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
-		vcross(cross, e + i * 3, be->getDir(2));
-		calcProjection(be->getVerts(), 8, cross, minMaxObb);
-		calcProjection(triPoints, 3, cross, minMaxTri);
+		vcross(cross, e + i * 3, obb->getDir(2));
+		calcProjection(obb->getVerts(), Obb::VERTS_SIZE, cross, minMaxObb);
+		calcProjection(triPoints, TRI_VERTS_SIZE, cross, minMaxTri);
 		if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
 	}
 	// obb faces
-	calcProjection(be->getVerts(), 8, be->getDir(0), minMaxObb);
-	calcProjection(triPoints, 3, be->getDir(0), minMaxTri);
+	calcProjection(obb->getVerts(), Obb::VERTS_SIZE, obb->getDir(0), minMaxObb);
+	calcProjection(triPoints, TRI_VERTS_SIZE, obb->getDir(0), minMaxTri);
 	if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
-	calcProjection(be->getVerts(), 8, be->getDir(1), minMaxObb);
-	calcProjection(triPoints, 3, be->getDir(1), minMaxTri);
+	calcProjection(obb->getVerts(), Obb::VERTS_SIZE, obb->getDir(1), minMaxObb);
+	calcProjection(triPoints, TRI_VERTS_SIZE, obb->getDir(1), minMaxTri);
 	if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
-	calcProjection(be->getVerts(), 8, be->getDir(2), minMaxObb);
-	calcProjection(triPoints, 3, be->getDir(2), minMaxTri);
+	calcProjection(obb->getVerts(), Obb::VERTS_SIZE, obb->getDir(2), minMaxObb);
+	calcProjection(triPoints, TRI_VERTS_SIZE, obb->getDir(2), minMaxTri);
 	if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
 	// tri
+	// TODO check degradated cross product
 	vcross(cross, e + 0, e + 3);
-	calcProjection(be->getVerts(), 8, cross, minMaxObb);
-	calcProjection(triPoints, 3, cross, minMaxTri);
+	calcProjection(obb->getVerts(), Obb::VERTS_SIZE, cross, minMaxObb);
+	calcProjection(triPoints, TRI_VERTS_SIZE, cross, minMaxTri);
 	if (minMaxObb[1] < minMaxTri[0] || minMaxObb[0] > minMaxTri[1]) return false;
 
 	return true;
@@ -644,34 +647,41 @@ void calcObbDirsAndPoints(
 	//vmad(points + 21, points + 15, dirFwd, fwdDst);
 	vmad(points + 18, v6, dirFwd, fwdDst);
 	vmad(points + 21, v5, dirFwd, fwdDst);
+	//fix first and last direction to real directions
+	float e[3];
+	vsub(e, points + 9, v1);
+	vcross(dirs + 6, dirs, e);
+	dirs[1] = 0.f;
 }
 
-void calcCenterAndHalfExtents(const float* verts, const int vertsSize, float* center, float* halfExtents)
+void calcCenterAndHalfExtents(const float* verts, const int vertsNum, float* center, float* halfExtents)
 {
-	float min[3] = {FLT_MAX, FLT_MAX, FLT_MAX};
-	float max[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
-
-	const float* p = verts;
-	const float* pe = verts + vertsSize * 3;
-	for (; p < pe; p += 3)
-	{
-		vmin(min, p);
-		vmax(max, p);
-	}
+	float min[3], max[3];
+	calcAabb(verts, vertsNum, min, max);
 	vsub(halfExtents, max, min);
 	vadd(center, min, max);
 	vmul(center, 0.5f);
 	vmul(halfExtents, 0.5f);
 }
 
-void calcAabb(const float* verts, const int vertsSize, float* min, float* max)
+void calcAabb(const float* verts, const int vertsNum, float* min, float* max)
 {
-	min[0] = min[1] = min[2] = FLT_MAX;
-	max[0] = max[1] = max[2] = -FLT_MAX;
+	vcopy(min, verts);
+	vcopy(max, verts);
+	const float* const pend = verts + vertsNum * 3;
+	for (const float* p = verts + 3; p < pend; p += 3)
+	{
+		vmin(min, p);
+		vmax(max, p);
+	}
+}
 
-	const float* p = verts;
-	const float* pe = verts + vertsSize * 3;
-	for (; p < pe; p += 3)
+void calcAabb16BytesAligned(const float* verts, const int vertsNum, float* min, float* max)
+{
+	vcopy(min, verts);
+	vcopy(max, verts);
+	const float* const pend = verts + vertsNum * 4;
+	for (const float* p = verts + 4; p < pend; p += 4)
 	{
 		vmin(min, p);
 		vmax(max, p);

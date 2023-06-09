@@ -2450,8 +2450,8 @@ void dtJmpNavMeshQuery::findPolysReachableJumpingForward(
 	JumpTransfersCommonData& commonData,
 	StdJmpArr* transfers
 ) {
-	float dirs[3 * geometry::OBBExt::DIRS_NUM];
-	float verts[3 * geometry::OBBExt::VERTS_NUM];
+	float dirs[3 * geometry::Obb::DIRS_SIZE];
+	float verts[3 * geometry::Obb::VERTS_SIZE];
 	float aabbMin[3], aabbMax[3];
 	float edgeDir[3];
 	float enhancedV1[3], enhancedV2[3];
@@ -2473,13 +2473,13 @@ void dtJmpNavMeshQuery::findPolysReachableJumpingForward(
 		dirs,
 		verts
 	);
-	geometry::calcAabb(verts, geometry::OBBExt::VERTS_NUM, aabbMin, aabbMax);
-	dtFindCollidedPolysQuery<geometry::OBBExt::DIRS_NUM, POLY_ARR_SIZE_FOR_EXTRACTION> jmpFwdQuery(
+	geometry::calcAabb(verts, geometry::Obb::VERTS_SIZE, aabbMin, aabbMax);
+	dtFindCollidedPolysQuery<geometry::Obb::DIRS_SIZE, POLY_ARR_SIZE_FOR_EXTRACTION> jmpFwdQuery(
 		this,
 		dirs,
-		geometry::OBBExt::DIRS_NUM,
+		geometry::Obb::DIRS_SIZE,
 		verts,
-		geometry::OBBExt::VERTS_NUM,
+		geometry::Obb::VERTS_SIZE,
 		POLY_ARR_SIZE_FOR_EXTRACTION
 	);
 	dtStatus status = queryPolygonsAabb(aabbMin, aabbMax, &agentChars->filter, &jmpFwdQuery);
@@ -2503,8 +2503,8 @@ void dtJmpNavMeshQuery::findPolysReachableJumpingDown(
 	JumpTransfersCommonData& commonData,
 	StdJmpArr* transfers
 ) {
-	float dirs[3 * geometry::OBBExt::DIRS_NUM];
-	float verts[3 * geometry::OBBExt::VERTS_NUM];
+	float dirs[3 * geometry::Obb::DIRS_SIZE];
+	float verts[3 * geometry::Obb::VERTS_SIZE];
 	float aabbMin[3], aabbMax[3];
 	float edgeDir[3];
 	float enhancedV1[3], enhancedV2[3];
@@ -2526,13 +2526,13 @@ void dtJmpNavMeshQuery::findPolysReachableJumpingDown(
 		dirs,
 		verts
 	);
-	geometry::calcAabb(verts, geometry::OBBExt::VERTS_NUM, aabbMin, aabbMax);
-	dtFindCollidedPolysQuery<geometry::OBBExt::DIRS_NUM, POLY_ARR_SIZE_FOR_EXTRACTION> jmpDownQuery(
+	geometry::calcAabb(verts, geometry::Obb::VERTS_SIZE, aabbMin, aabbMax);
+	dtFindCollidedPolysQuery<geometry::Obb::DIRS_SIZE, POLY_ARR_SIZE_FOR_EXTRACTION> jmpDownQuery(
 		this,
 		dirs,
-		geometry::OBBExt::DIRS_NUM,
+		geometry::Obb::DIRS_SIZE,
 		verts,
-		geometry::OBBExt::VERTS_NUM,
+		geometry::Obb::VERTS_SIZE,
 		POLY_ARR_SIZE_FOR_EXTRACTION
 	);
 	dtStatus status = queryPolygonsAabb(aabbMin, aabbMax, &agentChars->filter, &jmpDownQuery);
@@ -2556,8 +2556,8 @@ void dtJmpNavMeshQuery::findPolysReachableClimbing(
 	JumpTransfersCommonData& commonData,
 	StdJmpArr* transfers
 ) {
-	float dirs[3 * geometry::OBBExt::DIRS_NUM];
-	float verts[3 * geometry::OBBExt::VERTS_NUM];
+	float dirs[3 * geometry::Obb::DIRS_SIZE];
+	float verts[3 * geometry::Obb::VERTS_SIZE];
 	float aabbMin[3], aabbMax[3];
 
 	geometry::calcObbDirsAndPoints(
@@ -2569,13 +2569,13 @@ void dtJmpNavMeshQuery::findPolysReachableClimbing(
 		dirs,
 		verts
 	);
-	geometry::calcAabb(verts, geometry::OBBExt::VERTS_NUM, aabbMin, aabbMax);
-	dtFindCollidedPolysQuery<geometry::OBBExt::DIRS_NUM, POLY_ARR_SIZE_FOR_EXTRACTION> climbQuery(
+	geometry::calcAabb(verts, geometry::Obb::VERTS_SIZE, aabbMin, aabbMax);
+	dtFindCollidedPolysQuery<geometry::Obb::DIRS_SIZE, POLY_ARR_SIZE_FOR_EXTRACTION> climbQuery(
 		this,
 		dirs,
-		geometry::OBBExt::DIRS_NUM,
+		geometry::Obb::DIRS_SIZE,
 		verts,
-		geometry::OBBExt::VERTS_NUM,
+		geometry::Obb::VERTS_SIZE,
 		POLY_ARR_SIZE_FOR_EXTRACTION
 	);
 	dtStatus status = queryPolygonsAabb(aabbMin, aabbMax, &agentChars->filter, &climbQuery);

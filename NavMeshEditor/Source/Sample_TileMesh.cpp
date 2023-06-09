@@ -1035,12 +1035,12 @@ bool Sample_TileMesh::checkAbilityJumpDownOrForward(
 	const float checkBboxHeight,
 	const float shrinkCoeff
 ) {
-	static const int DIRS_NUM = geometry::OBBExt::DIRS_NUM;
-	static const int VERTS_NUM = geometry::OBBExt::VERTS_NUM;
+	static const int DIRS_NUM = geometry::Obb::DIRS_SIZE;
+	static const int VERTS_NUM = geometry::Obb::VERTS_SIZE;
 	float dirs[3 * DIRS_NUM];
 	float verts[3 * VERTS_NUM];
 	
-	geometry::OBBExt obb;
+	geometry::Obb obb;
 	bool res = dtJmpNavMeshQuery::calcObbDataForJumpingForwardDown(
 		v1, v2, polyCenter, checkBboxFwdDst, checkBboxHeight, shrinkCoeff, verts, dirs
 	);
@@ -1061,8 +1061,8 @@ bool Sample_TileMesh::checkAbilityClimb(
 	const float maxClimbHeight,
 	const class dtQueryFilter* filter
 ) {
-	static const int DIRS_NUM = geometry::OBBExt::DIRS_NUM;
-	static const int VERTS_NUM = geometry::OBBExt::VERTS_NUM;
+	static const int DIRS_NUM = geometry::Obb::DIRS_SIZE;
+	static const int VERTS_NUM = geometry::Obb::VERTS_SIZE;
 	float dirs[3 * DIRS_NUM];
 	float verts[3 * VERTS_NUM];
 	float min[3], max[3];
