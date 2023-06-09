@@ -194,7 +194,7 @@ private:
 	using ObpType = typename std::conditional<
 		MAX_PLANES_SIZE == geometry::Obb::DIRS_SIZE,
 		geometry::Obb,
-		geometry::YAlignedObp<MAX_PLANES_SIZE>
+		geometry::Obp<MAX_PLANES_SIZE>
 	>::type;
 
 	template <int I>
@@ -202,7 +202,7 @@ private:
 	{
 		template <typename ... Args>
 		static bool execute(Args&& ... args) {
-			return geometry::intersectionYaobpVsPolygon<ObpType, DT_VERTS_PER_POLYGON>(std::forward<Args>(args)...);
+			return geometry::intersectionObpVsPolygon<ObpType, DT_VERTS_PER_POLYGON>(std::forward<Args>(args)...);
 		}
 		template <typename T, typename ... Args>
 		static void init(T& obb, Args&& ... args) {
@@ -217,7 +217,7 @@ private:
 			return geometry::intersectionObbVsPoly<DT_VERTS_PER_POLYGON>(std::forward<Args>(args)...);
 		}
 		template <typename T>
-		static void init(T& obb, const float* dirs, const int dirsNum, const float* verts, const int vertsNum) {
+		static void init(T& obb, const int dirsNum, const float* dirs, const int vertsNum, const float* verts) {
 			assert(dirsNum == geometry::Obb::DIRS_SIZE);
 			assert(vertsNum == geometry::Obb::VERTS_SIZE);
 			obb.init(dirs, verts);
@@ -240,7 +240,7 @@ public:
 	{
 		assert(maxNumFoundPolys <= FOUND_POLYS_ARR_SIZE);
 		assert(maxNumFoundPolys >= 1);
-		Strategy<MAX_PLANES_SIZE>::init(obp, dirs, dirsNum, verts, vertsNum);
+		Strategy<MAX_PLANES_SIZE>::init(obp, dirsNum, dirs, vertsNum, verts);
 	}
 
 	~dtFindCollidedPolysQuery() = default;

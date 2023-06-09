@@ -134,7 +134,7 @@ struct VobEntry
 		return vobType == common::VobType::LADDER;
 	}
 
-	bool hasNavmeshFlagsInfluence() const { // ladder or door
+	bool hasInfluenceToNavmesh() const { // ladder or door
 		return isLadder() || isDoor();
 	}
 
@@ -461,6 +461,7 @@ private:
 		float max[3];
 		int32_t triId = 0;
 	};
+	// for attention purposes: if bvh changed, fix this place
 	static_assert(sizeof(BvhNode) == 32, "Incorrect BvhNode size");
 	struct GridCell
 	{
@@ -708,8 +709,6 @@ private:
 	static float calcHalfSurfaceArea(const float* bboxDiff);
 	static float calcPartSahValue(const float* diffTotal, const float* bboxDiff, const int n);
 
-	static void transformVertex(const float* vertex, const float* trafo, float* vertexNew);
-	static void transformDirection(const float* normal, const float* trafo, float* normalNew);
 	static void transformVertex(const float* vertex, const VobPosition* pos, float* vertexNew);
 
 private:

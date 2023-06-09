@@ -372,6 +372,39 @@ void calcIsectTriArgs(IsectTriArgs& args, const float* start, const float* end)
 #endif
 }
 
+void transformVertex(const float* vertex, const float* trafo, float* vertexNew)
+{
+	// 0: 0-3
+	// 0: 4-7
+	// 0: 8-11
+	// 0: 12-15
+	vertexNew[0] =
+		trafo[0] * vertex[0] + trafo[1] * vertex[1] + trafo[2] * vertex[2] + trafo[3]/**1.f*/;
+	vertexNew[1] =
+		trafo[4] * vertex[0] + trafo[5] * vertex[1] + trafo[6] * vertex[2] + trafo[7]/**1.f*/;
+	vertexNew[2] =
+		trafo[8] * vertex[0] + trafo[9] * vertex[1] + trafo[10] * vertex[2] + trafo[11]/**1.f*/;
+}
+
+void transformDirection(const float* normal, const float* trafo, float* normalNew)
+{
+	// 0: 0-3
+	// 0: 4-7
+	// 0: 8-11
+	// 0: 12-15
+	normalNew[0] =
+		trafo[0] * normal[0] + trafo[1] * normal[1] + trafo[2] * normal[2]/* + trafo[3]*0.f*/;
+	normalNew[1] =
+		trafo[4] * normal[0] + trafo[5] * normal[1] + trafo[6] * normal[2]/* + trafo[7]*0.f*/;
+	normalNew[2] =
+		trafo[8] * normal[0] + trafo[9] * normal[1] + trafo[10] * normal[2]/* + trafo[11]*0.f*/;
+	if (normalNew[1] < 0.f) {
+		normalNew[0] *= -1.f;
+		normalNew[1] *= -1.f;
+		normalNew[2] *= -1.f;
+	}
+}
+
 bool intersectSegmentTriangleRed(
 	const IsectTriArgs& args,
 	const float* a,

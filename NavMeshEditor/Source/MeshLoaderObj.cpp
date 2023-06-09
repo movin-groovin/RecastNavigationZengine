@@ -906,6 +906,7 @@ ErrorCode4 MeshLoaderObjExt::addVobBboxesToStaticMesh()
     if (!verts || !tris || !flags) {
         return {1, 0, 0, 0};
     }
+
 	int vertCnt = 0;
 	int polyCnt = 0;
 	for (int j = 0; j < m_vobsCnt; ++j)
@@ -990,7 +991,7 @@ ErrorCode4 MeshLoaderObjExt::addVobBboxesToStaticMesh()
 				val.isInhabited = 0;
 				val.polyFlags = 0;
 			}
-			if (vob.hasNavmeshFlagsInfluence()) {
+			if (vob.hasInfluenceToNavmesh()) {
 				uint8_t flagValue;
 				if (vob.isLadder()) {
 					flagValue = PolyAreaFlags::LADDER;
