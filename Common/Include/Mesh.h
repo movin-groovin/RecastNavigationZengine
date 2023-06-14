@@ -404,12 +404,6 @@ public:
 	};
 
 private:
-	static const int VOBS_NUM_COLLIDE_CHEKING = 8;
-	static const int VNC_CHK = VOBS_NUM_COLLIDE_CHEKING - 1;
-	static_assert(
-		(VOBS_NUM_COLLIDE_CHEKING | VNC_CHK) == (VOBS_NUM_COLLIDE_CHEKING * 2 - 1),
-		"VOBS_NUM_COLLIDE_CHEKING must be power of 2"
-	);
 	static constexpr float COST_CHECK_BBOX = 0.125f;
 	static constexpr float COST_CHECK_TRI = 1.f;
 	static constexpr int LIMIT_POLYS_STOP = 16; // 8, 1;
