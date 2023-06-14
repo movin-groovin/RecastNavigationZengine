@@ -84,13 +84,11 @@ struct MarkedArea
 
 struct VobPosition
 {
-	static const int POS_TRIS_NUM = 3;
-
 	float aabbMin[3];
 	float aabbMax[3];
 	float trafo[4 * 4];
 	float invTrafo[4 * 4];
-	int aabbTris[POS_TRIS_NUM];
+	int aabbTri; // idx of virtual vob's tri in bvh with static mesh
 };
 
 struct VobEntry
@@ -134,7 +132,7 @@ struct VobEntry
 		return vobType == common::VobType::LADDER;
 	}
 
-	bool hasInfluenceToNavmesh() const { // ladder or door
+	bool hasInfluenceToNavmesh() const {
 		return isLadder() || isDoor();
 	}
 
@@ -171,6 +169,7 @@ struct VobEntry
 		return true;
 	}
 
+public:
 	char* vobName;
 	int vobType;
 	int meshIndex;
@@ -294,12 +293,12 @@ private:
 	Node* LoadDo(
 		std::unique_ptr<std::unique_ptr<int[]>[]>& constrTimeIds,
 		int depth, const float* center, const float* span, const float* verts,
-		const int* tris, const geometry::Aabb3D* bboxes, int polysNum
+		const int* tris, const geometry::AabbTri* bboxes, int polysNum
 	);
 	bool detectSegmentPolyCollisionDo(
 		const float* start, const float* end, const Node* cur, float& t
 	) const;
-	static void calcAabb(const float* verts, const int* triangle, geometry::Aabb3D* bbox);
+	static void calcAabb(const float* verts, const int* triangle, geometry::AabbTri* bbox);
 
 private:
 #ifdef LOGGING_ENABLED
@@ -598,7 +597,7 @@ public:
 	const TrianglesData& getEmptyOverlappingRectData() const;
 	const TrianglesData& extractOverlappingRectData(int cellId) const;
 	void extractOverlappingRectData(int cellId, TrianglesData& customData) const;
-	void moverStateUpdate(const char* name, int stateId);
+	void moverStateUpdate(const char* name, const int stateId);
 
 	bool segTriCollisionFirstHit(const float* start, const float* end, float& t) const;
 	bool segTriCollisionNearestHit(const float* start, const float* end, float& t) const;
@@ -614,7 +613,8 @@ public:
 	void clearStatPerCall() const;
 #endif
 #ifdef RENDERING_ENABLED
-	const TrianglesData& getVobsAabbsData() const;
+	int getVobsNum() const;
+	const geometry::AabbVob* getVobsAabbsData() const;
 	const TrianglesData& getRenderingData() const;
 #endif
 	const MarkedArea* getMarkedArea(int i) const;
@@ -652,7 +652,7 @@ private:
 	int constructVobs(MeshLoaderInterface* mesh);
 #ifdef RENDERING_ENABLED
 	int constructRenderingData(MeshLoaderInterface* mesh);
-	void constructVobsAbbsData(MeshLoaderInterface* mesh);
+	int constructVobsAbbsData(MeshLoaderInterface* mesh);
 #endif
 	int constructOverlappingRectData(
 		std::unique_ptr<std::pair<int, int>[]> trisVertsPerCellStatic
@@ -669,16 +669,16 @@ private:
 		const float* bmin, const float* bmax, const int* triangle
 	) const;
 	std::pair<BvhNode*, int> makeBvh(
-		const geometry::Aabb3D* bboxes, int* boxIds, const int trisNum
+		const geometry::AabbTri* bboxes, int* boxIds, const int trisNum
 	) const;
 	void subdivideMedian(
-		const geometry::Aabb3D* bboxes, int* boxIds, BvhNode* bnodes, int i, int j, int& curNodeNum
+		const geometry::AabbTri* bboxes, int* boxIds, BvhNode* bnodes, int i, int j, int& curNodeNum
 #ifdef PRINT_STRUCTURE_STAT
 		, int depth, int& maxBoxesInGridCell
 #endif
 	) const;
 	void subdivideSah(
-		const geometry::Aabb3D* bboxes, int* boxIds, BvhNode* bnodes, int i, int j, int& curNodeNum
+		const geometry::AabbTri* bboxes, int* boxIds, BvhNode* bnodes, int i, int j, int& curNodeNum
 #ifdef PRINT_STRUCTURE_STAT
 		, int depth, int& maxBoxesInGridCell
 #endif
@@ -686,18 +686,7 @@ private:
 	XzGridBorders calcXzGridBorders(const float* min, const float* max) const;
 	int linkMarkedAreaWithGrid(int vertsNum, const float* verts, int eInd, MarkedEntry& e);
 
-	static void calc3DAabb(const float* verts, const int* triangle, geometry::Aabb3D* bbox, int vertsBlock);
-	static void copyDataFromBvh(
-		TrianglesData& resData,
-		int& trisPos,
-		int& vertsPos,
-		const BvhNode* curNode,
-		const BvhNode* endNode,
-		const VobPosition* pos,
-		const float* verts,
-		const int* tris,
-		const FlagType* triFlags
-	);
+	static void calcTriAabb(const float* verts, const int* triangle, geometry::AabbTri* bbox, int vertsBlock);
 	static float calcSah(
 		const geometry::BminBmaxSegmentTree& tree,
 		int i,
@@ -709,7 +698,30 @@ private:
 	static float calcHalfSurfaceArea(const float* bboxDiff);
 	static float calcPartSahValue(const float* diffTotal, const float* bboxDiff, const int n);
 
-	static void transformVertex(const float* vertex, const VobPosition* pos, float* vertexNew);
+	static void copyTriDataFromBvh(
+		TrianglesData& resData,
+		int& trisPos,
+		int& vertsPos,
+		const BvhNode* curNode,
+		const BvhNode* endNode,
+		const float* verts,
+		const int* tris,
+		const FlagType* triFlags
+	);
+	static void copyVobTriDataFromBvh(
+		TrianglesData& resData,
+		int& trisPos,
+		int& vertsPos,
+		const BvhNode* curNode,
+		const BvhNode* endNode,
+		const VobPosition* pos,
+		const float* verts,
+		const int* tris,
+		const FlagType* triFlags
+	);
+	static void copyBottomTriangles(
+		TrianglesData& resData, int& trisPos, int& vertsPos, const VobPosition* pos, const uint8_t type
+	);
 
 private:
 	int m_cellSize = 0;
@@ -742,7 +754,7 @@ private:
 	common::ArrayBuffer<MarkedEntry> m_markedAreas;
 	OffMeshData m_offMeshConns;
 #ifdef RENDERING_ENABLED
-	TrianglesData m_vobsAabbsData;
+	geometry::AabbVob* m_vobsAabbsData = nullptr;
 	TrianglesData m_renderingData;
 #endif
 #ifdef LOGGING_ENABLED

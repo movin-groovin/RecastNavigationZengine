@@ -652,11 +652,7 @@ void Sample_TileMesh::handleRender(const float* cameraPos)
 
 			if (m_showVobsAabbs)
 			{
-				const mesh::Grid2dBvh::TrianglesData& aabbsData = space.getVobsAabbsData();
-				duDebugDrawVobsAabbsFast(
-					&m_ddVboMesh, aabbsData.verts, aabbsData.tris,
-					aabbsData.trisNumCurrent, mesh::VobPosition::POS_TRIS_NUM
-				);
+				duDebugDrawVobsAabbsFast(&m_ddVboMesh, space.getVobsAabbsData(), space.getVobsNum());
 			}
 		}
         m_geom->drawOffMeshConnections(&m_dd);

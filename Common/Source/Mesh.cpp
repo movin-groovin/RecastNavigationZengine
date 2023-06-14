@@ -35,7 +35,7 @@ bool Octree::Load(MeshLoaderInterface* mesh)
 	const int* tris = m_tris.get();
 	const float* verts = m_verts.get();
 
-    geometry::Aabb3D* bboxes = new(std::nothrow) geometry::Aabb3D[m_polyNum];
+    geometry::AabbTri* bboxes = new(std::nothrow) geometry::AabbTri[m_polyNum];
     if (!bboxes) {
         m_memInsufficient = true;
         return false;
@@ -58,7 +58,7 @@ bool Octree::Load(MeshLoaderInterface* mesh)
 	std::unique_ptr<int[]>& zeroLevel = constrTimeIds[0];
     for (int i = 0; i < m_polyNum; ++i) {
         calcAabb(verts, &tris[i * 3], &bboxes[i]);
-        bboxes[i].polyIndex = i;
+        bboxes[i].triIndex = i;
         geometry::vmin(m_bmin, bboxes[i].min);
 		geometry::vmax(m_bmax, bboxes[i].max);
         zeroLevel[i] = i;
@@ -96,7 +96,7 @@ bool Octree::Load(MeshLoaderInterface* mesh)
 Octree::Node* Octree::LoadDo(
 	std::unique_ptr<std::unique_ptr<int[]>[]>& constrTimeIds,
     int depth, const float* center, const float* span, const float* verts,
-    const int* tris, const geometry::Aabb3D* bboxes, int polysNum
+    const int* tris, const geometry::AabbTri* bboxes, int polysNum
 ) {
     Node* cur = new(std::nothrow) Node;
     if (!cur) {
@@ -114,7 +114,7 @@ Octree::Node* Octree::LoadDo(
     auto& nextLevel = constrTimeIds[depth];
     int curPolysNum = 0;
     for (int i = 0, j = 0; i < polysNum; ++i) {
-        const geometry::Aabb3D* box = &bboxes[curLevel[i]];
+        const geometry::AabbTri* box = &bboxes[curLevel[i]];
         if (geometry::checkAabbsCollision(cur->bmin, cur->bmax, box->min, box->max)) {
             ++curPolysNum;
             nextLevel[j++] = curLevel[i];
@@ -134,7 +134,7 @@ Octree::Node* Octree::LoadDo(
             return nullptr;
         }
         for (int i = 0; i < curPolysNum; ++i) {
-            cur->m_trianglePolys[i] = bboxes[nextLevel[i]].polyIndex;
+            cur->m_trianglePolys[i] = bboxes[nextLevel[i]].triIndex;
         }
         ++m_leafNum;
         m_averPolysInLeaf += polysNum;
@@ -251,7 +251,7 @@ bool Octree::detectSegmentPolyCollisionDo(
     return false;
 }
 
-void Octree::calcAabb(const float* verts, const int* triangle, geometry::Aabb3D* bbox)
+void Octree::calcAabb(const float* verts, const int* triangle, geometry::AabbTri* bbox)
 {
 	geometry::vcopy(bbox->min, &verts[triangle[0] * 3]);
 	geometry::vcopy(bbox->max, &verts[triangle[0] * 3]);
@@ -291,9 +291,8 @@ void Grid2dBvh::release() {
 	m_markedAreas.release();
 	m_offMeshConns.release();
 #ifdef RENDERING_ENABLED
-	m_vobsAabbsData.tris = nullptr;
-	m_vobsAabbsData.verts = nullptr;
-	m_vobsAabbsData.release();
+	delete[] m_vobsAabbsData;
+	m_vobsAabbsData = nullptr;
 	m_renderingData.release();
 #endif
 	clearState();
@@ -351,14 +350,14 @@ void Grid2dBvh::clearState()
 #endif
 }
 
-void Grid2dBvh::calc3DAabb(const float* verts, const int* triangle, geometry::Aabb3D* bbox, int vertsBlock)
+void Grid2dBvh::calcTriAabb(const float* verts, const int* triangle, geometry::AabbTri* bbox, int vertsBlock)
 {
 	geometry::vcopy(bbox->min, &verts[triangle[0] * vertsBlock]);
 	geometry::vcopy(bbox->max, &verts[triangle[0] * vertsBlock]);
-	for (int i = 1; i < 3; ++i) {
-		geometry::vmin(bbox->min, &verts[triangle[i] * vertsBlock]);
-		geometry::vmax(bbox->max, &verts[triangle[i] * vertsBlock]);
-	}
+	geometry::vmin(bbox->min, &verts[triangle[1] * vertsBlock]);
+	geometry::vmax(bbox->max, &verts[triangle[1] * vertsBlock]);
+	geometry::vmin(bbox->min, &verts[triangle[2] * vertsBlock]);
+	geometry::vmax(bbox->max, &verts[triangle[2] * vertsBlock]);
 }
 
 bool Grid2dBvh::checkTriangleBelongAabb(
@@ -378,9 +377,11 @@ void Grid2dBvh::fillPolyFlags(
 	for (int i = 0; i < trisNum; ++i)
 	{
 		flagsTo[i] = flagsFrom[i];
-		if (flagsFrom[i].isVobPos) {
+		if (flagsFrom[i].isVobPos)
+		{
 			continue;
 		}
+
 		uint8_t valueCollision = 0;
 		switch (flagsFrom[i].polyFlags)
 		{
@@ -401,7 +402,6 @@ void Grid2dBvh::fillPolyFlags(
 			valueCollision = PolyFlagsCollision::LAVA;
 			break;
 		default:
-			//*((int*)nullptr) = 123;
 			assert(1 != 1);
 		}
 		flagsTo[i].vobIdOrCollFlags = valueCollision;
@@ -513,7 +513,7 @@ int Grid2dBvh::constructVobs(MeshLoaderInterface* mesh)
 	}
 
 	int maxTrisNum = mesh->getMaxTrisPerVob();
-	std::unique_ptr<geometry::Aabb3D[]> bboxes(new(std::nothrow) geometry::Aabb3D[maxTrisNum]);
+	std::unique_ptr<geometry::AabbTri[]> bboxes(new(std::nothrow) geometry::AabbTri[maxTrisNum]);
 	std::unique_ptr<int[]> boxIds(new(std::nothrow) int[maxTrisNum]);
 	if (!bboxes || !boxIds) {
 		return ERROR_NO_MEMORY;
@@ -533,8 +533,8 @@ int Grid2dBvh::constructVobs(MeshLoaderInterface* mesh)
 		const int trisNum = vmCp.triCount;
 		for (int j = 0; j < trisNum; ++j)
 		{
-			calc3DAabb(vm.verts, tris + j * 3, bboxes.get() + j, Constants::REGULAR_VERTS_BLOCK);
-			bboxes[j].polyIndex = j;
+			calcTriAabb(vm.verts, tris + j * 3, bboxes.get() + j, Constants::REGULAR_VERTS_BLOCK);
+			bboxes[j].triIndex = j;
 			boxIds[j] = j;
 		}
 		auto dat = makeBvh(bboxes.get(), boxIds.get(), trisNum);
@@ -548,31 +548,31 @@ int Grid2dBvh::constructVobs(MeshLoaderInterface* mesh)
 
 #ifdef PRINT_STRUCTURE_STAT
 	m_bytesPerConstruction +=
-		sizeof(int) * m_cellsNum + (sizeof(geometry::Aabb3D) + sizeof(int)) * maxTrisNum;
+		sizeof(int) * m_cellsNum + (sizeof(geometry::AabbTri) + sizeof(int)) * maxTrisNum;
 	m_bytesForData += sizeof(VobEntry) * m_vobsNum + sizeof(BvhVobMeshEntry) * m_vobsMeshesNum;
 #endif
 
 	return SUCCESSFUL;
 }
 
-void Grid2dBvh::transformVertex(
-	const float* vertex, const VobPosition* pos, float* vertexNew
-) {
-	if (pos)
-		geometry::transformVertex(vertex, pos->trafo, vertexNew);
-	else
-		geometry::vcopy(vertexNew, vertex);
-}
-
 #ifdef RENDERING_ENABLED
-void Grid2dBvh::constructVobsAbbsData(MeshLoaderInterface* mesh)
+int Grid2dBvh::constructVobsAbbsData(MeshLoaderInterface* mesh)
 {
-	m_vobsAabbsData.vertsNum = m_vertsNum - mesh->getVertCountStatic();
-	m_vobsAabbsData.vertsNumCurrent = m_vobsAabbsData.vertsNum;
-	m_vobsAabbsData.trisNum = m_trisNum - mesh->getTriCountStatic();
-	m_vobsAabbsData.trisNumCurrent = m_vobsAabbsData.trisNum;
-	m_vobsAabbsData.verts = m_verts;
-	m_vobsAabbsData.tris = m_tris + mesh->getTriCountStatic() * 3;
+	if (!(m_vobsAabbsData = new(std::nothrow) geometry::AabbVob[m_vobsNum])) {
+		return ERROR_NO_MEMORY;
+	}
+
+	for (int i = 0; i < m_vobsNum; ++i)
+	{
+		const int activePosIdx = m_vobs[i].activePosIndex;
+		const VobPosition& pos = m_vobs[i].positions[activePosIdx];
+		geometry::AabbVob& dat = m_vobsAabbsData[i];
+		geometry::vcopy(dat.min, pos.aabbMin);
+		geometry::vcopy(dat.max, pos.aabbMax);
+		dat.vobIndex = i;
+	}
+
+	return SUCCESSFUL;
 }
 
 int Grid2dBvh::constructRenderingData(MeshLoaderInterface* mesh)
@@ -740,7 +740,48 @@ int Grid2dBvh::getOverlappingRectMarkedAreaIds(
 	return n;
 }
 
-void Grid2dBvh::copyDataFromBvh(
+void Grid2dBvh::copyTriDataFromBvh(
+	Grid2dBvh::TrianglesData& resData,
+	int& trisPos,
+	int& vertsPos,
+	const BvhNode* curNode,
+	const BvhNode* endNode,
+	const float* verts,
+	const int* tris,
+	const FlagType* triFlags
+) {
+	while (curNode < endNode) {
+		if (curNode->triId >= 0) {
+			FlagType flag = triFlags[curNode->triId / 3];
+			if (flag.isVobPos) {
+				++curNode;
+				continue;
+			}
+			const int* vIds = tris + curNode->triId;
+			const float* v1 = verts + vIds[0];
+			const float* v2 = verts + vIds[1];
+			const float* v3 = verts + vIds[2];
+
+			resData.triFlags[trisPos / 3] =
+				// need not is tri flag for navmesh generation
+				static_cast<uint8_t>(flag.isInhabited) << PolyAreaFlags::INHABITED_POS |
+				flag.polyFlags;
+
+			geometry::vcopy(resData.verts + vertsPos, v1);
+			resData.tris[trisPos++] = vertsPos / 3;
+			vertsPos += 3;
+			geometry::vcopy(resData.verts + vertsPos, v2);
+			resData.tris[trisPos++] = vertsPos / 3;
+			vertsPos += 3;
+			geometry::vcopy(resData.verts + vertsPos, v3);
+			resData.tris[trisPos++] = vertsPos / 3;
+			vertsPos += 3;
+		}
+		++curNode;
+	}
+}
+
+void Grid2dBvh::copyVobTriDataFromBvh(
 	Grid2dBvh::TrianglesData& resData,
 	int& trisPos,
 	int& vertsPos,
@@ -754,40 +795,64 @@ void Grid2dBvh::copyDataFromBvh(
 	while (curNode < endNode) {
 		if (curNode->triId >= 0) {
 			FlagType flag = triFlags[curNode->triId / 3];
-			if (
-				flag.isVobPos &&
-				(flag.polyFlags != PolyAreaFlags::DOOR) &&
-				(flag.polyFlags != PolyAreaFlags::LADDER)
-			) {
-				++curNode;
-				continue;
-			}
 			const int* vIds = tris + curNode->triId;
 			const float* v1 = verts + vIds[0];
 			const float* v2 = verts + vIds[1];
 			const float* v3 = verts + vIds[2];
+
 			resData.triFlags[trisPos / 3] =
 				// need not is tri flag for navmesh generation
 				static_cast<uint8_t>(flag.isInhabited) << PolyAreaFlags::INHABITED_POS |
 				flag.polyFlags;
-			transformVertex(v1, pos, resData.verts + vertsPos);
-			if (pos)
-				(resData.verts + vertsPos)[2] *= -1.f;
+
+			geometry::transformVertex(v1, pos->trafo, resData.verts + vertsPos);
+			(resData.verts + vertsPos)[2] *= -1.f;
 			resData.tris[trisPos++] = vertsPos / 3;
 			vertsPos += 3;
-			transformVertex(v2, pos, resData.verts + vertsPos);
-			if (pos)
-				(resData.verts + vertsPos)[2] *= -1.f;
+			geometry::transformVertex(v2, pos->trafo, resData.verts + vertsPos);
+			(resData.verts + vertsPos)[2] *= -1.f;
 			resData.tris[trisPos++] = vertsPos / 3;
 			vertsPos += 3;
-			transformVertex(v3, pos, resData.verts + vertsPos);
-			if (pos)
-				(resData.verts + vertsPos)[2] *= -1.f;
+			geometry::transformVertex(v3, pos->trafo, resData.verts + vertsPos);
+			(resData.verts + vertsPos)[2] *= -1.f;
 			resData.tris[trisPos++] = vertsPos / 3;
 			vertsPos += 3;
 		}
 		++curNode;
 	}
+}
+
+void Grid2dBvh::copyBottomTriangles(
+	TrianglesData& resData, int& trisPos, int& vertsPos, const VobPosition* pos, const uint8_t type
+) {
+	const float dX = pos->aabbMax[0] - pos->aabbMin[0];
+	const float dY = pos->aabbMax[1] - pos->aabbMin[1];
+	const float dZ = pos->aabbMax[2] - pos->aabbMin[2];
+	const float* min = pos->aabbMin;
+	int n = vertsPos;
+	int m = trisPos;
+	float* verts = resData.verts;
+	int* tris = resData.tris;
+
+	// lower rectangle vertices
+	verts[n] = min[0]; verts[n + 1] = min[1]; verts[n + 2] = min[2]; // 0 - min
+	n += 3;
+	verts[n] = min[0] + dX; verts[n + 1] = min[1]; verts[n + 2] = min[2]; // 1
+	n += 3;
+	verts[n] = min[0] + dX; verts[n + 1] = min[1]; verts[n + 2] = min[2] + dZ; // 2
+	n += 3;
+	verts[n] = min[0]; verts[n + 1] = min[1]; verts[n + 2] = min[2] + dZ; // 3
+	//n += 3;
+	// 2 triangles for bottom polygons
+	const int vertsIdx = vertsPos / 3;
+	tris[m] = vertsIdx + 0; tris[m + 1] = vertsIdx + 3; tris[m + 2] = vertsIdx + 2;
+	m += 3;
+	tris[m] = vertsIdx + 0; tris[m + 1] = vertsIdx + 2; tris[m + 2] = vertsIdx + 1;
+	//m += 3;
+	resData.triFlags[trisPos / 3] = type;
+	resData.triFlags[trisPos / 3 + 1] = type;
+	vertsPos += 12;
+	trisPos += 6;
 }
 
 const Grid2dBvh::TrianglesData& Grid2dBvh::getEmptyOverlappingRectData() const
@@ -810,21 +875,26 @@ void Grid2dBvh::extractOverlappingRectData(
 	const BvhNode* curNode = grid.childs;
 	const BvhNode* endNode = curNode + grid.childsNumber;
 
-	copyDataFromBvh(
-		customData, trisPos, vertsPos, curNode, endNode, nullptr, m_verts, m_tris, m_triFlags
+	copyTriDataFromBvh(
+		customData, trisPos, vertsPos, curNode, endNode, m_verts, m_tris, m_triFlags
 	);
 	for (int k = 0; k < grid.vobResidencesNum; ++k) {
 		const VobEntry& vob = m_vobs[grid.vobResidence[k].vobIndex];
-		if (vob.isDoor()/* || vob.isLadder()*/) {
-			continue;
-		}
-		const BvhVobMeshEntry& vMesh = m_vobsMeshes[vob.meshIndex];
 		assert(vob.activePosIndex < vob.posCnt);
 		const VobPosition* pos = &vob.positions[vob.activePosIndex];
+		if (vob.isDoor()) {
+			copyBottomTriangles(customData, trisPos, vertsPos, pos, PolyAreaFlags::DOOR);
+			continue;
+		}
+		else if (vob.isLadder()) {
+			copyBottomTriangles(customData, trisPos, vertsPos, pos, PolyAreaFlags::LADDER);
+			continue;
+		}
+
+		const BvhVobMeshEntry& vMesh = m_vobsMeshes[vob.meshIndex];
 		curNode = vMesh.childs;
 		endNode = curNode + vMesh.childsNumber;
-		// TODO replace to explicit extracting from mesh of resident vobs
-		copyDataFromBvh(
+		copyVobTriDataFromBvh(
 			customData, trisPos, vertsPos, curNode, endNode, pos,
 			vMesh.verts, vMesh.tris, vMesh.flags
 		);
@@ -834,7 +904,12 @@ void Grid2dBvh::extractOverlappingRectData(
 }
 
 #ifdef RENDERING_ENABLED
-const Grid2dBvh::TrianglesData& Grid2dBvh::getVobsAabbsData() const
+int Grid2dBvh::getVobsNum() const
+{
+	return m_vobsNum;
+}
+
+const geometry::AabbVob* Grid2dBvh::getVobsAabbsData() const
 {
 	return m_vobsAabbsData;
 }
@@ -845,9 +920,9 @@ const Grid2dBvh::TrianglesData& Grid2dBvh::getRenderingData() const
 }
 #endif
 
-void Grid2dBvh::moverStateUpdate(const char* name, int stateId)
+void Grid2dBvh::moverStateUpdate(const char* name, const int stateId)
 {
-	static const int MOVERS_NUM = 32;
+	static const int MOVERS_NUM = 64; // TODO dynamic array size
 	size_t n = 0;
 	int moverIds[MOVERS_NUM];
 	if (!(n = m_moverNameToVob.find<MOVERS_NUM>(name))) {
@@ -862,15 +937,20 @@ void Grid2dBvh::moverStateUpdate(const char* name, int stateId)
 	for (size_t i = 0; i < n; ++i) {
 		VobEntry& vob = m_vobs[moverIds[i]];
 		assert(stateId < vob.posCnt);
+
 		const auto& posOld = vob.positions[vob.activePosIndex];
-		for (int j = 0; j < VobPosition::POS_TRIS_NUM; ++j) {
-			m_triFlags[posOld.aabbTris[i]].isActiveVobPos = false;
-		}
+		FlagType& ftypeOld = m_triFlags[posOld.aabbTri];
+		assert(ftypeOld.isVobPos);
+		assert(ftypeOld.isActiveVobPos);
+		ftypeOld.isActiveVobPos = false;
+		
 		vob.activePosIndex = stateId;
 		const auto& posNew = vob.positions[vob.activePosIndex];
-		for (int j = 0; j < VobPosition::POS_TRIS_NUM; ++j) {
-			m_triFlags[posNew.aabbTris[i]].isActiveVobPos = true;
-		}
+		FlagType& ftypeNew = m_triFlags[posNew.aabbTri];
+		assert(ftypeNew.isVobPos);
+		assert(!ftypeNew.isActiveVobPos);
+		ftypeNew.isActiveVobPos = true;
+
 #ifdef RENDERING_ENABLED
 		const auto& vobMesh = m_vobsMeshes[vob.meshIndex];
 		const float* verts = vobMesh.verts;
@@ -1401,20 +1481,20 @@ int Grid2dBvh::loadInternal(MeshLoaderInterface* mesh, int cellSize)
 		sizeof(int) * 3 * m_trisNum +
 		sizeof(uint32_t) * m_trisNum;
 #endif
-	std::unique_ptr<geometry::Aabb3D[]> bboxes(new(std::nothrow) geometry::Aabb3D[m_trisNum]);
+	std::unique_ptr<geometry::AabbTri[]> bboxes(new(std::nothrow) geometry::AabbTri[m_trisNum]);
 	std::unique_ptr<int[]> boxIds(new(std::nothrow) int[m_trisNum]);
 	if (!bboxes || !boxIds) {
 		return ERROR_NO_MEMORY;
 	}
 #ifdef PRINT_STRUCTURE_STAT
-	m_bytesPerConstruction += m_trisNum * (sizeof(geometry::Aabb3D) + sizeof(int));
+	m_bytesPerConstruction += m_trisNum * (sizeof(geometry::AabbTri) + sizeof(int));
 #endif
 	for (int i = 0; i < m_trisNum; ++i)
 	{
-		calc3DAabb(m_verts, m_tris + i * 3, bboxes.get() + i, Constants::CUR_VERTS_BLOCK);
+		calcTriAabb(m_verts, m_tris + i * 3, bboxes.get() + i, Constants::CUR_VERTS_BLOCK);
 		geometry::vmin(m_worldMin, bboxes[i].min);
 		geometry::vmax(m_worldMax, bboxes[i].max);
-		bboxes[i].polyIndex = i;
+		bboxes[i].triIndex = i;
 		boxIds[i] = i;
 	}
 #ifdef USAGE_SSE_1_0
@@ -1453,7 +1533,9 @@ int Grid2dBvh::loadInternal(MeshLoaderInterface* mesh, int cellSize)
 		return ERROR_NO_MEMORY;
 	}
 #ifdef RENDERING_ENABLED
-	constructVobsAbbsData(mesh);
+	if (SUCCESSFUL != constructVobsAbbsData(mesh)) {
+		return ERROR_NO_MEMORY;
+	}
 	if (SUCCESSFUL != constructRenderingData(mesh)) {
 		return ERROR_NO_MEMORY;
 	}
@@ -1523,7 +1605,7 @@ int Grid2dBvh::loadInternal(MeshLoaderInterface* mesh, int cellSize)
 			bool triColl = checkTriangleBelongAabb(
 				cellMinMax[cellStart].min,
 				cellMinMax[cellStart].max,
-				&m_tris[bboxes[boxIds[j]].polyIndex * 3]
+				&m_tris[bboxes[boxIds[j]].triIndex * 3]
 			);
 			if (triColl) {
 				if (xSplit[cellStart][0] == xSplit[cellStart][1]) {
@@ -1616,7 +1698,7 @@ int Grid2dBvh::loadInternal(MeshLoaderInterface* mesh, int cellSize)
 				bool triColl = checkTriangleBelongAabb(
 					cellMinMax[cellStart].min,
 					cellMinMax[cellStart].max,
-					&m_tris[bboxes[boxIds[k]].polyIndex * 3]
+					&m_tris[bboxes[boxIds[k]].triIndex * 3]
 				);
 				if (triColl) {
 					if (zSplit[i][cellStart][0] == zSplit[i][cellStart][1]) {
@@ -1707,7 +1789,7 @@ int Grid2dBvh::loadInternal(MeshLoaderInterface* mesh, int cellSize)
 }
 
 void Grid2dBvh::subdivideMedian(
-	const geometry::Aabb3D* bboxes, int* boxIds, BvhNode* bnodes, int i, int j, int& curNodeNum
+	const geometry::AabbTri* bboxes, int* boxIds, BvhNode* bnodes, int i, int j, int& curNodeNum
 #ifdef PRINT_STRUCTURE_STAT
 	, int depth, int& maxBoxesInGridCell
 #endif
@@ -1722,7 +1804,7 @@ void Grid2dBvh::subdivideMedian(
 	if (n == 1) {
 		geometry::vcopy(curNode->min, bboxes[boxIds[i]].min);
 		geometry::vcopy(curNode->max, bboxes[boxIds[i]].max);
-		curNode->triId = bboxes[boxIds[i]].polyIndex * 3;
+		curNode->triId = bboxes[boxIds[i]].triIndex * 3;
 #ifdef PRINT_STRUCTURE_STAT
 		++m_totalNodes;
 		++m_leafNodes;
@@ -1810,7 +1892,7 @@ float Grid2dBvh::calcSah(
 }
 
 void Grid2dBvh::subdivideSah(
-	const geometry::Aabb3D* bboxes, int* boxIds, BvhNode* bnodes, int i, int j, int& curNodeNum
+	const geometry::AabbTri* bboxes, int* boxIds, BvhNode* bnodes, int i, int j, int& curNodeNum
 #ifdef PRINT_STRUCTURE_STAT
 	, int depth, int& maxBoxesInGridCell
 #endif
@@ -1833,10 +1915,10 @@ void Grid2dBvh::subdivideSah(
 				-std::numeric_limits<float>::max();
 			for (int k = i; k < j; ++k) {
 				BvhNode* node = &bnodes[curNodeNum++];
-				const geometry::Aabb3D* box = bboxes + boxIds[k];
+				const geometry::AabbTri* box = bboxes + boxIds[k];
 				geometry::vcopy(node->min, box->min);
 				geometry::vcopy(node->max, box->max);
-				node->triId = box->polyIndex * 3;
+				node->triId = box->triIndex * 3;
 				geometry::vmin(curNode->min, box->min);
 				geometry::vmax(curNode->max, box->max);
 #ifdef PRINT_STRUCTURE_STAT
@@ -1847,10 +1929,10 @@ void Grid2dBvh::subdivideSah(
 			}
 		}
 		else {
-			const geometry::Aabb3D* box = bboxes + boxIds[i];
+			const geometry::AabbTri* box = bboxes + boxIds[i];
 			geometry::vcopy(curNode->min, box->min);
 			geometry::vcopy(curNode->max, box->max);
-			curNode->triId = box->polyIndex * 3;
+			curNode->triId = box->triIndex * 3;
 #ifdef PRINT_STRUCTURE_STAT
 			++m_totalNodes;
 			++m_leafNodes;
@@ -1906,10 +1988,10 @@ void Grid2dBvh::subdivideSah(
 			assert(curNode->triId != 0);
 			for (int k = i; k < j; ++k) {
 				BvhNode* node = &bnodes[curNodeNum++];
-				const geometry::Aabb3D* box = bboxes + boxIds[k];
+				const geometry::AabbTri* box = bboxes + boxIds[k];
 				geometry::vcopy(node->min, box->min);
 				geometry::vcopy(node->max, box->max);
-				node->triId = box->polyIndex * 3;
+				node->triId = box->triIndex * 3;
 #ifdef PRINT_STRUCTURE_STAT
 				++m_totalNodes;
 				++m_leafNodes;
@@ -1921,7 +2003,7 @@ void Grid2dBvh::subdivideSah(
 }
 
 std::pair<Grid2dBvh::BvhNode*, int> Grid2dBvh::makeBvh(
-	const geometry::Aabb3D* bboxes, int* boxIds, const int trisNum
+	const geometry::AabbTri* bboxes, int* boxIds, const int trisNum
 ) const {
 	common::ignoreUnused(&Grid2dBvh::subdivideMedian);
 	BvhNode* bnodes = new(std::nothrow) BvhNode[trisNum * 2];

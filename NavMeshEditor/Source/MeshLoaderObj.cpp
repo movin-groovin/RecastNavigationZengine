@@ -893,17 +893,35 @@ ErrorCode4 MeshLoaderObjExt::loadVobsAndMesh(
     return {};
 }
 
+static void calcVobAabbInPosition(const mesh::VobMeshEntry& mesh, const float* trafoMatrix, float* min, float* max)
+{
+	min[0] = min[1] = min[2] = FLT_MAX;
+	max[0] = max[1] = max[2] = -FLT_MAX;
+
+	const float* verts = mesh.verts;
+	const float* vertsEnd = mesh.verts + mesh.vertCount * 3;
+	float buf[3];
+	for (; verts < vertsEnd; verts += 3)
+	{
+		geometry::transformVertex(verts, trafoMatrix, buf);
+		buf[2] *= -1.f;
+		geometry::vmin(min, buf);
+		geometry::vmax(max, buf);
+	}
+}
+
 ErrorCode4 MeshLoaderObjExt::addVobBboxesToStaticMesh()
 {	
-	static const int VERTS_NUM = 5;
-	int polysNum = m_vobsCnt * 2 * mesh::VobPosition::POS_TRIS_NUM;
-	int vertsNum = m_vobsCnt * 2 * VERTS_NUM;
+	static const int MAX_VERTS_NUM_PER_ITER = 3;
+	static const int MAX_POLYS_NUM_PER_ITER = 1;
+	int polysNum = m_vobsCnt * 2 * MAX_POLYS_NUM_PER_ITER;
+	int vertsNum = m_vobsCnt * 2 * MAX_VERTS_NUM_PER_ITER;
+
     std::unique_ptr<float[]> verts(new(std::nothrow) float[vertsNum * 3]);
     std::unique_ptr<int[]> tris(new(std::nothrow) int[polysNum * 3]);
-    std::unique_ptr<mesh::FlagType[]> flags(
-        new(std::nothrow) mesh::FlagType[polysNum]
-    );
-    if (!verts || !tris || !flags) {
+    std::unique_ptr<mesh::FlagType[]> flags(new(std::nothrow) mesh::FlagType[polysNum]);
+    if (!verts || !tris || !flags)
+	{
         return {1, 0, 0, 0};
     }
 
@@ -922,16 +940,12 @@ ErrorCode4 MeshLoaderObjExt::addVobBboxesToStaticMesh()
 		if (vob.isMover()) {
 			++m_moversCnt;
 		}
+
 		vob.activePosIndex = 0; // TODO loading from an outer source
+
 		for (int i = 0; i < vob.posCnt; ++i)
 		{
-			mesh::VobPosition& pos = vob.positions[i];
-			const float dX = pos.aabbMax[0] - pos.aabbMin[0];
-			const float dY = pos.aabbMax[1] - pos.aabbMin[1];
-			const float dZ = pos.aabbMax[2] - pos.aabbMin[2];
-			const float* min = &pos.aabbMin[0];
-
-			if (vertCnt == vertsNum) {
+			if (vertCnt + MAX_VERTS_NUM_PER_ITER > vertsNum) {
 				vertsNum *= 2;
                 float* vertsNew = new(std::nothrow) float[vertsNum * 3];
 				if (!vertsNew)
@@ -939,74 +953,60 @@ ErrorCode4 MeshLoaderObjExt::addVobBboxesToStaticMesh()
 				std::memcpy(vertsNew, verts.get(), vertCnt * 3 * sizeof(float));
 				verts.reset(vertsNew);
 			}
-			int n = vertCnt * 3;
-			// lower rectangle
-			verts[n] = min[0]; verts[n + 1] = min[1]; verts[n + 2] = min[2]; // 0 - min
-			n += 3;
-			verts[n] = min[0] + dX; verts[n + 1] = min[1]; verts[n + 2] = min[2]; // 1
-			n += 3;
-			verts[n] = min[0] + dX; verts[n + 1] = min[1]; verts[n + 2] = min[2] + dZ; // 2
-			n += 3;
-			verts[n] = min[0]; verts[n + 1] = min[1]; verts[n + 2] = min[2] + dZ; // 3
-			n += 3;
-			// max vertex
-			verts[n] = min[0] + dX; verts[n + 1] = min[1] + dY; verts[n + 2] = min[2] + dZ; // 4 - max
-			n += 3;
-
-			if (polyCnt == polysNum) {
+			if (polyCnt + MAX_POLYS_NUM_PER_ITER > polysNum) {
 				polysNum *= 2;
-                int* polysNew = new(std::nothrow) int[polysNum * 3];
-                mesh::FlagType* flagsNew =
-                    new(std::nothrow) mesh::FlagType[polysNum];
-                if (!polysNew || !flagsNew) {
-                    delete [] polysNew;
-                    delete [] flagsNew;
-                    return {3, 0, 0, 0};
-                }
+				int* polysNew = new(std::nothrow) int[polysNum * 3];
+				mesh::FlagType* flagsNew =
+					new(std::nothrow) mesh::FlagType[polysNum];
+				if (!polysNew || !flagsNew) {
+					delete[] polysNew;
+					delete[] flagsNew;
+					return { 3, 0, 0, 0 };
+				}
 				std::memcpy(polysNew, tris.get(), polyCnt * 3 * sizeof(int));
 				std::memcpy(flagsNew, flags.get(), polyCnt * sizeof(mesh::FlagType));
 				tris.reset(polysNew);
 				flags.reset(flagsNew);
 			}
+
+			mesh::VobPosition& pos = vob.positions[i];
+			float aabbMin[3], aabbMax[3];
+			calcVobAabbInPosition(mesh, pos.trafo, aabbMin, aabbMax);
+			// renew aabb data
+			geometry::vcopy(pos.aabbMin, aabbMin);
+			geometry::vcopy(pos.aabbMax, aabbMax);
+			const float dX = pos.aabbMax[0] - pos.aabbMin[0];
+			const float dY = pos.aabbMax[1] - pos.aabbMin[1];
+			const float dZ = pos.aabbMax[2] - pos.aabbMin[2];
+			const float* min = &pos.aabbMin[0];
+
+			int n = vertCnt * 3;
 			int m = polyCnt * 3;
-			// 2 triangles for bottom polygons of doors and ladders
-			tris[m] = vertCnt + 0; tris[m + 1] = vertCnt + 3; tris[m + 2] = vertCnt + 2;
-			pos.aabbTris[0] = polyCnt;
-			m += 3;
-			tris[m] = vertCnt + 0; tris[m + 1] = vertCnt + 2; tris[m + 2] = vertCnt + 1;
-			pos.aabbTris[1] = polyCnt + 1;
-			m += 3;
+			// min vertex
+			verts[n] = min[0]; verts[n + 1] = min[1]; verts[n + 2] = min[2]; // 0 - min
+			n += 3;
+			verts[n] = min[0] + dX; verts[n + 1] = min[1]; verts[n + 2] = min[2] + dZ; // 1
+			n += 3;
+			// max vertex
+			verts[n] = min[0] + dX; verts[n + 1] = min[1] + dY; verts[n + 2] = min[2] + dZ; // 2 - max
+			//n += 3;
+
 			// 1 triangle that holds min and max aabb vertices
-			tris[m] = vertCnt + 0; tris[m + 1] = vertCnt + 2; tris[m + 2] = vertCnt + 4;
-			pos.aabbTris[2] = polyCnt + 2;
+			tris[m] = vertCnt + 0; tris[m + 1] = vertCnt + 1; tris[m + 2] = vertCnt + 2;
+			pos.aabbTri = polyCnt;
 			//m += 3;
 
-			for (int k = polyCnt; k < polyCnt + mesh::VobPosition::POS_TRIS_NUM; ++k) {
-				mesh::FlagType& val = flags[k];
-				val.isTriangle = 0;
-				val.isVobPos = 1;
-				val.isActiveVobPos = vob.activePosIndex == i;
-				val.reserved = 0;
-				val.vobIdOrCollFlags = static_cast<uint32_t>(j);
-				val.isInhabited = 0;
-				val.polyFlags = 0;
-			}
-			if (vob.hasInfluenceToNavmesh()) {
-				uint8_t flagValue;
-				if (vob.isLadder()) {
-					flagValue = PolyAreaFlags::LADDER;
-				} else if (vob.isDoor()) {
-					flagValue = PolyAreaFlags::DOOR;
-				} else {
-					assert(1 != 1);
-					flagValue = 0;
-				}
-				flags[polyCnt + 0].polyFlags = flagValue;
-				flags[polyCnt + 1].polyFlags = flagValue;
-			}
+			mesh::FlagType& val = flags[polyCnt];
+			val.isTriangle = 0;
+			val.isVobPos = 1;
+			val.isActiveVobPos = vob.activePosIndex == i;
+			val.reserved = 0;
+			val.vobIdOrCollFlags = static_cast<uint32_t>(j);
+			val.isInhabited = 0;
+			val.polyFlags = 0;
 
-			vertCnt += VERTS_NUM;
-			polyCnt += mesh::VobPosition::POS_TRIS_NUM;
+			vertCnt += MAX_VERTS_NUM_PER_ITER;
+			polyCnt += MAX_POLYS_NUM_PER_ITER;
 		}
 	}
 
@@ -1030,6 +1030,12 @@ ErrorCode4 MeshLoaderObjExt::addVobBboxesToStaticMesh()
 		trisPtr[i] += m_vertCount;
 		trisPtr[i + 1] += m_vertCount;
 		trisPtr[i + 2] += m_vertCount;
+	}
+	for (int i = 0; i < m_vobsCnt; ++i) {
+		mesh::VobEntry& vob = m_vobs[i];
+		for (int j = 0; j < vob.posCnt; ++j) {
+			vob.positions[j].aabbTri += m_triCount;
+		}
 	}
 	std::memcpy(newFlags, m_flags.get(), m_triCount * sizeof(mesh::FlagType));
 	std::memcpy(newFlags + m_triCount, flags.get(), polyCnt * sizeof(mesh::FlagType));

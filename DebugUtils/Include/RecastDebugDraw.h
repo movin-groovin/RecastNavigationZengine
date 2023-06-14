@@ -17,6 +17,9 @@
 //
 
 #include <cstdint>
+#ifdef ZENGINE_NAVMESH
+#include "Geometry.h"
+#endif // ZENGINE_NAVMESH
 
 #ifndef RECAST_DEBUGDRAW_H
 #define RECAST_DEBUGDRAW_H
@@ -26,11 +29,7 @@ void duDebugDrawTriMeshSlope(struct duDebugDraw* dd, const float* verts, int nve
 
 #ifdef ZENGINE_NAVMESH
 void duDebugDrawVobsAabbsFast(
-	duDebugDraw* dd,
-	const float* verts,
-	const int* tris,
-	const int ntris,
-	const int trisNumPerIter
+	duDebugDraw* dd, const geometry::AabbVob* aabbsData, const int aabbsNum
 );
 
 void duDebugDrawTriMeshSlopeFast(

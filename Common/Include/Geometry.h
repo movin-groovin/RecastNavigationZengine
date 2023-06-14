@@ -285,11 +285,24 @@ struct Plane
 	float dist;
 };
 
-struct Aabb3D
+struct AabbTri
 {
 	float min[3];
 	float max[3];
-	int polyIndex;
+	int triIndex;
+};
+
+struct AabbVob
+{
+	float min[3];
+	float max[3];
+	int vobIndex;
+};
+
+struct Aabb
+{
+	float min[3];
+	float max[3];
 };
 
 struct Obb
@@ -603,7 +616,7 @@ public:
 		ResourceManager::Instance().free();
 	}
 
-	bool calcTree(uint32_t i, uint32_t j, const Aabb3D* bboxes, const int* boxIds)
+	bool calcTree(uint32_t i, uint32_t j, const AabbTri* bboxes, const int* boxIds)
 	{
 		m_i = i;
 		m_j = j;
@@ -621,7 +634,7 @@ public:
 		dat->max[0] = dat->max[1] = dat->max[2] = -std::numeric_limits<float>::max();
 		BminBmax* leafes = dat + nUpPow2;
 		for (uint32_t k = i; k < j; ++k, ++leafes) {
-			const Aabb3D* box = bboxes + boxIds[k];
+			const AabbTri* box = bboxes + boxIds[k];
 			vcopy(leafes->min, box->min);
 			vcopy(leafes->max, box->max);
 		}
@@ -687,7 +700,7 @@ private:
 
 struct CoordComparator
 {
-	CoordComparator(const int axisNum_, const Aabb3D* boxes_) : axisNum(axisNum_), boxes(boxes_)
+	CoordComparator(const int axisNum_, const AabbTri* boxes_) : axisNum(axisNum_), boxes(boxes_)
 	{
 		assert(axisNum_ >= 0 && axisNum_ <= 2);
 	}
@@ -698,7 +711,7 @@ struct CoordComparator
 	}
 
 	int axisNum;
-	const Aabb3D* boxes;
+	const AabbTri* boxes;
 };
 
 struct IsectTriArgs
