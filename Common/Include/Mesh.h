@@ -404,6 +404,9 @@ public:
 	};
 
 private:
+	static const int BOTTOM_RECTANGLE_VERTS_NUM = 4;
+	static const int BOTTOM_RECTANGLE_TRIS_NUM = 2;
+
 	static constexpr float COST_CHECK_BBOX = 0.125f;
 	static constexpr float COST_CHECK_TRI = 1.f;
 	static constexpr int LIMIT_POLYS_STOP = 16; // 8, 1;
@@ -714,7 +717,12 @@ private:
 		const FlagType* triFlags
 	);
 	static void copyBottomTriangles(
-		TrianglesData& resData, int& trisPos, int& vertsPos, const VobPosition* pos, const uint8_t type
+		TrianglesData& resData,
+		int& trisPos,
+		int& vertsPos,
+		const VobPosition* pos,
+		const uint8_t type,
+		const bool copyNormals
 	);
 
 private:

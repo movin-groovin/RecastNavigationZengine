@@ -586,6 +586,10 @@ int Grid2dBvh::constructRenderingData(MeshLoaderInterface* mesh)
 		const BvhVobMeshEntry& vmesh = m_vobsMeshes[vob.meshIndex];
 		vobsVertsNum += vmesh.vertCount;
 		vobsTrisNum += vmesh.triCount;
+		if (vob.isDoor() || vob.isLadder()) {
+			vobsVertsNum += BOTTOM_RECTANGLE_VERTS_NUM;
+			vobsTrisNum += BOTTOM_RECTANGLE_TRIS_NUM;
+		}
 	}
 	m_renderingData.vertsNum += vobsVertsNum;
 	m_renderingData.trisNum += vobsTrisNum;
@@ -598,7 +602,7 @@ int Grid2dBvh::constructRenderingData(MeshLoaderInterface* mesh)
 	if (
 		!m_renderingData.verts || !m_renderingData.tris ||
 		!m_renderingData.normals || !m_renderingData.triFlags
-		) {
+	) {
 		return ERROR_NO_MEMORY;
 	}
 
@@ -608,6 +612,7 @@ int Grid2dBvh::constructRenderingData(MeshLoaderInterface* mesh)
 	int trisPos = mesh->getTriCountStatic() * 3;
 	int flagsPos = mesh->getTriCountStatic();
 
+	// static mesh
 	for (int i = 0, vPos = 0; i < vertsPos; i += 3, vPos += Constants::CUR_VERTS_BLOCK) {
 		geometry::vcopy(m_renderingData.verts + i, m_verts + vPos);
 	}
@@ -619,6 +624,7 @@ int Grid2dBvh::constructRenderingData(MeshLoaderInterface* mesh)
 	}
 	std::memcpy(m_renderingData.normals, mesh->getNormals(), trisPos * sizeof(float));
 
+	// vobs's mesh
 	for (int i = 0; i < m_vobsNum; ++i)
 	{
 		VobEntry& vob = m_vobs[i];
@@ -628,7 +634,9 @@ int Grid2dBvh::constructRenderingData(MeshLoaderInterface* mesh)
 		const int* tris = vobMesh.tris;
 		const FlagType* flags = vobMesh.flags;
 		const float* normals = vobMesh.normals;
+#ifdef RENDERING_ENABLED
 		vob.vertsPosRendering = vertsPos / 3;
+#endif // RENDERING_ENABLED
 
 		for (int j = 0; j < vobMesh.vertCount; ++j, vertsPos += 3) {
 			geometry::transformVertex(
@@ -636,22 +644,39 @@ int Grid2dBvh::constructRenderingData(MeshLoaderInterface* mesh)
 			);
 			(m_renderingData.verts + vertsPos)[2] *= -1.f;
 		}
+
 		for (
 			int j = 0, m = vobMesh.triCount * 3;
 			j < m;
-			j += 3, trisPos += 3, ++flagsPos, ++flags
-			) {
+			j += 3, trisPos += 3/*, ++flagsPos*/, ++flags
+		) {
+			m_renderingData.triFlags[trisPos / 3] =
+				flags[0].polyFlags |
+				flags[0].isTriangle << PolyAreaFlags::IS_TRI_POS;
+
 			m_renderingData.tris[trisPos] = tris[j] / Constants::CUR_VERTS_BLOCK + deltaVerts;
 			m_renderingData.tris[trisPos + 1] = tris[j + 1] / Constants::CUR_VERTS_BLOCK + deltaVerts;
 			m_renderingData.tris[trisPos + 2] = tris[j + 2] / Constants::CUR_VERTS_BLOCK + deltaVerts;
 			geometry::transformDirection(
 				normals + j, vobPos.trafo, m_renderingData.normals + trisPos
 			);
-			m_renderingData.triFlags[flagsPos] =
-				flags[0].polyFlags |
-				flags[0].isTriangle << PolyAreaFlags::IS_TRI_POS;
 		}
-		deltaVerts += vobMesh.vertCount;
+
+		int extraVertsNum = 0;
+		if (vob.isDoor()) {
+			copyBottomTriangles(
+				m_renderingData, trisPos, vertsPos, &vobPos, PolyAreaFlags::DOOR, true
+			);
+			extraVertsNum = BOTTOM_RECTANGLE_VERTS_NUM;
+		}
+		else if (vob.isLadder()) {
+			copyBottomTriangles(
+				m_renderingData, trisPos, vertsPos, &vobPos, PolyAreaFlags::LADDER, true
+			);
+			extraVertsNum = BOTTOM_RECTANGLE_VERTS_NUM;
+		}
+
+		deltaVerts += vobMesh.vertCount + extraVertsNum;
 	}
 
 	return SUCCESSFUL;
@@ -672,7 +697,13 @@ int Grid2dBvh::constructOverlappingRectData(
 			const auto& mesh = m_vobsMeshes[vob.meshIndex];
 			trisVertsPerCellStatic[i].first += mesh.vertCount;
 			trisVertsPerCellStatic[i].second += mesh.triCount;
+			// data for marked triangles with special flags
+			if (vob.isDoor() || vob.isLadder()) {
+				trisVertsPerCellStatic[i].first += BOTTOM_RECTANGLE_VERTS_NUM;
+				trisVertsPerCellStatic[i].second += BOTTOM_RECTANGLE_TRIS_NUM;
+			}
 		}
+
 		if (trisVertsPerCellStatic[i].first > maxVerts)
 			maxVerts = trisVertsPerCellStatic[i].first;
 		if (trisVertsPerCellStatic[i].second > maxTris)
@@ -692,7 +723,7 @@ int Grid2dBvh::constructOverlappingRectData(
 	if (
 		!m_overlappingRectData.verts || !m_overlappingRectData.tris ||
 		!m_overlappingRectData.triFlags/* || !m_overlappingRectData.normals*/
-		) {
+	) {
 		return ERROR_NO_MEMORY;
 	}
 #ifdef PRINT_STRUCTURE_STAT
@@ -823,7 +854,12 @@ void Grid2dBvh::copyVobTriDataFromBvh(
 }
 
 void Grid2dBvh::copyBottomTriangles(
-	TrianglesData& resData, int& trisPos, int& vertsPos, const VobPosition* pos, const uint8_t type
+	TrianglesData& resData,
+	int& trisPos,
+	int& vertsPos,
+	const VobPosition* pos,
+	const uint8_t type,
+	const bool copyNormals
 ) {
 	const float dX = pos->aabbMax[0] - pos->aabbMin[0];
 	const float dY = pos->aabbMax[1] - pos->aabbMin[1];
@@ -851,6 +887,13 @@ void Grid2dBvh::copyBottomTriangles(
 	//m += 3;
 	resData.triFlags[trisPos / 3] = type;
 	resData.triFlags[trisPos / 3 + 1] = type;
+	if (copyNormals)
+	{
+		// strictly up direction
+		float stub[] = { 0, 1, 0 };
+		geometry::vcopy(resData.normals + trisPos, stub);
+		geometry::vcopy(resData.normals + trisPos + 3, stub);
+	}
 	vertsPos += 12;
 	trisPos += 6;
 }
@@ -883,11 +926,11 @@ void Grid2dBvh::extractOverlappingRectData(
 		assert(vob.activePosIndex < vob.posCnt);
 		const VobPosition* pos = &vob.positions[vob.activePosIndex];
 		if (vob.isDoor()) {
-			copyBottomTriangles(customData, trisPos, vertsPos, pos, PolyAreaFlags::DOOR);
+			copyBottomTriangles(customData, trisPos, vertsPos, pos, PolyAreaFlags::DOOR, false);
 			continue;
 		}
 		else if (vob.isLadder()) {
-			copyBottomTriangles(customData, trisPos, vertsPos, pos, PolyAreaFlags::LADDER);
+			copyBottomTriangles(customData, trisPos, vertsPos, pos, PolyAreaFlags::LADDER, false);
 			continue;
 		}
 
@@ -954,9 +997,14 @@ void Grid2dBvh::moverStateUpdate(const char* name, const int stateId)
 #ifdef RENDERING_ENABLED
 		const auto& vobMesh = m_vobsMeshes[vob.meshIndex];
 		const float* verts = vobMesh.verts;
+		int extraVertsNum = 0;
+		if (vob.isDoor() || vob.isLadder()) {
+			extraVertsNum = BOTTOM_RECTANGLE_VERTS_NUM;
+		}
 		float* resVerts = &m_renderingData.verts[vob.vertsPosRendering * 3];
-		for (int j = 0, n = vobMesh.vertCount * 3; j < n; j += 3, resVerts += 3) {
+		for (int j = 0, n = (vobMesh.vertCount + extraVertsNum) * 3; j < n; j += 3, resVerts += 3) {
 			geometry::transformVertex(verts + j, posNew.trafo, resVerts);
+			resVerts[2] *= -1.f;
 		}
 #endif
 	}

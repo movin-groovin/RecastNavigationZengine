@@ -121,39 +121,33 @@ void duDebugDrawTriMeshSlopeFast(
     for (; i < ntris * 3; i += 3, ++j)
     {
         const float* norm = &normals[i];
-        unsigned int color;
+        unsigned int color = 0;
         unsigned char a = (unsigned char)(220*(2+norm[0]+norm[1])/4);
         const uint8_t clearFlag =
             PolyAreaFlags::clearInhabitedFlag(PolyAreaFlags::clearIsTriFlag(flags[j]));
+
+		if (clearFlag == PolyAreaFlags::DOOR || clearFlag == PolyAreaFlags::LADDER) {
+			color = duRGBA(0xff, 0xff, 0x00, 255);
+		}
 		if (showNonTriPolys && !(flags[j] >> PolyAreaFlags::IS_TRI_POS)) {
             color = duRGBA(0xff, 0, 0, 255);
         }
-        else {
-            if (highlightLiquidPolys) {
-                if (clearFlag < PolyAreaFlags::LAVA) {
-                    color = duRGBA(0x41, 0x66, 0xF5, 255);
-                }
-                else if (clearFlag == PolyAreaFlags::LAVA) {
-                    color = duRGBA(0xff, 0x7f, 0x00, 255);
-                }
-                else if (clearFlag == PolyAreaFlags::DOOR || clearFlag == PolyAreaFlags::LADDER) {
-                    color = duRGBA(0xff, 0x7f, 0x00, 255);
-                }
-                else if (norm[1] < walkableThr) {
-                    color = duLerpCol(duRGBA(a, a, a, 255), unwalkable, 64);
-                }
-                else {
-                    color = duRGBA(a, a, a, 255);
-                }
+        if (highlightLiquidPolys) {
+            if (clearFlag < PolyAreaFlags::LAVA) {
+                color = duRGBA(0x41, 0x66, 0xF5, 255);
             }
-            else {
-                if (norm[1] < walkableThr) {
-                    color = duLerpCol(duRGBA(a, a, a, 255), unwalkable, 64);
-                }
-                else {
-                    color = duRGBA(a, a, a, 255);
-                }
+            else if (clearFlag == PolyAreaFlags::LAVA) {
+                color = duRGBA(0xff, 0x7f, 0x00, 255);
             }
+        }
+		if (!color)
+		{
+			if (norm[1] < walkableThr) {
+				color = duLerpCol(duRGBA(a, a, a, 255), unwalkable, 64);
+			}
+			else {
+				color = duRGBA(a, a, a, 255);
+			}
 		}
 
         const float* va = &verts[tris[i+0]*3];
