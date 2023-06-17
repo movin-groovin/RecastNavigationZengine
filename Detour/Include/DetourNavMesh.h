@@ -68,6 +68,7 @@ typedef unsigned int dtTileRef;
 /// @ingroup detour
 static const int DT_VERTS_PER_POLYGON = 6; // max verts per navmesh polygon
 #ifdef ZENGINE_NAVMESH
+// you can chage it, but be wise in your decision
 static_assert(DT_VERTS_PER_POLYGON == 6, "DT_VERTS_PER_POLYGON assumed is equal to 6");
 static const int MAX_PLANES_PER_BOUNDING_POLYHEDRON = DT_VERTS_PER_POLYGON + 1;
 #endif // ZENGINE_NAVMESH

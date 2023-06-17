@@ -2130,11 +2130,13 @@ bool Grid2dBvh::segTriCollisionFirstHit(const float* start, const float* end, fl
 					}
 				}
 
-				if (leaf || boxIntersect)
+				if (leaf || boxIntersect) {
 					++curNode;
-				else
+				}
+				else {
 					// triId stores negative number of inside triangles
 					curNode -= curNode->triId;
+				}
 			}
 		}
 	}
@@ -2176,11 +2178,13 @@ bool Grid2dBvh::segTriCollisionVobFirstHit(
 				return true;
 			}
 		}
-		if (leaf || boxIntersect)
+		if (leaf || boxIntersect) {
 			++curNode;
-		else
+		}
+		else {
 			// triId stores negative number of inside triangles
 			curNode -= curNode->triId;
+		}
 	}
 
 	return false;
@@ -2231,11 +2235,13 @@ bool Grid2dBvh::segTriCollisionNearestHit(const float* start, const float* end, 
 					}
 				}
 
-				if (leaf || boxIntersect)
+				if (leaf || boxIntersect) {
 					++curNode;
-				else
+				}
+				else {
 					// triId stores negative number of inside triangles
 					curNode -= curNode->triId;
+				}
 			}
 		}
 	}
@@ -2281,11 +2287,13 @@ bool Grid2dBvh::segTriCollisionVobNearestHit(
 			}
 		}
 
-		if (leaf || boxIntersect)
+		if (leaf || boxIntersect) {
 			++curNode;
-		else
+		}
+		else {
 			// triId stores negative number of inside triangles
 			curNode -= curNode->triId;
+		}
 	}
 
 	return t != FLT_MAX;
@@ -2377,13 +2385,97 @@ bool Grid2dBvh::obbTriCollisionVobFirstHit(int vobId, const geometry::Obb* obb) 
 			}
 		}
 
-		if (leaf || boxIntersect)
+		if (leaf || boxIntersect) {
 			++curNode;
-		else
+		}
+		else {
 			// triId stores negative number of inside triangles
 			curNode -= curNode->triId;
+		}
 	}
 	return false;
+}
+
+int Grid2dBvh::getNearestVobIdx(const float* point) const
+{
+	float min[3], max[3], center[3];
+	geometry::vcopy(min, point);
+	geometry::vcopy(max, point);
+	min[0] -= 1.f;
+	min[1] -= 1.f;
+	min[2] -= 1.f;
+	max[0] += 1.f;
+	max[1] += 1.f;
+	max[2] += 1.f;
+	XzGridBorders ret = calcXzGridBorders(min, max);
+
+	int vobId = INVALID_VOB_IDX;
+	float dst = FLT_MAX;
+	for (int i = ret.xiMin; i <= ret.xiMax; ++i) {
+		const GridCell* xShift = m_grid + m_wszCellsZ * i;
+		for (int j = ret.ziMin; j <= ret.ziMax; ++j) {
+			const GridCell* cell = xShift + j;
+			bool ret = geometry::checkAabbsCollisionXZ(min, max, cell->bmin, cell->bmax);
+			if (!ret) continue;
+			const BvhNode* curNode = cell->childs;
+			const BvhNode* endNode = curNode + cell->childsNumber;
+			while (curNode < endNode) {
+				const bool leaf = curNode->triId >= 0;
+				const bool boxIntersect =
+					geometry::checkAabbsCollision(min, max, curNode->min, curNode->max);
+				if (leaf && boxIntersect) {
+					FlagType flag = m_triFlags[curNode->triId / 3];
+					if (/*flag.isVobPos && */flag.isActiveVobPos) {
+						geometry::calcAabbCenter(center, curNode->min, curNode->max);
+						const float curDst = geometry::vdist(point, center);
+						if (curDst < dst) {
+							dst = curDst;
+							vobId = flag.vobIdOrCollFlags;
+						}
+					}
+				}
+
+				if (leaf || boxIntersect) {
+					++curNode;
+				}
+				else {
+					// triId stores negative number of inside triangles
+					curNode -= curNode->triId;
+				}
+			}
+		}
+	}
+	
+	return vobId;
+}
+
+bool Grid2dBvh::getVobInfo(
+	const int idx,
+	const char** vobName,
+	const char** meshName,
+	int* vertsNum,
+	int* trisNum,
+	int* type,
+	int* posesNum,
+	float* bmin,
+	float* bmax
+) const {
+	if (idx == INVALID_VOB_IDX)
+		return false;
+
+	const VobEntry& vob = m_vobs[idx];
+	const BvhVobMeshEntry& vobMesh = m_vobsMeshes[vob.meshIndex];
+	const VobPosition& vobPos = vob.positions[vob.activePosIndex];
+	if (vobName) *vobName = vob.vobName;
+	if (meshName) *meshName = vobMesh.visualName;
+	if (vertsNum) *vertsNum = vobMesh.vertCount;
+	if (trisNum) *trisNum = vobMesh.triCount;
+	if (type) *type = vob.vobType;
+	if (posesNum) *posesNum = vob.posCnt;
+	if (bmin) geometry::vcopy(bmin, vobPos.aabbMin);
+	if (bmax) geometry::vcopy(bmax, vobPos.aabbMax);
+
+	return true;
 }
 
 #ifdef PRINT_STRUCTURE_STAT

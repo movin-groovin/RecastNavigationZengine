@@ -129,10 +129,10 @@ void duDebugDrawTriMeshSlopeFast(
 		if (clearFlag == PolyAreaFlags::DOOR || clearFlag == PolyAreaFlags::LADDER) {
 			color = duRGBA(0xff, 0xff, 0x00, 255);
 		}
-		if (showNonTriPolys && !(flags[j] >> PolyAreaFlags::IS_TRI_POS)) {
+		if (!color && showNonTriPolys && !(flags[j] >> PolyAreaFlags::IS_TRI_POS)) {
             color = duRGBA(0xff, 0, 0, 255);
         }
-        if (highlightLiquidPolys) {
+        if (!color && highlightLiquidPolys) {
             if (clearFlag < PolyAreaFlags::LAVA) {
                 color = duRGBA(0x41, 0x66, 0xF5, 255);
             }

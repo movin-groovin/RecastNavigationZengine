@@ -124,6 +124,12 @@ inline void vmad(float* dest, const float* v1, const float* v2, const float s)
 	dest[2] = v1[2] + v2[2] * s;
 }
 
+inline void calcAabbCenter(float* center, const float* bmin, const float* bmax)
+{
+	vadd(center, bmin, bmax);
+	vmul(center, 0.5f);
+}
+
 inline bool checkAabbsCollision(
 	const float* aMin, const float* aMax, const float* bMin, const float* bMax
 ) {

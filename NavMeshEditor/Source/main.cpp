@@ -891,6 +891,7 @@ int mainInternal(int /*argc*/, char** /*argv*/)
 			}
 			
 			imguiSeparator();
+			imguiLabel("Bvh construction");
 			if (geom && geom->getSpace().isLoaded())
 			{
 				if (imguiCheck("Show offset planes", showOffsetPlanes))

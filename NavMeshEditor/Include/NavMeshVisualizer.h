@@ -3,7 +3,7 @@
 #include "Sample.h"
 #include "DetourNavMesh.h"
 
-// Tool to visualize features of navmesh polygons
+// Tool to visualize features of mesh and navmesh
 
 class NavMeshVisualizerTool : public SampleTool
 {
@@ -20,6 +20,9 @@ private:
 	bool m_showJmpDownBbox;
 	bool m_showClimbBbox;
 	bool m_showClimbOverlappedBbox;
+	bool m_showVobInfo;
+	int m_vobIdxVisualize;
+	bool m_showAveragePoly;
 
 public:
 	NavMeshVisualizerTool();
@@ -36,12 +39,15 @@ public:
 	virtual void handleRenderOverlay(double* proj, double* model, int* view);
 
 private:
+	void renderAveragePoly(const dtMeshTile* tile, const dtPoly* poly);
+	void renderOverlayVob(double* proj, double* model, int* view);
+	void renderVobBbox();
 	void renderClimbOverlappedBbox(const dtMeshTile* tile, const dtPoly* poly);
 	void renderClimbBbox(const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly);
-	void renderJumpFwdDownBbox(const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly);
+	void renderJumpForwardOrDownBbox(const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly);
 	void extractPreliminaryJumpData();
 	void calcPreliminaryJumpData();
-	void calcPreliminaryJumpFwdDownData(const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly);
+	void calcPreliminaryJumpForwardOrDownData(const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly);
 	void calcPreliminaryClimbData(const int edgeIdx, const dtMeshTile* tile, const dtPoly* poly);
 	void calcPreliminaryClimbOverlappedData(const dtMeshTile* tile, const dtPoly* poly);
 	void renderObp(const float* vertices, const uint32_t verticesNum);

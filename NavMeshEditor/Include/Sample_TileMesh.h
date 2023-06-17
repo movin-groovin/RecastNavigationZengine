@@ -40,10 +40,6 @@ private:
 	static const uint32_t NAVMESH_DEFAULT_TILES_SIZE = 16;
 	static const uint32_t NAVMESH_DEFAULT_POLYS_SIZE = 32;
 
-	static constexpr float CHECK_BBOX_HEIGHT = 250.f;
-	static constexpr float MAX_CLIMB_HEIGHT = 450.f;
-	static constexpr float SHRINK_COEFF = 0.95f;
-
 	struct AsyncBuildContext
 	{
 		int x = -1;
@@ -220,6 +216,7 @@ private:
 	std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]> calcPreliminaryJumpData(
 		const dtMeshTile* ctile,
 		const float checkBboxFwdDst,
+		const float checkBboxFwdClimbDst,
 		const float checkBboxHeight,
 		const float minClimbHeight,
 		const float minClimbOverlappedHeight,
@@ -230,6 +227,7 @@ private:
 		std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]>& outData,
 		const dtMeshTile* ctile,
 		const float checkBboxFwdDst,
+		const float checkBboxFwdClimbDst,
 		const float checkBboxHeight,
 		const float minClimbHeight,
 		const float minClimbOverlappedHeight,

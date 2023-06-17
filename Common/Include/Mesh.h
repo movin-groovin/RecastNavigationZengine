@@ -328,6 +328,8 @@ private:
 class alignas(__m128) Grid2dBvh
 {
 public:
+	static const int INVALID_VOB_IDX = -1;
+
 	enum: int {
 		SUCCESSFUL,
 		ERROR_NO_MEMORY,
@@ -600,6 +602,7 @@ public:
 	bool segTriCollisionNearestHit(const float* start, const float* end, float& t) const;
 	//bool obbTriCollisionFirstHit(const geometry::Obb* obb) const;
 	bool obbTriCollisionFirstHit(const geometry::Obb* obb) const;
+	int getNearestVobIdx(const float* point) const;
 #ifdef PRINT_STRUCTURE_STAT
 	void printStat() const;
 #endif
@@ -638,6 +641,17 @@ public:
 	void getBounds(float* bMin, float* bMax) const;
 	void getWorldSize(float* res) const;
 	int getCellSize() const;
+	bool getVobInfo(
+		const int idx,
+		const char** vobName,
+		const char** meshName,
+		int* vertsNum,
+		int* trisNum,
+		int* type,
+		int* posesNum,
+		float* bmin,
+		float* bmax
+	) const;
 
 private:
 	bool segTriCollisionVobFirstHit(int vobId, const float* start, const float* end, float& t) const;

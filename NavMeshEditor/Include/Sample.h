@@ -158,6 +158,13 @@ protected:
 	float m_detailSampleDist;
 	float m_detailSampleMaxError;
 	int m_partitionType;
+	float m_prelimBoxFwdDst;
+	float m_prelimBoxFwdClimbDst;
+	float m_prelimBoxHeight;
+	float m_prelimMinClimbHeight;
+	float m_prelimMinClimbOverlappedHeight;
+	float m_prelimMaxClimbHeight;
+	float m_prelimBboxShrinkCoeff;
 
 	bool m_filterLowHangingObstacles;
 	bool m_filterLedgeSpans;
@@ -218,9 +225,16 @@ public:
 	virtual class dtNavMeshQuery* getNavMeshQuery() { return m_navQuery; }
 	virtual class dtJmpNavMeshQuery* getJmpNavMeshQuery() { return m_JmpNavQuery; }
 	virtual class dtCrowd* getCrowd() { return m_crowd; }
-	virtual float getAgentRadius() { return m_agentRadius; }
-	virtual float getAgentHeight() { return m_agentHeight; }
-	virtual float getAgentClimb() { return m_agentMaxClimb; }
+	virtual float getAgentRadius() const { return m_agentRadius; }
+	virtual float getAgentHeight() const { return m_agentHeight; }
+	virtual float getAgentClimb() const { return m_agentMaxClimb; }
+	virtual float getPrelimBoxFwdDst() const { return m_prelimBoxFwdDst; }
+	virtual float getPrelimBoxFwdClimbDst() const { return m_prelimBoxFwdClimbDst; }
+	virtual float getPrelimBoxHeight() const { return m_prelimBoxHeight; }
+	virtual float getPrelimMinClimbHeight() const { return m_prelimMinClimbHeight; }
+	virtual float getPrelimMinClimbOverlappedHeight() const { return m_prelimMinClimbOverlappedHeight; }
+	virtual float getPrelimMaxClimbHeight() const { return m_prelimMaxClimbHeight; }
+	virtual float getPrelimBboxShrinkCoeff() const { return m_prelimBboxShrinkCoeff; }
 
 	float getCamSpeed () const { return m_camSpeed; }
 	

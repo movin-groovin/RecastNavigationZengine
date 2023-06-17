@@ -17,6 +17,7 @@
 //
 
 #define _USE_MATH_DEFINES
+#include <algorithm>
 #include <math.h>
 #include <stdio.h>
 #include <thread>
@@ -212,6 +213,13 @@ void Sample::resetCommonSettings()
     m_detailSampleDist = 5.f;//6.0f;
 	m_detailSampleMaxError = 1.0f;
 	m_partitionType = SAMPLE_PARTITION_WATERSHED;
+	m_prelimBoxFwdDst = 50.f;
+	m_prelimBoxFwdClimbDst = 50.f;
+	m_prelimBoxHeight = 200.f;
+	m_prelimMinClimbHeight = 50.f;
+	m_prelimMinClimbOverlappedHeight = 200.f;
+	m_prelimMaxClimbHeight = 350.f;
+	m_prelimBboxShrinkCoeff = 0.95f;
 }
 
 void Sample::handleCommonSettings()
@@ -238,7 +246,7 @@ void Sample::handleCommonSettings()
 	imguiLabel("Agent");
     imguiSlider("Height", &m_agentHeight, 50.f, 500.f, 5.f/*0.1f, 5.0f, 0.1f*/);
     imguiSlider("Radius", &m_agentRadius, 1.f, 200.f, 1.f/*0.0f, 5.0f, 0.1f*/);
-    imguiSlider("Max Climb", &m_agentMaxClimb, 1.f, 50.f, 1.f/*0.1f, 5.0f, 0.1f*/);
+    imguiSlider("Max Climb", &m_agentMaxClimb, 1.f, 100.f, 1.f/*0.1f, 5.0f, 0.1f*/);
 	imguiSlider("Max Liquid Depth Walking", &m_agentLiquidWalk, 1.f, 10.f, 1.f);
 	imguiSlider("Max Liquid Depth Fording", &m_agentLiquidFord, 2.f, 20.f, 1.f);
 	if (m_agentLiquidFord <= m_agentLiquidWalk) m_agentLiquidFord += 1.f;
@@ -281,6 +289,24 @@ void Sample::handleCommonSettings()
 	imguiLabel("Detail Mesh");
 	imguiSlider("Sample Distance", &m_detailSampleDist, 0.0f, 50.f/*16.0f*/, 1.0f);
 	imguiSlider("Max Sample Error", &m_detailSampleMaxError, 0.0f, 50.f/*16.0f*/, 1.0f);
+
+	imguiSeparator();
+	static const float DELTA = 10.f;
+	imguiLabel("Preliminary jump/climb transfers");
+	const float minBoxFwdDst = m_agentRadius + std::min(DELTA, m_cellSize);
+	imguiSlider("Bbox forward distance", &m_prelimBoxFwdDst, minBoxFwdDst, minBoxFwdDst * 3, 1.0f);
+	imguiSlider("Bbox forward distance clmb.", &m_prelimBoxFwdClimbDst, minBoxFwdDst, minBoxFwdDst * 5, 1.0f);
+	imguiSlider("Bbox height", &m_prelimBoxHeight, m_agentHeight, m_agentHeight * 3 + m_cellHeight, 1.0f);
+	const float m_minClimbHeight = m_agentMaxClimb - std::min(DELTA, m_cellHeight);
+	imguiSlider("Bbox climb min height", &m_prelimMinClimbHeight, m_minClimbHeight, m_minClimbHeight * 2, 1.0f);
+	const float m_minClimbOverlappedHeight = m_agentHeight - std::min(DELTA, m_cellHeight);
+	imguiSlider(
+		"Bbox climb overl. min height", &m_prelimMinClimbOverlappedHeight,
+		m_minClimbOverlappedHeight, m_minClimbOverlappedHeight * 2, 1.0f
+	);
+	const float m_maxClimbHeight = m_agentHeight - std::min(DELTA, m_cellHeight);
+	imguiSlider("Bbox climb max height", &m_prelimMaxClimbHeight, m_maxClimbHeight, m_maxClimbHeight * 3, 1.0f);
+	imguiSlider("Bbox shrink coefficient", &m_prelimBboxShrinkCoeff, 0.5f, 1.0f, 0.01f);
 	
 	imguiSeparator();
 }

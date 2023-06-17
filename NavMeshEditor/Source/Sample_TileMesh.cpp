@@ -401,6 +401,7 @@ void Sample_TileMesh::handleTools()
 	}
 
     imguiSeparatorLine();
+	imguiSeparatorLine();
 
     imguiIndent();
 
@@ -956,6 +957,7 @@ bool Sample_TileMesh::handleBuild()
 std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]> Sample_TileMesh::calcPreliminaryJumpData(
 	const dtMeshTile* ctile,
 	const float checkBboxFwdDst,
+	const float checkBboxFwdClimbDst,
 	const float checkBboxHeight,
 	const float minClimbHeight,
 	const float minClimbOverlappedHeight,
@@ -970,7 +972,17 @@ std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]> Sample_TileMesh::calcPreliminaryJu
 	}
 	std::memset(data.get(), 0, polyCount * sizeof(dtPoly::JmpAbilityInfoPoly));
 
-	calcPreliminaryJumpData(data, ctile, checkBboxFwdDst, checkBboxHeight, minClimbHeight, minClimbOverlappedHeight, maxClimbHeight, shrinkCoeff);
+	calcPreliminaryJumpData(
+		data,
+		ctile,
+		checkBboxFwdDst,
+		checkBboxFwdClimbDst,
+		checkBboxHeight,
+		minClimbHeight,
+		minClimbOverlappedHeight,
+		maxClimbHeight,
+		shrinkCoeff
+	);
 
 	return data;
 }
@@ -979,6 +991,7 @@ void Sample_TileMesh::calcPreliminaryJumpData(
 	std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]>& outData,
 	const dtMeshTile* ctile,
 	const float checkBboxFwdDst,
+	const float checkBboxFwdClimbDst,
 	const float checkBboxHeight,
 	const float minClimbHeight,
 	const float minClimbOverlappedHeight,
@@ -1015,7 +1028,7 @@ void Sample_TileMesh::calcPreliminaryJumpData(
 			dtPoly::JmpAbilityInfoEdge& edge = polyData.edges[j];
 			edge.jmpDown = checkAbilityJumpDownOrForward(v1, v2, polyCenter, checkBboxFwdDst, checkBboxHeight, shrinkCoeff);
 			edge.jmpFwd = checkAbilityJumpDownOrForward(v1, v2, polyCenter, checkBboxFwdDst, checkBboxHeight, shrinkCoeff);
-			edge.climb = checkAbilityClimb(v1, v2, polyCenter, checkBboxFwdDst, minClimbHeight, maxClimbHeight, &filter);
+			edge.climb = checkAbilityClimb(v1, v2, polyCenter, checkBboxFwdClimbDst, minClimbHeight, maxClimbHeight, &filter);
 		}
 		polyData.climbOverlapped = checkAbilityClimbOverlapped(
 			baseVerts, vertCount, p->norm, p->dist, minClimbOverlappedHeight, maxClimbHeight, &filter
@@ -1193,12 +1206,9 @@ void Sample_TileMesh::buildTile(const float* pos)
 			status = m_navMesh->calcAveragePolyPlanes(tile);
 			if (dtStatusSucceed(status))
 			{
-				const float checkBboxFwdDst = (tile->header->walkableRadius + 1.0f / tile->header->bvQuantFactor) * 2.f;
-				const float minClimbOverlappedHeight = tile->header->walkableHeight - 1.0f / tile->header->bvQuantFactor;
-				const float minClimbHeight = tile->header->walkableClimb - 1.0f / tile->header->bvQuantFactor;
 				auto data = calcPreliminaryJumpData(
-					tile, checkBboxFwdDst, CHECK_BBOX_HEIGHT, minClimbHeight,
-					minClimbOverlappedHeight, MAX_CLIMB_HEIGHT, SHRINK_COEFF
+					tile, m_prelimBoxFwdDst, m_prelimBoxFwdClimbDst, m_prelimBoxHeight, m_prelimMinClimbHeight,
+					m_prelimMinClimbOverlappedHeight, m_prelimMaxClimbHeight, m_prelimBboxShrinkCoeff
 				);
 				if (!data) {
 					m_ctx->log(RC_LOG_ERROR, "Error of calculating preliminary jump data for tile, x: %d, y: %d):", tx, ty);
@@ -1491,12 +1501,9 @@ void Sample_TileMesh::buildAllTilesDo(
 				}
 
 				std::memset(polyArr.get(), 0, maxPolyPerTile * sizeof(dtPoly::JmpAbilityInfoPoly));
-				const float checkBboxFwdDst = (tile->header->walkableRadius + 1.0f / tile->header->bvQuantFactor) * 2.f;
-				const float minClimbOverlappedHeight = tile->header->walkableHeight - 1.0f / tile->header->bvQuantFactor;
-				const float minClimbHeight = tile->header->walkableClimb - 1.0f / tile->header->bvQuantFactor;
 				calcPreliminaryJumpData(
-					polyArr, tile, checkBboxFwdDst, CHECK_BBOX_HEIGHT, minClimbHeight,
-					minClimbOverlappedHeight, MAX_CLIMB_HEIGHT, SHRINK_COEFF
+					polyArr, tile, m_prelimBoxFwdDst, m_prelimBoxFwdClimbDst, m_prelimBoxHeight, m_prelimMinClimbHeight,
+					m_prelimMinClimbOverlappedHeight, m_prelimMaxClimbHeight, m_prelimBboxShrinkCoeff
 				);
 				m_navMesh->setPreliminaryJumpData(tile, polyArr);
 			}
