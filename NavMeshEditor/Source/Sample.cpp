@@ -203,7 +203,7 @@ void Sample::resetCommonSettings()
 	m_agentLiquidFord = 5.f;
 	m_agentLiquidSwim = std::ceil(m_agentHeight / m_cellHeight) - 1;
     m_agentRadius = 35.f;//0.6f;
-    m_agentMaxClimb = 40.f;//0.9f;
+    m_agentMaxClimb = 50.f;//0.9f;
     m_agentMaxSlope = 50.f;//45.0f;
     m_regionMinSize = 15.f;//8;
     m_regionMergeSize = 15.f;//20;
@@ -214,7 +214,7 @@ void Sample::resetCommonSettings()
 	m_detailSampleMaxError = 1.0f;
 	m_partitionType = SAMPLE_PARTITION_WATERSHED;
 	m_prelimBoxFwdDst = 50.f;
-	m_prelimBoxFwdClimbDst = 50.f;
+	m_prelimBoxFwdClimbDst = m_agentRadius * 2;
 	m_prelimBoxHeight = 200.f;
 	m_prelimMinClimbHeight = 50.f;
 	m_prelimMinClimbOverlappedHeight = 200.f;
@@ -306,6 +306,10 @@ void Sample::handleCommonSettings()
 	);
 	const float m_maxClimbHeight = m_agentHeight - std::min(DELTA, m_cellHeight);
 	imguiSlider("Bbox climb max height", &m_prelimMaxClimbHeight, m_maxClimbHeight, m_maxClimbHeight * 3, 1.0f);
+	if (m_prelimMaxClimbHeight < m_prelimMinClimbHeight || m_prelimMaxClimbHeight < m_prelimMinClimbOverlappedHeight)
+	{
+		m_prelimMaxClimbHeight = std::max(m_prelimMinClimbHeight, m_prelimMinClimbOverlappedHeight) + DELTA;
+	}
 	imguiSlider("Bbox shrink coefficient", &m_prelimBboxShrinkCoeff, 0.5f, 1.0f, 0.01f);
 	
 	imguiSeparator();

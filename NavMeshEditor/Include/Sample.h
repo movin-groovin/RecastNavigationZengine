@@ -23,10 +23,6 @@
 #include "Recast.h"
 #include "SampleInterfaces.h"
 
-#include <map>
-#include <string>
-#include <sstream>
-
 /// Tool types.
 enum SampleToolType
 {
@@ -54,52 +50,6 @@ enum SamplePartitionType
 	SAMPLE_PARTITION_WATERSHED,
 	SAMPLE_PARTITION_MONOTONE,
 	SAMPLE_PARTITION_LAYERS,
-};
-
-class ToolArgs
-{
-public:
-	ToolArgs() = default;
-	explicit ToolArgs(const std::map<std::string, std::string>& dat) : m_data(dat) {}
-	ToolArgs(const ToolArgs&) = delete;
-	ToolArgs& operator=(const ToolArgs&) = delete;
-
-	bool getValue(const std::string& name, std::string& value) const
-	{
-		auto it = m_data.find(name);
-		if (it == m_data.end()) {
-			return false;
-		}
-		value = it->second;
-		return true;
-	}
-
-	template <typename T>
-	bool getValue(const std::string& name, T& value) const
-	{
-		std::string val;
-		bool ret = getValue(name, val);
-		if (!ret)
-			return ret;
-		std::istringstream iss;
-		iss.str(val);
-		iss >> value;
-		return ret;
-	}
-
-	bool appendValue(const std::string& name, const std::string& value)
-	{
-		auto it = m_data.find(name);
-		if (it == m_data.end()) {
-			m_data[name] = value;
-			return true;
-		}
-		it->second = value;
-		return false;
-	}
-
-private:
-	std::map<std::string, std::string> m_data;
 };
 
 struct SampleTool
