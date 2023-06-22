@@ -203,7 +203,7 @@ void Sample::resetCommonSettings()
 	m_agentLiquidFord = 5.f;
 	m_agentLiquidSwim = std::ceil(m_agentHeight / m_cellHeight) - 1;
     m_agentRadius = 35.f;//0.6f;
-    m_agentMaxClimb = 50.f;//0.9f;
+    m_agentMaxClimb = 40.f;//0.9f;
     m_agentMaxSlope = 50.f;//45.0f;
     m_regionMinSize = 15.f;//8;
     m_regionMergeSize = 15.f;//20;

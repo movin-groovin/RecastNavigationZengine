@@ -23,6 +23,7 @@
 #include "DetourStatus.h"
 
 #ifdef ZENGINE_NAVMESH
+#include "../../Common/Include/Matrix.h"
 #include <cmath>
 #include <cassert>
 #include <memory>
@@ -458,8 +459,7 @@ public:
 #ifdef ZENGINE_NAVMESH
 	dtStatus calcAveragePolyPlanes(const dtTileRef refTile);
 	dtStatus calcAveragePolyPlanes(const dtMeshTile* ctile);
-	dtStatus doCalcAveragePolyPlanes_v1(const dtMeshTile* ctile);
-	dtStatus doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile);
+	dtStatus doCalcAveragePolyPlanes(const dtMeshTile* ctile, matrix::MatrixPoolDouble& matrixPool);
 	void setPreliminaryJumpData(
 		const dtMeshTile* ctile, const std::unique_ptr<dtPoly::JmpAbilityInfoPoly[]>& data
 	);

@@ -523,7 +523,8 @@ bool dtCreateNavMeshData(dtNavMeshCreateParams* params, unsigned char** outData,
 #ifdef ZENGINE_NAVMESH
 		p->norm[0] = p->norm[1] = p->norm[2] = FLT_MAX;
 		p->dist = FLT_MAX;
-		p->miny = p->maxy = FLT_MAX;
+		p->miny = FLT_MAX;
+		p->maxy = -FLT_MAX;
 		p->setJumpAbilityFlags(dtPoly::EMPTY_JMP_ABILITY_FLAG);
 #endif // ZENGINE_NAVMESH
 		for (int j = 0; j < nvp; ++j)

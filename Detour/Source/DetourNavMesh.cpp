@@ -25,10 +25,13 @@
 #include "DetourMath.h"
 #include "DetourAlloc.h"
 #include "DetourAssert.h"
-#include <new>
-#include <memory>
+#ifdef ZENGINE_NAVMESH
+#include <cassert>
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
+#include "Geometry.h"
+#endif // ZENGINE_NAVMESH
 
 inline bool overlapSlabs(const float* amin, const float* amax,
 						 const float* bmin, const float* bmax,
@@ -1075,189 +1078,22 @@ dtStatus dtNavMesh::addTile(unsigned char* data, int dataSize, int flags,
 #ifdef ZENGINE_NAVMESH
 namespace
 {
-template <typename T>
-class Matrix
-{
-public:
-	static constexpr T EPS = 1e-6;
 
-	static const int OK = 0;
-	static const int ERROR_NO_MEMORY = 1;
-	static const int ERROR_INVERSION = 2;
-	static const int ERROR_INVALID_ARGUMENT = 3;
-	static const int ERROR_INVALID_OPERATION = 4;
-	static const int ERROR_INVALID_POS = -1;
+static_assert(std::is_same<decltype(dtPolyDetail::triCount), unsigned char>::value, "Check type changing");
+static const int MAX_TRIS_FOR_CALC = 256;
+static const int VERTS_NUM_FOR_CALC = ((MAX_TRIS_FOR_CALC + 16) * 3) * 2;
+static const int MATRICES_NUM = 16;
 
-	using type = T;
+constexpr matrix::MatrixPoolDouble::Arg vertsMatrix = {VERTS_NUM_FOR_CALC, 3, MATRICES_NUM};
+constexpr matrix::MatrixPoolDouble::Arg coordsMatrix = {VERTS_NUM_FOR_CALC, 1, MATRICES_NUM};
+constexpr matrix::MatrixPoolDouble::Arg trVertsMatrix = {3, VERTS_NUM_FOR_CALC, MATRICES_NUM};
+constexpr matrix::MatrixPoolDouble::Arg squareMatrix = {3, 3, MATRICES_NUM};
+constexpr matrix::MatrixPoolDouble::Arg coeffMatrix = {3, 1, MATRICES_NUM};
 
-public:
-	explicit Matrix(int nRows, int nColumns): m_nRows(nRows), m_nColumns(nColumns) {}
-	int init()
-	{
-		m_dat.reset(new(std::nothrow) T[m_nRows * m_nColumns]);
-		if (!m_dat.get()) return ERROR_NO_MEMORY;
-		return OK;
-	}
-	Matrix(const Matrix& ref) = delete;
-	Matrix& operator=(const Matrix& ref) = delete;
-	int copy(const Matrix& ref)
-	{
-		m_dat.reset(new(std::nothrow) T[ref.m_nRows * ref.m_nColumns]);
-		if (!m_dat.get()) return ERROR_NO_MEMORY;
-		m_nRows = ref.m_nRows;
-		m_nColumns = ref.m_nColumns;
-		std::memcpy(m_dat.get(), ref.m_dat.get(), sizeof(T) * m_nRows * m_nColumns);
-		return OK;
-	}
-
-	int multiply(const Matrix& ref)
-	{
-		if (m_nColumns != ref.m_nRows)
-		{
-			return ERROR_INVALID_ARGUMENT;
-		}
-		T* newData = new(std::nothrow) T[m_nRows * ref.m_nColumns];
-		if (!newData) return ERROR_NO_MEMORY;
-
-		for (int i = 0; i < m_nRows; ++i) {
-			for (int j = 0; j < ref.m_nColumns; ++j) {
-				T tmp = T();
-				for (int k = 0; k < m_nColumns; ++k)
-				{
-					tmp += m_dat[i * m_nColumns + k] * ref.m_dat[k * ref.m_nColumns + j];
-				}
-				newData[i * ref.m_nColumns + j] = tmp;
-			}
-		}
-		m_dat.reset(newData);
-		//m_nRows = m_nRows; // no changing
-		m_nColumns = ref.m_nColumns;
-
-		return OK;
-	}
-
-	int transpose()
-	{
-		T* newData = new(std::nothrow) T[m_nRows * m_nColumns];
-		if (!newData) return ERROR_NO_MEMORY;
-
-		for (int i = 0; i < m_nRows; ++i)
-		{
-			for (int j = 0; j < m_nColumns; ++j)
-			{
-				newData[j * m_nRows + i] = m_dat[i * m_nColumns + j];
-			}
-		}
-		m_dat.reset(newData);
-		std::swap(m_nRows, m_nColumns);
-
-		return OK;
-	}
-
-	int inverse3x3()
-	{
-		if (m_nRows != m_nColumns && m_nRows != 3)
-		{
-			return ERROR_INVALID_OPERATION;
-		}
-
-		T det = m_dat[0] * m_dat[4] * m_dat[8] + m_dat[1] * m_dat[5] * m_dat[6] + m_dat[3] * m_dat[7] * m_dat[2]
-			- m_dat[2] * m_dat[4] * m_dat[6] - m_dat[3] * m_dat[1] * m_dat[8] - m_dat[7] * m_dat[5] * m_dat[0];
-		if (det != det || std::isinf(det) || std::fabs(det) < EPS)
-		{
-			return ERROR_INVERSION;
-		}
-		T* newData = new(std::nothrow) T[m_nRows * m_nColumns];
-		if (!newData) return ERROR_NO_MEMORY;
-
-		//const T invDet = 1.f / det;
-		newData[0] = (m_dat[4] * m_dat[8] - m_dat[5] * m_dat[7]) / det;
-		newData[1] = -(m_dat[3] * m_dat[8] - m_dat[5] * m_dat[6]) / det;
-		newData[2] = (m_dat[3] * m_dat[7] - m_dat[4] * m_dat[6]) / det;
-		newData[3] = -(m_dat[1] * m_dat[8] - m_dat[2] * m_dat[7]) / det;
-		newData[4] = (m_dat[0] * m_dat[8] - m_dat[2] * m_dat[6]) / det;
-		newData[5] = -(m_dat[0] * m_dat[7] - m_dat[1] * m_dat[6]) / det;
-		newData[6] = (m_dat[1] * m_dat[5] - m_dat[2] * m_dat[4]) / det;
-		newData[7] = -(m_dat[0] * m_dat[5] - m_dat[2] * m_dat[3]) / det;
-		newData[8] = (m_dat[0] * m_dat[4] - m_dat[1] * m_dat[3]) / det;
-		m_dat.reset(newData);
-
-		return OK;
-	}
-
-	int add(const Matrix& ref)
-	{
-		if (m_nRows != ref.m_nRows && m_nColumns != ref.m_nColumns)
-		{
-			return ERROR_INVALID_ARGUMENT;
-		}
-
-		return binaryOpApplay([](const T v1, const T v2) { return v1 + v2 }, ref);
-	}
-
-	int subtract(const Matrix& ref)
-	{
-		if (m_nRows != ref.m_nRows && m_nColumns != ref.m_nColumns)
-		{
-			return ERROR_INVALID_ARGUMENT;
-		}
-
-		return binaryOpApplay([](const T v1, const T v2) { return v1 - v2; }, ref);
-	}
-
-	T sumSquared() const
-	{
-		return std::accumulate(
-			m_dat.get(),
-			m_dat.get() + m_nRows * m_nColumns,
-			T(),
-			[] (const T v1, const T v2) { return v1 + v2 * v2; }
-		);
-	}
-
-	int appendData(const T* data, int num, int pos)
-	{
-		assert(m_nColumns == num);
-		if (m_nRows * m_nColumns < pos + num) {
-			return ERROR_INVALID_POS;
-		}
-		std::memcpy(m_dat.get() + pos, data, sizeof(T) * num);
-		return pos + num;
-	}
-
-	int getnRows() const { return m_nRows; }
-	int getnColumns() const { return m_nColumns; }
-	const T* getData() const { return m_dat.get(); }
-	T* getData() { return m_dat.get(); }
-	operator bool() const { return m_dat.get(); }
-
-private:
-	template <typename F>
-	int binaryOpApplay(const F& f, const Matrix& ref)
-	{
-		for (int i = 0; i < m_nRows; ++i)
-		{
-			for (int j = 0; j < m_nColumns; ++j)
-			{
-				m_dat[i * m_nColumns + j] = f(m_dat[i * m_nColumns + j], ref.m_dat[i * m_nColumns + j]);
-			}
-		}
-
-		return OK;
-	}
-
-private:
-	int m_nRows;
-	int m_nColumns;
-	std::unique_ptr<T[]> m_dat;
-};
-
-enum class CoordId: int
+enum class CoordId : int
 {
 	X = 0, Y, Z, Empty
 };
-
-using MatrixType = Matrix<double>;
 
 struct TriEntry
 {
@@ -1267,168 +1103,18 @@ struct TriEntry
 	bool operator < (const TriEntry& ref) const { return absSquareSize < ref.absSquareSize; }
 };
 
-bool calcBestFit(
-	const float* baseVerts,
-	const int baseVertsNum,
-	std::unique_ptr<float[]>& verts,
-	int& vertsSize,
-	int vertsNum,
-	MatrixType& C,
-	CoordId& cid
-) {
-	static const float VERT_DIFF = 0.35f;
-	static const float VERTS_NUM_FACTOR = 1.5f;
-	static const int COORD_LEN = 1; // 3;
-
-	int maxIdx = -1;
-	while (true)
-	{
-		CoordId coords[COORD_LEN] = { CoordId::Y };// {CoordId::X, CoordId::Y, CoordId::Z};
-		double minErr = FLT_MAX;
-		cid = CoordId::Empty;
-		MatrixType A(vertsNum, 3);
-		MatrixType B(vertsNum, 1);
-		//MatrixType C(3, 1);
-		if ((A.init() + B.init()/* + C.init()*/) != MatrixType::OK) {
-			return false;
-		}
-
-		for (int i = 0; i < COORD_LEN; ++i)
-		{
-			CoordId coord = coords[i];
-			int posA = 0, posB = 0;
-			double bufA[3];
-			double bufB[1];
-			for (int j = 0; j < vertsNum; ++j)
-			{
-				const float* v = verts.get() + j * 3;
-				if (coord == CoordId::X) {
-					bufA[0] = v[1];
-					bufA[1] = v[2];
-					bufA[2] = 1.f;
-					bufB[0] = v[0];
-				}
-				else if (coord == CoordId::Y) {
-					bufA[0] = v[0];
-					bufA[1] = v[2];
-					bufA[2] = 1.f;
-					bufB[0] = v[1];
-				}
-				else /*if (coord == CoordId::Z)*/ {
-					bufA[0] = v[0];
-					bufA[1] = v[1];
-					bufA[2] = 1.f;
-					bufB[0] = v[2];
-				}
-				posA = A.appendData(bufA, 3, posA);
-				posB = B.appendData(bufB, 1, posB);
-			}
-
-			MatrixType AT(0, 0);
-			MatrixType RES(0, 0);
-			if ((AT.copy(A) + AT.transpose()) != MatrixType::OK) return false;
-			if (RES.copy(AT) != MatrixType::OK) return false;
-			if (RES.multiply(A) != MatrixType::OK) return false;
-			int invRes = RES.inverse3x3();
-			if (invRes != MatrixType::OK) {
-				if (invRes == MatrixType::ERROR_INVERSION) {
-					continue;
-				}
-				return false;
-			}
-			if (RES.multiply(AT) != MatrixType::OK) return false;
-			if (RES.multiply(B) != MatrixType::OK) return false;
-			assert(RES.getnRows() == 3);
-			assert(RES.getnColumns() == 1);
-
-			MatrixType Acp(0, 0);
-			if (Acp.copy(A) != MatrixType::OK) return false;
-			if (Acp.multiply(RES) != MatrixType::OK) return false;
-			assert(Acp.getnRows() == B.getnRows());
-			assert(Acp.getnColumns() == B.getnColumns());
-			Acp.subtract(B);
-			volatile double err = Acp.sumSquared();
-			if (err < minErr) {
-				if (C.copy(RES) != MatrixType::OK) return false;
-				minErr = err;
-				cid = coord;
-			}
-		}
-		// degenerated calculation
-		if (!C)
-			break;
-
-		const float a = static_cast<float>(C.getData()[0]);
-		const float b = static_cast<float>(C.getData()[1]);
-		const float c = static_cast<float>(C.getData()[2]);
-		float minMax[2] = {FLT_MAX, -FLT_MAX };
-		int newMaxIdx = -1;
-		// TODO check case with average diff by everything verts insted of min diff
-		for (int i = 0; i < baseVertsNum; ++i)
-		{
-			const float* v = baseVerts + i * 3;
-			float diff;
-			if (cid == CoordId::X) {
-				diff = std::fabs((v[1] * a + v[2] * b + c) - v[0]);
-			}
-			else if (cid == CoordId::Y) {
-				diff = std::fabs((v[0] * a + v[2] * b + c) - v[1]);
-			}
-			else /*if (cid == CoordId::Z)*/ {
-				diff = std::fabs((v[0] * a + v[1] * b + c) - v[2]);
-			}
-			minMax[0] = std::min(minMax[0], diff);
-			if (diff > minMax[1]) {
-				minMax[1] = diff;
-				newMaxIdx = i;
-			}
-		}
-		if (static_cast<float>(minMax[1] - minMax[0]) / minMax[0] < VERT_DIFF) {
-			break;
-		}
-		// to suppress infinite loop
-		if (maxIdx != -1 && newMaxIdx != maxIdx) {
-			break;
-		}
-		maxIdx = newMaxIdx;
-
-		int pos = vertsNum * 3;
-		for (int i = 0, n = static_cast<int>(baseVertsNum * VERTS_NUM_FACTOR); i < n; ++i)
-		{
-			if (pos == vertsSize)
-			{
-				vertsSize *= 2;
-				float* newDat = new(std::nothrow) float[vertsSize];
-				if (!newDat)
-				{
-					return false;
-				}
-				std::memcpy(newDat, verts.get(), pos * sizeof(float));
-				verts.reset(newDat);
-			}
-
-			dtVcopy(verts.get() + pos, baseVerts + maxIdx * 3);
-			pos += 3;
-		}
-		vertsNum = pos / 3;
-	}
-
-	return true;
-}
-
-bool calcAveragePlane(
-	const dtMeshTile* ctile,
-	const dtPoly* p,
-	const MatrixType& C,
+void calcAveragePlane(
+	const matrix::MatrixDouble& C,
 	const CoordId cid,
 	float* norm,
 	float* dist
 ) {
 	static const float DIFF = 1000.f;
 	float v1[3], v2[3], v3[3];
-	const float a = static_cast<float>(C.getData()[0]);
-	const float b = static_cast<float>(C.getData()[1]);
-	const float c = static_cast<float>(C.getData()[2]);
+	const double* coeffData = C.getData();
+	const float a = static_cast<float>(coeffData[0]);
+	const float b = static_cast<float>(coeffData[1]);
+	const float c = static_cast<float>(coeffData[2]);
 
 	if (cid == CoordId::X) {
 		// v[1] * a + v[2] * b + c = v[0]
@@ -1454,7 +1140,7 @@ bool calcAveragePlane(
 		v3[2] = 0.f;
 		v3[1] = v3[0] * a + v3[2] * b + c;
 	}
-	else /*if (cid == CoordId::Z)*/ {
+	else { // if (cid == CoordId::Z)
 		// v[0] * a + v[1] * b + c = v[2]
 		v1[0] = DIFF;
 		v1[1] = DIFF;
@@ -1471,34 +1157,186 @@ bool calcAveragePlane(
 	dtVsub(p1, v2, v1);
 	dtVsub(p2, v3, v1);
 	dtVcross(norm, p1, p2);
-	assert(dtVlen(norm) > MatrixType::EPS);
+	assert(dtVlen(norm) > geometry::Constants::EPS);
 	dtVnormalize(norm);
 	*dist = -dtVdot(norm, v2);
-
-	return true;
 }
 
-bool calcMinMaxY(
-	const dtMeshTile* tile, const dtPoly* p, const dtPolyDetail* pd, float* miny, float* maxy
+double calcVerticalError(
+	const matrix::MatrixDouble& X,
+	const CoordId coord,
+	const float* verts,
+	const int vertsNum,
+	float* norm,
+	float* dist
 ) {
-	*miny = FLT_MAX;
-	*maxy = -FLT_MAX;
-	for (int j = 0; j < pd->triCount; ++j)
+	assert(coord != CoordId::Empty);
+	calcAveragePlane(X, coord, norm, dist);
+
+	double err = 0;
+	float buf[3];
+	for (int i = 0; i < vertsNum; ++i) {
+		const float* v = verts + i * 3;
+		geometry::calcVerticalVertexProjectionOnPlane(v, norm, *dist, buf);
+		err += std::fabs(v[1] - buf[1]);
+	}
+
+	return err;
+}
+
+bool calcBestFit(
+	const float* baseVerts,
+	const int baseVertsNum,
+	float* verts,
+	int vertsNum,
+	matrix::MatrixPoolDouble& matrixPool,
+	float* totalNorm,
+	float* totalDist
+) {
+	static const int MAX_ITERS_NUM = 30;
+	static const float MINMAX_DIFF_RATIO = 0.25f;
+	static const float ABS_THRESHOLD_VERT_DIFF = 10.f;
+	static const int THRESHOLD_VERTS_NUM = 4;
+	static const float THRESHOLD_VERTS_ERROR = 50.f;
+	static const float VERTS_NUM_FACTOR = 1.2f;
+
+	int itersNum = -1;
+	double totalMinErr = FLT_MAX;
+	int vertMaxDiffIdx = -1;
+	const CoordId coords[3] = { CoordId::X, CoordId::Y, CoordId::Z };
+	double bufVerts[3 * VERTS_NUM_FOR_CALC];
+	double bufCoords[VERTS_NUM_FOR_CALC];
+	while (++itersNum < MAX_ITERS_NUM)
 	{
-		const unsigned char* t = &tile->detailTris[(pd->triBase + j) * 4];
-		for (int k = 0; k < 3; ++k)
+		double iterMinErr = FLT_MAX;
+		float iterNorm[3];
+		float iterDist;
+		matrix::MatrixDouble A = matrixPool.allocMatrix(vertsMatrix.tag(), {vertsNum, 3});
+		matrix::MatrixDouble B = matrixPool.allocMatrix(coordsMatrix.tag(), {vertsNum, 1});
+		assert(bool(A) && bool(B));
+
+		for (int i = 0; i < sizeof(coords) / sizeof(coords[0]); ++i)
 		{
-			const float* v;
-			if (t[k] < p->vertCount)
-				v = &tile->verts[p->verts[t[k]] * 3];
-			else
-				v = &tile->detailVerts[(pd->vertBase + t[k] - p->vertCount) * 3];
-			if (v[1] < *miny) *miny = v[1];
-			if (v[1] > *maxy) *maxy = v[1];
+			const CoordId coord = coords[i];
+			double bufA[3];
+			double bufB[1];
+			for (int j = 0; j < vertsNum; ++j)
+			{
+				const float* v = verts + j * 3;
+				if (coord == CoordId::X) {
+					bufA[0] = v[1];
+					bufA[1] = v[2];
+					bufA[2] = 1.f;
+					bufB[0] = v[0];
+				}
+				else if (coord == CoordId::Y) {
+					bufA[0] = v[0];
+					bufA[1] = v[2];
+					bufA[2] = 1.f;
+					bufB[0] = v[1];
+				}
+				else  { // if (coord == CoordId::Z)
+					bufA[0] = v[0];
+					bufA[1] = v[1];
+					bufA[2] = 1.f;
+					bufB[0] = v[2];
+				}
+				std::memcpy(bufVerts + j * 3, bufA, sizeof(bufA));
+				std::memcpy(bufCoords + j, bufB, sizeof(bufB));
+			}
+			A.setData(bufVerts, vertsNum * 3);
+			B.setData(bufCoords, vertsNum * 1);
+
+			matrix::MatrixDouble A_tr = A.transpose();
+			matrix::MatrixDouble X = (A_tr * A).inverse3x3() * A_tr * B;
+			assert(X || X.getLastError() == matrix::MatrixDouble::ERROR_INVERSION);
+			if (!X) {
+				continue;
+			}
+			assert(X.getRowsNum() == 3);
+			assert(X.getColumnsNum() == 1);
+			float tmpNorm[3];
+			float tmpDist;
+			const double err = calcVerticalError(X, coord, verts, vertsNum, tmpNorm, &tmpDist);
+			if (err < iterMinErr) {
+				iterMinErr = err;
+				geometry::vcopy(iterNorm, tmpNorm);
+				iterDist = tmpDist;
+			}
+		}
+		// degenerated calculation
+		if (iterMinErr == FLT_MAX) {
+			break;
+		}
+
+		float buf[3];
+		int maxDiffIdx = -1;
+		float vertMinDiff = FLT_MAX, vertMaxDiff = -FLT_MAX;
+		for (int i = 0; i < baseVertsNum; ++i) {
+			const float* v = baseVerts + i * 3;
+			geometry::calcVerticalVertexProjectionOnPlane(v, iterNorm, iterDist, buf);
+			const float diff = std::fabs(v[1] - buf[1]);
+			vertMinDiff = std::min(vertMinDiff, diff);
+			if (diff > vertMaxDiff) {
+				vertMaxDiff = diff;
+				maxDiffIdx = i;
+			}
+		}
+		assert(maxDiffIdx != -1);
+		if (
+			vertsNum < THRESHOLD_VERTS_NUM &&
+			((vertMinDiff + vertMaxDiff) > 2 * THRESHOLD_VERTS_ERROR)
+		) {
+			//little poly with bir error
+			break;
+		}
+
+		totalMinErr = iterMinErr;
+		geometry::vcopy(totalNorm, iterNorm);
+		*totalDist = iterDist;
+		if (vertMinDiff < ABS_THRESHOLD_VERT_DIFF && vertMaxDiff < ABS_THRESHOLD_VERT_DIFF)
+		{
+			//near polygon
+			break;
+		}
+		if (static_cast<float>(vertMaxDiff - vertMinDiff) / vertMinDiff < MINMAX_DIFF_RATIO) {
+			//everything is ok
+			break;
+		}
+		if (vertMaxDiffIdx != -1 && vertMaxDiffIdx != maxDiffIdx) {
+			//changing vertex with max error
+			break;
+		}
+		vertMaxDiffIdx = maxDiffIdx;
+		if (vertsNum == VERTS_NUM_FOR_CALC) {
+			// buffer insufficient memory
+			break;
+		}
+
+		for (int i = 0, n = std::max(1, static_cast<int>(baseVertsNum * VERTS_NUM_FACTOR)); i < n; ++i)
+		{
+			if (vertsNum == VERTS_NUM_FOR_CALC) {
+				break;
+			}
+			geometry::vcopy(verts + vertsNum * 3, baseVerts + vertMaxDiffIdx * 3);
+			++vertsNum;
 		}
 	}
 
-	return true;
+	return totalMinErr != FLT_MAX;
+}
+
+void calcMinMaxY(
+	const float* verts, const int vertsNum, float* miny, float* maxy
+) {
+	*miny = FLT_MAX;
+	*maxy = -FLT_MAX;
+	for (int i = 0; i < vertsNum; ++i)
+	{
+		const float* v = verts + i * 3;
+		if (v[1] < *miny) *miny = v[1];
+		if (v[1] > *maxy) *maxy = v[1];
+	}
 }
 
 } // namespace
@@ -1510,173 +1348,28 @@ dtStatus dtNavMesh::calcAveragePolyPlanes(const dtTileRef refTile)
 
 dtStatus dtNavMesh::calcAveragePolyPlanes(const dtMeshTile* ctile)
 {
-	return doCalcAveragePolyPlanes_v2(ctile);
-}
-
-// by center points of detailed triangles
-dtStatus dtNavMesh::doCalcAveragePolyPlanes_v1(const dtMeshTile* ctile)
-{
-	if (!ctile || static_cast<int>(ctile - m_tiles) >= m_maxTiles)
-	{
-		return DT_FAILURE | DT_INVALID_PARAM;
-	}
-	dtMeshTile* tile = m_tiles + (ctile - m_tiles);
-	//dtMeshTile* tile = const_cast<dtMeshTile*>(ctile);
-	int size = 3;
-	int triEntriesSize = 1;
-	std::unique_ptr<float[]> verts(new(std::nothrow) float[size]);
-	std::unique_ptr<TriEntry[]> triEntries(new(std::nothrow) TriEntry[triEntriesSize]);
-	if (!verts || !triEntries)
-	{
+	matrix::MatrixPoolDouble matrixPool;
+	if (!matrixPool.init({
+		vertsMatrix,
+		coordsMatrix,
+		trVertsMatrix,
+		squareMatrix,
+		coeffMatrix
+	})) {
 		return DT_FAILURE | DT_OUT_OF_MEMORY;
 	}
-	float baseVerts[3 * DT_VERTS_PER_POLYGON];
-
-	for (int i = 0; i < tile->header->polyCount; ++i)
-	{
-		dtPoly* p = &tile->polys[i];
-		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip off-mesh links.
-			continue;
-
-		for (int j = 0; j < p->vertCount; ++j)
-		{
-			dtVcopy(baseVerts + j * 3, &tile->verts[p->verts[j] * 3]);
-		}
-		const dtPolyDetail* pd = &tile->detailMeshes[i];
-		//assert(pd->vertCount >= 3);
-		int pos = 0;
-		int triEntriesPos = 0;
-		int nDetailTris = pd->triCount;
-		static const int MIN_TRIS_NUM = 5;
-		if (nDetailTris < MIN_TRIS_NUM) {
-			for (int j = 0; j < nDetailTris; ++j)
-			{
-				const unsigned char* t = &tile->detailTris[(pd->triBase + j) * 4];
-				for (int k = 0; k < 3; ++k)
-				{
-					const float* v;
-					if (t[k] < p->vertCount)
-						v = &tile->verts[p->verts[t[k]] * 3];
-					else
-						v = &tile->detailVerts[(pd->vertBase + t[k] - p->vertCount) * 3];
-					if (pos == size)
-					{
-						size *= 2;
-						float* newDat = new(std::nothrow) float[size];
-						if (!newDat)
-						{
-							return DT_FAILURE | DT_OUT_OF_MEMORY;
-						}
-						std::memcpy(newDat, verts.get(), pos * sizeof(float));
-						verts.reset(newDat);
-					}
-					dtVcopy(verts.get() + pos, v);
-					pos += 3;
-				}
-			}
-		}
-		else {
-			for (int j = 0; j < nDetailTris; ++j)
-			{
-				const unsigned char* t = &tile->detailTris[(pd->triBase + j) * 4];
-				float triCenter[3] = { 0.f, 0.f, 0.f };
-				const float* vPtrs[3];
-				for (int k = 0; k < 3; ++k)
-				{
-					const float* v;
-					if (t[k] < p->vertCount)
-						v = &tile->verts[p->verts[t[k]] * 3];
-					else
-						v = &tile->detailVerts[(pd->vertBase + t[k] - p->vertCount) * 3];
-					dtVadd(triCenter, triCenter, v);
-					vPtrs[k] = v;
-				}
-				triCenter[0] /= 3.f;
-				triCenter[1] /= 3.f;
-				triCenter[2] /= 3.f;
-
-				if (triEntriesPos == triEntriesSize)
-				{
-					triEntriesSize *= 2;
-					TriEntry* newDat = new(std::nothrow) TriEntry[triEntriesSize];
-					if (!newDat)
-					{
-						return DT_FAILURE | DT_OUT_OF_MEMORY;
-					}
-					std::memcpy(newDat, triEntries.get(), triEntriesPos * sizeof(TriEntry));
-					triEntries.reset(newDat);
-				}
-				float p1[3], p2[3], norm[3];
-				dtVsub(p1, vPtrs[1], vPtrs[0]);
-				dtVsub(p2, vPtrs[2], vPtrs[0]);
-				dtVcross(norm, p1, p2);
-				TriEntry* place = triEntries.get() + triEntriesPos;
-				place->absSquareSize = dtVlen(norm);
-				dtVcopy(place->center, triCenter);
-				++triEntriesPos;
-			}
-
-			static const int LIMIT = 10;
-			std::sort(triEntries.get(), triEntries.get() + triEntriesPos);
-			const float minSize = triEntries[0].absSquareSize;
-			for (int j = 0; j < triEntriesPos; ++j)
-			{
-				int cpNum = static_cast<int>( std::ceil(triEntries[j].absSquareSize / minSize) );
-				if (cpNum > LIMIT) cpNum = LIMIT;
-				const float* center = triEntries[j].center;
-				for (int k = 0; k < cpNum; ++k)
-				{
-					if (pos == size)
-					{
-						size *= 2;
-						float* newDat = new(std::nothrow) float[size];
-						if (!newDat)
-						{
-							return DT_FAILURE | DT_OUT_OF_MEMORY;
-						}
-						std::memcpy(newDat, verts.get(), pos * sizeof(float));
-						verts.reset(newDat);
-					}
-					dtVcopy(verts.get() + pos, center);
-					pos += 3;
-				}
-			}
-		}
-		
-		MatrixType C(3, 1);
-		CoordId cid = CoordId::Empty;
-		if (!calcBestFit(baseVerts, p->vertCount, verts, size, pos / 3, C, cid)) {
-			return DT_FAILURE | DT_PARTIAL_RESULT;
-		}
-		if (C) {
-			if (!calcAveragePlane(ctile, p, C, cid, p->norm, &p->dist)) {
-				return DT_FAILURE | DT_PARTIAL_RESULT;
-			}
-			if (!calcMinMaxY(tile, p, pd, &p->miny, &p->maxy)) {
-				return DT_FAILURE | DT_PARTIAL_RESULT;
-			}
-		}
-		//else - error of calc equation (little poly), we don't use such polygons while path finding
-	}
-
-	return DT_SUCCESS;
+	return doCalcAveragePolyPlanes(ctile, matrixPool);
 }
 
 // by points of detailed triangles
-dtStatus dtNavMesh::doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile)
+dtStatus dtNavMesh::doCalcAveragePolyPlanes(const dtMeshTile* ctile, matrix::MatrixPoolDouble& matrixPool)
 {
 	if (!ctile || static_cast<int>(ctile - m_tiles) >= m_maxTiles)
 	{
 		return DT_FAILURE | DT_INVALID_PARAM;
 	}
 	dtMeshTile* tile = m_tiles + (ctile - m_tiles);
-	//dtMeshTile* tile = const_cast<dtMeshTile*>(ctile);
-	int size = 3;
-	std::unique_ptr<float[]> verts(new(std::nothrow) float[size]);
-	if (!verts)
-	{
-		return DT_FAILURE | DT_OUT_OF_MEMORY;
-	}
+	float verts[3 * VERTS_NUM_FOR_CALC];
 	float baseVerts[3 * DT_VERTS_PER_POLYGON];
 
 	for (int i = 0; i < tile->header->polyCount; ++i)
@@ -1689,49 +1382,35 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes_v2(const dtMeshTile* ctile)
 		{
 			dtVcopy(baseVerts + j * 3, &tile->verts[p->verts[j] * 3]);
 		}
+
+		int vertsNum = 0;
 		const dtPolyDetail* pd = &tile->detailMeshes[i];
-		//assert(pd->vertCount >= 3);
-		int pos = 0;
 		for (int j = 0; j < pd->triCount; ++j)
 		{
 			const unsigned char* t = &tile->detailTris[(pd->triBase + j) * 4];
 			for (int k = 0; k < 3; ++k)
 			{
 				const float* v;
-				if (t[k] < p->vertCount)
+				if (t[k] < p->vertCount) {
 					v = &tile->verts[p->verts[t[k]] * 3];
-				else
-					v = &tile->detailVerts[(pd->vertBase + t[k] - p->vertCount) * 3];
-				if (pos == size)
-				{
-					size *= 2;
-					float* newDat = new(std::nothrow) float[size];
-					if (!newDat)
-					{
-						return DT_FAILURE | DT_OUT_OF_MEMORY;
-					}
-					std::memcpy(newDat, verts.get(), pos * sizeof(float));
-					verts.reset(newDat);
 				}
-				dtVcopy(verts.get() + pos, v);
-				pos += 3;
+				else {
+					v = &tile->detailVerts[(pd->vertBase + t[k] - p->vertCount) * 3];
+				}
+				geometry::vcopy(verts + vertsNum * 3, v);
+				++vertsNum;
 			}
 		}
 
-		MatrixType C(3, 1);
-		CoordId cid = CoordId::Empty;
-		if (!calcBestFit(baseVerts, p->vertCount, verts, size, pos / 3, C, cid)) {
-			return DT_FAILURE | DT_PARTIAL_RESULT;
+		float norm[3];
+		float dist;
+		if (calcBestFit(baseVerts, p->vertCount, verts, vertsNum, matrixPool, norm, &dist)) {
+			geometry::vcopy(p->norm, norm);
+			p->dist = dist;
+			calcMinMaxY(verts, vertsNum , &p->miny, &p->maxy);
 		}
-		if (C) {
-			if (!calcAveragePlane(ctile, p, C, cid, p->norm, &p->dist)) {
-				return DT_FAILURE | DT_PARTIAL_RESULT;
-			}
-			if (!calcMinMaxY(tile, p, pd, &p->miny, &p->maxy)) {
-				return DT_FAILURE | DT_PARTIAL_RESULT;
-			}
-		}
-		//else - error of calc equation (little poly), we don't use such polygons while path finding with jumps
+		// else - error of calc equation (little poly), we don't use such polygons while
+		// path finding with jumps, average normal and distance already inited to empty state
 	}
 
 	return DT_SUCCESS;

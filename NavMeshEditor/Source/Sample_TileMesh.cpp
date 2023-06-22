@@ -1007,6 +1007,8 @@ void Sample_TileMesh::calcPreliminaryJumpData(
 		const dtPoly* p = &ctile->polys[i];
 		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip off-mesh links.
 			continue;
+		if (!p->isAveragePolyInited()) // Skip navmesh polys without average poly
+			continue;
 
 		const int vertCount = p->vertCount;
 		for (int j = 0; j < vertCount; ++j)

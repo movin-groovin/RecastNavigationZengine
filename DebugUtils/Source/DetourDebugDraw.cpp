@@ -248,6 +248,44 @@ void duDebugDrawNavMesh(duDebugDraw* dd, const dtNavMesh& mesh, unsigned char fl
 }
 
 #ifdef ZENGINE_NAVMESH
+static void reverseVertices(float* data, const int n)
+{
+	float* start = data;
+	float* end = data + n * 3;
+	float buf[3];
+	while (start < end) {
+		end -= 3;
+		dtVcopy(buf, start);
+		dtVcopy(start, end);
+		dtVcopy(end, buf);
+		start += 3;
+	}
+}
+
+static void renderDoubleSidedTriangle(duDebugDraw* dd, float* data, const int n, const unsigned int color)
+{
+	dd->vertex(data, color);
+	dd->vertex(data + 3, color);
+	dd->vertex(data + 6, color);
+	for (int j = 2; j < n - 1; ++j)
+	{
+		dd->vertex(data, color);
+		dd->vertex(data + j * 3, color);
+		dd->vertex(data + (j + 1) * 3, color);
+	}
+	// double sided rendering for average polys, TODO to opengl API
+	reverseVertices(data, n);
+	dd->vertex(data, color);
+	dd->vertex(data + 3, color);
+	dd->vertex(data + 6, color);
+	for (int j = 2; j < n - 1; ++j)
+	{
+		dd->vertex(data, color);
+		dd->vertex(data + j * 3, color);
+		dd->vertex(data + (j + 1) * 3, color);
+	}
+}
+
 static void drawAverageNavmeshPolysTile(duDebugDraw* dd, const dtMeshTile* tile)
 {
 	dd->depthMask(false);
@@ -269,16 +307,7 @@ static void drawAverageNavmeshPolysTile(duDebugDraw* dd, const dtMeshTile* tile)
 			geometry::calcVerticalVertexProjectionOnPlane(v, p->norm, p->dist, vDat + j * 3);
 		}
 		
-		unsigned int col = duRGBA(0xFF, 0xFF, 0xFF, 92);
-		dd->vertex(vDat, col);
-		dd->vertex(vDat + 3, col);
-		dd->vertex(vDat + 6, col);
-		for (int j = 2; j < n - 1; ++j)
-		{
-			dd->vertex(vDat, col);
-			dd->vertex(vDat + j * 3, col);
-			dd->vertex(vDat + (j + 1) * 3, col);
-		}
+		renderDoubleSidedTriangle(dd, vDat, n, duRGBA(0xFF, 0xFF, 0xFF, 128));
 	}
 
 	dd->end();
@@ -306,16 +335,7 @@ void duDebugDrawAverageNavmeshPoly(
 		geometry::calcVerticalVertexProjectionOnPlane(v, poly->norm, poly->dist, buf + j * 3);
 	}
 
-	unsigned int col = duRGBA(0xFF, 0xFF, 0xFF, 92);
-	dd->vertex(buf, col);
-	dd->vertex(buf + 3, col);
-	dd->vertex(buf + 6, col);
-	for (int j = 2; j < n - 1; ++j)
-	{
-		dd->vertex(buf, col);
-		dd->vertex(buf + j * 3, col);
-		dd->vertex(buf + (j + 1) * 3, col);
-	}
+	renderDoubleSidedTriangle(dd, buf, n, duRGBA(0xFF, 0xFF, 0xFF, 128));
 
 	dd->end();
 	dd->depthMask(true);
