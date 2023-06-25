@@ -721,4 +721,24 @@ void calcAabb16BytesAligned(const float* verts, const int vertsNum, float* min, 
 	}
 }
 
+bool calcPolyNorm(const float* v, const int n, float* norm)
+{
+	float e1[3], e2[3];
+	for (int i = 0; i < n - 2; ++i)
+	{
+		const float* v1 = v;
+		const float* v2 = v + 3;
+		const float* v3 = v + 6;
+		vsub(e1, v1, v2);
+		vsub(e2, v3, v2);
+		vcross(norm, e1, e2);
+		const float d = std::sqrt(norm[0] * norm[0] + norm[1] * norm[1] + norm[2] * norm[2]);
+		if (d < Constants::EPS)
+			continue;
+		vmul(norm, 1.f / d);
+		return true;
+	}
+	return false;
+}
+
 } // namespace geometry

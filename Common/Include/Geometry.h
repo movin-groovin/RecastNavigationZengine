@@ -15,14 +15,19 @@
 namespace geometry
 {
 
-// constants and PODs
+// ===========================================================
+// ==================== constants and PODs ===================
+// ===========================================================
 struct Constants
 {
 	static constexpr float EPS = 1e-6f;
 	static constexpr float EPS_ZERO_NORMAL = 1e-4f;
+	static constexpr float PI = 3.14159265f;
 };
 
-// functions
+// ==========================================================
+// ======================== functions =======================
+// ==========================================================
 template <typename T>
 inline T scalarMin(T a, T b)
 {
@@ -103,6 +108,14 @@ inline float vdist(const float* v1, const float* v2)
 	float dy = v2[1] - v1[1];
 	float dz = v2[2] - v1[2];
 	return std::sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
+inline float vdistSquare(const float* v1, const float* v2)
+{
+	float dx = v2[0] - v1[0];
+	float dy = v2[1] - v1[1];
+	float dz = v2[2] - v1[2];
+	return dx * dx + dy * dy + dz * dz;
 }
 
 inline void vcross(float* dest, const float* v1, const float* v2)
@@ -278,7 +291,11 @@ inline void calcPerpToEdgeXz(const float* v1, const float* v2, float* perp)
 	vnormalize(perp);
 }
 
-// structs and classes
+bool calcPolyNorm(const float* v, const int n, float* norm);
+
+// ============================================================
+// ==================== structs and classes ===================
+// ============================================================
 using transformCallable = void (const float* /*old*/, const float* /*trafo matrix*/, float* /*new*/);
 
 struct Plane

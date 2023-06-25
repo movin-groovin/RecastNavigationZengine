@@ -29,6 +29,7 @@
 #include <cassert>
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 #include <type_traits>
 #include "Geometry.h"
 #endif // ZENGINE_NAVMESH
@@ -1159,34 +1160,36 @@ void calcAveragePlane(
 	dtVcross(norm, p1, p2);
 	assert(dtVlen(norm) > geometry::Constants::EPS);
 	dtVnormalize(norm);
+	if (norm[1] < 0.f)
+		geometry::vmul(norm, -1.f);
 	*dist = -dtVdot(norm, v2);
 }
 
-double calcVerticalError(
-	const matrix::MatrixDouble& X,
-	const CoordId coord,
+std::tuple<double, double, double, int> calcVerticalError(
 	const float* verts,
 	const int vertsNum,
-	float* norm,
-	float* dist
+	const float* norm,
+	const float dist
 ) {
-	assert(coord != CoordId::Empty);
-	calcAveragePlane(X, coord, norm, dist);
-
-	double err = 0;
+	double err = 0, vertDiffMin = FLT_MAX, vertDiffMax = -FLT_MAX;
+	int vertDiffMaxIdx = -1;
 	float buf[3];
 	for (int i = 0; i < vertsNum; ++i) {
 		const float* v = verts + i * 3;
-		geometry::calcVerticalVertexProjectionOnPlane(v, norm, *dist, buf);
-		err += std::fabs(v[1] - buf[1]);
+		geometry::calcVerticalVertexProjectionOnPlane(v, norm, dist, buf);
+		const double diff = std::fabs(v[1] - buf[1]);
+		vertDiffMin = std::min(vertDiffMin, diff);
+		if (diff > vertDiffMax) {
+			vertDiffMax = diff;
+			vertDiffMaxIdx = i;
+		}
+		err += diff;
 	}
 
-	return err;
+	return {err, vertDiffMin, vertDiffMax, vertDiffMaxIdx};
 }
 
 bool calcBestFit(
-	const float* baseVerts,
-	const int baseVertsNum,
 	float* verts,
 	int vertsNum,
 	matrix::MatrixPoolDouble& matrixPool,
@@ -1194,21 +1197,22 @@ bool calcBestFit(
 	float* totalDist
 ) {
 	static const int MAX_ITERS_NUM = 30;
-	static const float MINMAX_DIFF_RATIO = 0.25f;
+	static const double MINMAX_DIFF_RATIO = 0.25;
 	static const float ABS_THRESHOLD_VERT_DIFF = 10.f;
-	static const int THRESHOLD_VERTS_NUM = 4;
+	static const int THRESHOLD_VERTS_NUM = 5;
 	static const float THRESHOLD_VERTS_ERROR = 50.f;
-	static const float VERTS_NUM_FACTOR = 1.2f;
+	static const float ONE_VERT_PER_ERROR = 50.f;
 
 	int itersNum = -1;
 	double totalMinErr = FLT_MAX;
-	int vertMaxDiffIdx = -1;
 	const CoordId coords[3] = { CoordId::X, CoordId::Y, CoordId::Z };
 	double bufVerts[3 * VERTS_NUM_FOR_CALC];
 	double bufCoords[VERTS_NUM_FOR_CALC];
 	while (++itersNum < MAX_ITERS_NUM)
 	{
 		double iterMinErr = FLT_MAX;
+		double vertMinDiff, vertMaxDiff;
+		int vertMaxDiffIdx;
 		float iterNorm[3];
 		float iterDist;
 		matrix::MatrixDouble A = matrixPool.allocMatrix(vertsMatrix.tag(), {vertsNum, 3});
@@ -1255,39 +1259,31 @@ bool calcBestFit(
 			}
 			assert(X.getRowsNum() == 3);
 			assert(X.getColumnsNum() == 1);
+			assert(coord != CoordId::Empty);
 			float tmpNorm[3];
 			float tmpDist;
-			const double err = calcVerticalError(X, coord, verts, vertsNum, tmpNorm, &tmpDist);
-			if (err < iterMinErr) {
-				iterMinErr = err;
+			calcAveragePlane(X, coord, tmpNorm, &tmpDist);
+			const auto ret = calcVerticalError(verts, vertsNum, tmpNorm, tmpDist);
+			if (std::get<0>(ret) < iterMinErr) {
+				iterMinErr = std::get<0>(ret);
 				geometry::vcopy(iterNorm, tmpNorm);
 				iterDist = tmpDist;
+				vertMinDiff = std::get<1>(ret);
+				vertMaxDiff = std::get<2>(ret);
+				vertMaxDiffIdx = std::get<3>(ret);
 			}
 		}
-		// degenerated calculation
 		if (iterMinErr == FLT_MAX) {
+			//degenerated calculation
 			break;
 		}
 
-		float buf[3];
-		int maxDiffIdx = -1;
-		float vertMinDiff = FLT_MAX, vertMaxDiff = -FLT_MAX;
-		for (int i = 0; i < baseVertsNum; ++i) {
-			const float* v = baseVerts + i * 3;
-			geometry::calcVerticalVertexProjectionOnPlane(v, iterNorm, iterDist, buf);
-			const float diff = std::fabs(v[1] - buf[1]);
-			vertMinDiff = std::min(vertMinDiff, diff);
-			if (diff > vertMaxDiff) {
-				vertMaxDiff = diff;
-				maxDiffIdx = i;
-			}
-		}
-		assert(maxDiffIdx != -1);
+		//assert(maxDiffIdx != -1);
 		if (
-			vertsNum < THRESHOLD_VERTS_NUM &&
+			vertsNum <= THRESHOLD_VERTS_NUM &&
 			((vertMinDiff + vertMaxDiff) > 2 * THRESHOLD_VERTS_ERROR)
 		) {
-			//little poly with bir error
+			//little poly with big error
 			break;
 		}
 
@@ -1296,32 +1292,36 @@ bool calcBestFit(
 		*totalDist = iterDist;
 		if (vertMinDiff < ABS_THRESHOLD_VERT_DIFF && vertMaxDiff < ABS_THRESHOLD_VERT_DIFF)
 		{
-			//near polygon
+			//glued to polygon, everything is ok
 			break;
 		}
-		if (static_cast<float>(vertMaxDiff - vertMinDiff) / vertMinDiff < MINMAX_DIFF_RATIO) {
+		const double minMaxDiff = vertMaxDiff - vertMinDiff;
+		if (static_cast<float>(minMaxDiff / vertMinDiff) < MINMAX_DIFF_RATIO) {
 			//everything is ok
 			break;
 		}
-		if (vertMaxDiffIdx != -1 && vertMaxDiffIdx != maxDiffIdx) {
-			//changing vertex with max error
-			break;
-		}
-		vertMaxDiffIdx = maxDiffIdx;
 		if (vertsNum == VERTS_NUM_FOR_CALC) {
-			// buffer insufficient memory
+			// insufficient memory in buffer
 			break;
 		}
 
-		for (int i = 0, n = std::max(1, static_cast<int>(baseVertsNum * VERTS_NUM_FACTOR)); i < n; ++i)
+		const int n = std::max(1, static_cast<int>(minMaxDiff / ONE_VERT_PER_ERROR));
+		for (int i = 0; i < n; ++i)
 		{
 			if (vertsNum == VERTS_NUM_FOR_CALC) {
 				break;
 			}
-			geometry::vcopy(verts + vertsNum * 3, baseVerts + vertMaxDiffIdx * 3);
+			geometry::vcopy(verts + vertsNum * 3, verts + vertMaxDiffIdx * 3);
 			++vertsNum;
 		}
 	}
+
+	// TODO correct processing of narrow navmesh polys consisting of low num triangles
+	//static const float slopeAngle = 80.f;
+	//const float slopeAngleRad = std::cos(slopeAngle / 180.0f * geometry::Constants::PI);
+	//if (totalNorm[1] <= slopeAngleRad) {
+	//	return false;
+	//}
 
 	return totalMinErr != FLT_MAX;
 }
@@ -1370,18 +1370,12 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes(const dtMeshTile* ctile, matrix::Mat
 	}
 	dtMeshTile* tile = m_tiles + (ctile - m_tiles);
 	float verts[3 * VERTS_NUM_FOR_CALC];
-	float baseVerts[3 * DT_VERTS_PER_POLYGON];
 
 	for (int i = 0; i < tile->header->polyCount; ++i)
 	{
 		dtPoly* p = &tile->polys[i];
 		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip off-mesh links.
 			continue;
-
-		for (int j = 0; j < p->vertCount; ++j)
-		{
-			dtVcopy(baseVerts + j * 3, &tile->verts[p->verts[j] * 3]);
-		}
 
 		int vertsNum = 0;
 		const dtPolyDetail* pd = &tile->detailMeshes[i];
@@ -1404,7 +1398,7 @@ dtStatus dtNavMesh::doCalcAveragePolyPlanes(const dtMeshTile* ctile, matrix::Mat
 
 		float norm[3];
 		float dist;
-		if (calcBestFit(baseVerts, p->vertCount, verts, vertsNum, matrixPool, norm, &dist)) {
+		if (calcBestFit(verts, vertsNum, matrixPool, norm, &dist)) {
 			geometry::vcopy(p->norm, norm);
 			p->dist = dist;
 			calcMinMaxY(verts, vertsNum , &p->miny, &p->maxy);

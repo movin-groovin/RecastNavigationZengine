@@ -6,6 +6,7 @@
 #include <memory>
 #include <cassert>
 #include <cstring>
+#include <cstdint>
 
 namespace matrix
 {
@@ -56,27 +57,27 @@ public:
 	{
 		m_size = (int)args.size();
 		m_state.reset(new (std::nothrow) Entry[m_size]);
-		if (!m_state)
+		if (!m_state) {
+			m_size = 0;
 			return false;
+		}
 
 		int i = 0;
 		for (const Arg& arg : args) {
 			Entry& e = m_state[i++];
-			if (e.m_data) {
-				return false;
-			}
-
 			e.rowsNum = arg.rowsNum;
 			e.columnsNum = arg.columnsNum;
 			e.matricesNum = 0;
 			e.matricesSize = arg.matricesNum;
 			e.m_data.reset(new (std::nothrow) DataType[e.rowsNum * e.columnsNum * e.matricesSize]);
 			if (!e.m_data) {
+				m_size = 0;
 				m_state.reset();
 				return false;
 			}
-			e.m_freeBlocks.reset(new (std::nothrow) DataType * [e.matricesSize]);
+			e.m_freeBlocks.reset(new (std::nothrow) DataType* [e.matricesSize]);
 			if (!e.m_freeBlocks) {
+				m_size = 0;
 				m_state.reset();
 				return false;
 			}
@@ -111,6 +112,17 @@ public:
 		}
 
 		return MatrixType(MatrixType::ERROR_NO_SUCH_MATRIX_IN_POOL);
+	}
+
+	uint32_t getMemSize() const
+	{
+		uint32_t memSize = sizeof(Entry) * m_size;
+		for (int i = 0; i < m_size; ++i) {
+			const Entry& e = m_state[i];
+			memSize += sizeof(DataType*) * e.matricesSize;
+			memSize += sizeof(DataType) * e.rowsNum * e.columnsNum * e.matricesSize;
+		}
+		return memSize;
 	}
 
 private:
