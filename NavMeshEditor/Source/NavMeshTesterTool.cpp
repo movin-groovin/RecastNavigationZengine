@@ -1229,8 +1229,8 @@ void NavMeshTesterTool::handleRender()
 		return;
 	}
 
-    duDebugDrawNavMeshPolyPonts(&dd, *m_navMesh, m_startRef);
-    duDebugDrawNavMeshPolyPonts(&dd, *m_navMesh, m_endRef);
+	duDebugDrawNavMeshPolyPoints(&dd, *m_navMesh, m_startRef);
+	duDebugDrawNavMeshPolyPoints(&dd, *m_navMesh, m_endRef);
 
 	if (m_toolMode == TOOLMODE_PATHFIND_FOLLOW)
 	{

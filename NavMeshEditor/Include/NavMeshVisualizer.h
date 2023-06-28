@@ -21,6 +21,8 @@ private:
 	bool m_showClimbBbox;
 	bool m_showClimbOverlappedBbox;
 	bool m_showVobInfo;
+	bool m_showNavmeshInfo;
+	bool m_showBboxesInfo;
 	int m_vobIdxVisualize;
 	bool m_showAveragePoly;
 

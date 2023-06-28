@@ -30,6 +30,8 @@ NavMeshVisualizerTool::NavMeshVisualizerTool():
 	m_showClimbBbox(),
 	m_showClimbOverlappedBbox(),
 	m_showVobInfo(),
+	m_showNavmeshInfo(true),
+	m_showBboxesInfo(),
 	m_vobIdxVisualize(-1),
 	m_showAveragePoly()
 {
@@ -52,69 +54,96 @@ void NavMeshVisualizerTool::handleMenu()
 {
 	if (imguiCheck("Show vob information", m_showVobInfo))
 	{
-		m_showVobInfo = !m_showVobInfo;
+		m_showVobInfo = true;
+		m_showNavmeshInfo = false;
+		m_showBboxesInfo = false;
+	}
+	if (imguiCheck("Show navmesh information", m_showNavmeshInfo))
+	{
+		m_showNavmeshInfo = true;
+		m_showVobInfo = false;
+		m_showBboxesInfo = false;
+	}
+	if (imguiCheck("Show bboxes information", m_showBboxesInfo))
+	{
+		m_showBboxesInfo = true;
+		m_showVobInfo = false;
+		m_showNavmeshInfo = false;
 	}
 	imguiSeparatorLine();
+
 	if (m_showVobInfo)
+	{
 		return;
-
-	dtNavMesh* nav = m_sample->getNavMesh();
-	if (!m_hitPoly)
-		return;
-
-	char msg[64];
-	std::sprintf(msg, "Polygon id: %llu", m_hitPoly);
-	imguiLabel(msg);
-	if (imguiCheck("Show average poly", m_showAveragePoly))
-	{
-		m_showAveragePoly = !m_showAveragePoly;
 	}
-	if (imguiButton("Extract prelim. data"))
-	{
-		m_extractPrelimData = true;
-	}
-	imguiSeparator();
 
-	imguiLabel("Select edge");
-	for (int i = 0; i < DT_VERTS_PER_POLYGON; ++i)
+	if (m_showNavmeshInfo)
 	{
-		std::sprintf(msg, "Edge %d", i);
-		if (m_polyConnectionEdges[i] && imguiCheck(msg, m_polySelectionEdges[i], true))
+		dtNavMesh* nav = m_sample->getNavMesh();
+		if (!m_hitPoly)
+			return;
+
+		char msg[64];
+		std::sprintf(msg, "Polygon id: %llu", m_hitPoly);
+		imguiLabel(msg);
+		if (imguiCheck("Show average poly", m_showAveragePoly))
 		{
-			m_polySelectionEdges[i] = !m_polySelectionEdges[i];
+			m_showAveragePoly = !m_showAveragePoly;
 		}
+		if (imguiButton("Extract prelim. data"))
+		{
+			m_extractPrelimData = true;
+		}
+		imguiSeparator();
+
+		imguiLabel("Select edge");
+		for (int i = 0; i < DT_VERTS_PER_POLYGON; ++i)
+		{
+			std::sprintf(msg, "Edge %d", i);
+			if (m_polyConnectionEdges[i] && imguiCheck(msg, m_polySelectionEdges[i], true))
+			{
+				m_polySelectionEdges[i] = !m_polySelectionEdges[i];
+			}
+		}
+
+		imguiLabel("Select transfer type");
+		if (imguiCheck("Jump forward bbox", m_showJmpFwdBbox))
+		{
+			m_showJmpFwdBbox = !m_showJmpFwdBbox;
+		}
+		if (imguiCheck("Jump down bbox", m_showJmpDownBbox))
+		{
+			m_showJmpDownBbox = !m_showJmpDownBbox;
+		}
+		if (imguiCheck("Climb bbox", m_showClimbBbox))
+		{
+			m_showClimbBbox = !m_showClimbBbox;
+		}
+		if (imguiCheck("Climb overlapped bbox", m_showClimbOverlappedBbox))
+		{
+			m_showClimbOverlappedBbox = !m_showClimbOverlappedBbox;
+		}
+
+		if (imguiButton("Show boxes"))
+		{
+			m_showPolyBbox = true;
+		}
+		if (imguiButton("Clear boxes"))
+		{
+			m_showPolyBbox = false;
+		}
+		imguiSeparator();
+		if (imguiButton("Calc prelim. data"))
+		{
+			m_calcPrelimData = true;
+		}
+
+		return;
 	}
 
-	imguiLabel("Select transfer type");
-	if (imguiCheck("Jump forward bbox", m_showJmpFwdBbox))
+	if (m_showBboxesInfo)
 	{
-		m_showJmpFwdBbox = !m_showJmpFwdBbox;
-	}
-	if (imguiCheck("Jump down bbox", m_showJmpDownBbox))
-	{
-		m_showJmpDownBbox = !m_showJmpDownBbox;
-	}
-	if (imguiCheck("Climb bbox", m_showClimbBbox))
-	{
-		m_showClimbBbox = !m_showClimbBbox;
-	}
-	if (imguiCheck("Climb overlapped bbox", m_showClimbOverlappedBbox))
-	{
-		m_showClimbOverlappedBbox = !m_showClimbOverlappedBbox;
-	}
-
-	if (imguiButton("Show boxes"))
-	{
-		m_showPolyBbox = true;
-	}
-	if (imguiButton("Clear boxes"))
-	{
-		m_showPolyBbox = false;
-	}
-	imguiSeparator();
-	if (imguiButton("Calc prelim. data"))
-	{
-		m_calcPrelimData = true;
+		return;
 	}
 }
 
@@ -537,7 +566,6 @@ void NavMeshVisualizerTool::renderAveragePoly(const dtMeshTile* tile, const dtPo
 
 void NavMeshVisualizerTool::handleRender()
 {
-
 	if (m_showVobInfo) {
 		renderVobBbox();
 		return;
@@ -551,6 +579,7 @@ void NavMeshVisualizerTool::handleRender()
 
 	duDebugDraw& dd = m_sample->getDebugDraw();
 	duDebugDrawNavMeshPoly(&dd, *nav, m_hitPoly, duRGBA(0, 0, 0, 128));
+	duDebugDrawNavMeshPolyPoints(&dd, *nav, m_hitPoly);
 
 	const dtMeshTile* tile{};
 	const dtPoly* poly{};

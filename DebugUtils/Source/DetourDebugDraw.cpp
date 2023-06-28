@@ -680,7 +680,7 @@ void duDebugDrawNavMeshPolysWithFlags(struct duDebugDraw* dd, const dtNavMesh& m
 	}
 }
 
-void duDebugDrawNavMeshPolyPonts(duDebugDraw* dd, const dtNavMesh& mesh, dtPolyRef ref)
+void duDebugDrawNavMeshPolyPoints(duDebugDraw* dd, const dtNavMesh& mesh, dtPolyRef ref)
 {
     const dtMeshTile* tile{};
     const dtPoly* poly{};
