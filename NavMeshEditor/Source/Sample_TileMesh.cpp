@@ -270,6 +270,7 @@ bool Sample_TileMesh::initJmpNavmeshQuery()
 	static const uint32_t NODE_POOL_SIZE = 1024 * 16;
 	static const float POLY_PICK_WIDTH = 2.f;
 	static const float POLY_PICK_HEIGHT = 40.f;
+	static const uint32_t CALCED_PATH_ENTRIES_NUM = 100 * 100;
 	m_JmpNavQuery->clear();
 	bool res = m_JmpNavQuery->init(
 		m_navMesh,
@@ -281,7 +282,8 @@ bool Sample_TileMesh::initJmpNavmeshQuery()
 		CASHE_BLOCKS_SIZE,
 		NODE_POOL_SIZE,
 		POLY_PICK_WIDTH,
-		POLY_PICK_HEIGHT
+		POLY_PICK_HEIGHT,
+		CALCED_PATH_ENTRIES_NUM
 	);
 
 	return res;

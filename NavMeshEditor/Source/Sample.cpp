@@ -112,12 +112,12 @@ Sample::~Sample()
 {
 	dtFreeNavMeshQuery(m_navQuery);
 	dtFreeNavMesh(m_navMesh);
-	delete m_JmpNavQuery;
-	m_JmpNavQuery = nullptr;
 	dtFreeCrowd(m_crowd);
 	delete m_tool;
 	for (int i = 0; i < MAX_TOOLS; i++)
 		delete m_toolStates[i];
+	delete m_JmpNavQuery;
+	m_JmpNavQuery = nullptr;
 }
 
 void Sample::setTool(SampleTool* tool)

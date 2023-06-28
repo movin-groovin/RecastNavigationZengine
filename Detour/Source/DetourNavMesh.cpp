@@ -1196,6 +1196,7 @@ bool calcBestFit(
 	float* totalNorm,
 	float* totalDist
 ) {
+	// TODO replace absolute coord. values to relative
 	static const int MAX_ITERS_NUM = 30;
 	static const double MINMAX_DIFF_RATIO = 0.25;
 	static const float ABS_THRESHOLD_VERT_DIFF = 10.f;

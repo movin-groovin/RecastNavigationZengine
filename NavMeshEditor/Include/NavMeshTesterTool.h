@@ -43,6 +43,7 @@ private:
 	dtStatus m_pathFindStatus;
 
 	dtJmpNavMeshQuery* m_jmpPathFinder;
+	CalcedPathEntry::EntryPtr m_lastCalcedPath;
 	uint32_t m_straightWithJumpsPathOptions;
 
 	enum ToolMode

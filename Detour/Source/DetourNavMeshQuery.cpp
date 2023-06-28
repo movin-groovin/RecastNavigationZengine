@@ -1246,6 +1246,172 @@ dtStatus dtNavMeshQuery::getPathToNode(dtNode* endNode, dtPolyRef* path, int* pa
 
 #ifdef ZENGINE_NAVMESH
 
+CalcedPathEntry::IntrusivePointer::IntrusivePointer(): m_ptr(nullptr) {}
+
+CalcedPathEntry::IntrusivePointer::IntrusivePointer(
+	CalcedPathEntry* ptr, const bool addRef
+):
+	m_ptr(ptr)
+{
+	if (m_ptr && addRef)
+		m_ptr->incRefCounter();
+}
+
+CalcedPathEntry::IntrusivePointer::IntrusivePointer(const CalcedPathEntry::IntrusivePointer& ref)
+{
+	m_ptr = ref.m_ptr;
+	if (m_ptr)
+		m_ptr->incRefCounter();
+}
+
+CalcedPathEntry::IntrusivePointer::IntrusivePointer(CalcedPathEntry::IntrusivePointer&& ref)
+{
+	m_ptr = ref.m_ptr;
+	ref.m_ptr = nullptr;
+}
+
+CalcedPathEntry::IntrusivePointer& CalcedPathEntry::IntrusivePointer::operator= (
+	const CalcedPathEntry::IntrusivePointer& ref
+) {
+	if (this == &ref)
+		return *this;
+	if (m_ptr && !m_ptr->decRefCounter())
+		m_ptr->clear();
+
+	m_ptr = ref.m_ptr;
+	if (m_ptr)
+		m_ptr->incRefCounter();
+	return *this;
+}
+
+CalcedPathEntry::IntrusivePointer& CalcedPathEntry::IntrusivePointer::operator= (
+	CalcedPathEntry::IntrusivePointer&& ref
+) {
+	if (this == &ref)
+		return *this;
+	if (m_ptr && !m_ptr->decRefCounter())
+		m_ptr->clear();
+	m_ptr = ref.m_ptr;
+	ref.m_ptr = nullptr;
+	return *this;
+}
+
+CalcedPathEntry::IntrusivePointer::~IntrusivePointer()
+{
+	if (!m_ptr)
+		return;
+	if (!m_ptr->decRefCounter())
+		m_ptr->clear();
+	m_ptr = nullptr;
+}
+
+void CalcedPathEntry::IntrusivePointer::reset(CalcedPathEntry* ptr, const bool addRef)
+{
+	if (m_ptr && !m_ptr->decRefCounter())
+		m_ptr->clear();
+	m_ptr = ptr;
+	if (m_ptr && addRef)
+		m_ptr->incRefCounter();
+}
+
+void CalcedPathEntry::init(
+	const uint32_t transferType,
+	const float* pointFrom,
+	const float* pointTo,
+	dtPolyRef polyFrom
+) {
+	m_data.transferTypeToNextPoly = transferType;
+	geometry::vcopy(m_data.posFrom, pointFrom);
+	if (pointTo)
+		geometry::vcopy(m_data.posTo, pointTo);
+	else
+		std::memset(m_data.posTo, 0, sizeof(m_data.posTo));
+	m_data.polyRefFrom = polyFrom;
+}
+
+void CalcedPathEntry::clear()
+{
+	assert(m_pool);
+	if (m_next)
+		m_next.reset();
+	bool res = m_pool->freeEntry(this);
+	assert(res);
+}
+
+bool WaitFreeEntryPool::init(const uint32_t entriesSize)
+{
+	m_data = std::malloc(getMemSize(entriesSize));
+	if (!m_data)
+		return false;
+	m_entriesSize = entriesSize;
+	m_freeIds = (std::atomic<CalcedPathEntry*>*)m_data;
+	m_entries = (CalcedPathEntry*)(m_freeIds + m_entriesSize);
+	for (uint32_t i = 0; i < m_entriesSize; ++i) {
+		new (m_freeIds + i) std::atomic<CalcedPathEntry*>(m_entries + i);
+		new (m_entries + i) CalcedPathEntry(this);
+	}
+	return true;
+}
+
+void WaitFreeEntryPool::clear()
+{
+	if (m_entries) {
+		for (uint32_t i = 0; i < m_entriesSize; ++i) {
+			// just for fun
+			(m_entries + i)->~CalcedPathEntry();
+		}
+	}
+	std::free(m_data);
+	m_data = nullptr;
+	m_entriesSize = 0;
+	m_freeIds = nullptr;
+	m_consumerPos = 0;
+	m_producerPos = 0;
+	m_entries = nullptr;
+}
+
+CalcedPathEntry::EntryPtr WaitFreeEntryPool::allocEntry()
+{
+	CalcedPathEntry* p = m_freeIds[m_consumerPos].exchange(nullptr);
+	if (!p) {
+		return CalcedPathEntry::EntryPtr();
+	}
+	assert(!p->m_refCounter);
+	m_consumerPos = (m_consumerPos + 1) % m_entriesSize;
+	return CalcedPathEntry::EntryPtr(p);
+}
+
+CalcedPathEntry::EntryPtr WaitFreeEntryPool::allocEntry(
+	const uint32_t transferType,
+	const float* pointFrom,
+	const float* pointTo,
+	const dtPolyRef polyFrom
+) {
+	CalcedPathEntry::EntryPtr p = allocEntry();
+	if (p) {
+		p->init(transferType, pointFrom, pointTo, polyFrom);
+	}
+	return p;
+}
+
+uint64_t WaitFreeEntryPool::getMemSize(const uint32_t entriesSize)
+{
+	return (sizeof(CalcedPathEntry) + sizeof(std::atomic<CalcedPathEntry*>)) * (uint64_t)entriesSize;
+}
+
+bool WaitFreeEntryPool::freeEntry(CalcedPathEntry* p)
+{
+	assert(p >= m_entries);
+	assert(!p->getNext());
+	assert(!p->m_refCounter);
+	CalcedPathEntry* expected = nullptr;
+	bool res = m_freeIds[m_producerPos].compare_exchange_strong(expected, p);
+	if (res) {
+		m_producerPos = (m_producerPos + 1) % m_entriesSize;
+	}
+	return res;
+}
+
 dtJmpNavMeshQuery::~dtJmpNavMeshQuery()
 {
 	clear();
@@ -1318,7 +1484,8 @@ bool dtJmpNavMeshQuery::init(
 	const uint32_t casheBlocksSize,
 	const uint32_t maxNodes,
 	const float polyPickWidth,
-	const float polyPickHeight
+	const float polyPickHeight,
+	const uint32_t calcedPathEntrisNum
 ) {
 	if (maxNodes < MINIMUM_MAX_NODES_SIZE)
 		return false;
@@ -1366,6 +1533,10 @@ bool dtJmpNavMeshQuery::init(
 	}
 	m_polyPickExt[0] = m_polyPickExt[2] = polyPickWidth;
 	m_polyPickExt[1] = polyPickHeight;
+	if (!m_pathEntriesPool.init(calcedPathEntrisNum)) {
+		clear();
+		return false;
+	}
 
 	return true;
 }
@@ -1381,7 +1552,6 @@ bool dtJmpNavMeshQuery::clearState(const dtNavMesh* nav)
 	// every findPathWithJumps call
 	//m_nodePool->clearState();
 	//m_openList->clearState();
-	m_calcedPath.reset();
 	return true;
 }
 
@@ -1389,7 +1559,6 @@ void dtJmpNavMeshQuery::clear()
 {
 	m_nav = nullptr;
 	m_cntFindPathWithJumpsCalls = 0;
-	m_calcedPath.reset();
 	std::free(m_agentChars);
 	m_agentChars = nullptr;
 	m_agentCharsSize = 0;
@@ -1407,6 +1576,7 @@ void dtJmpNavMeshQuery::clear()
 	}
 	m_finPathData.clear();
 	std::memset(m_polyPickExt, 0, sizeof(m_polyPickExt));
+	m_pathEntriesPool.clear();
 }
 
 void dtJmpNavMeshQuery::queryPolygonsInTile(
@@ -2710,7 +2880,11 @@ uint32_t dtJmpNavMeshQuery::getPoolNodesSize() const
 }
 
 uint32_t dtJmpNavMeshQuery::calcPathWithJumps(
-	const uint32_t agentIdx, const float* startPos, const float* endPos, const uint32_t flags
+	const uint32_t agentIdx,
+	const float* startPos,
+	const float* endPos,
+	const uint32_t flags,
+	CalcedPathEntry::EntryPtr& calcedPath
 ) {
 	assert(m_agentCharsSize > agentIdx);
 	uint32_t polyPathNum = 0;
@@ -2719,16 +2893,17 @@ uint32_t dtJmpNavMeshQuery::calcPathWithJumps(
 	const AgentCharacteristics& agentChars = m_agentChars[agentIdx];
 	float fixedEndPos[3];
 
+	calcedPath.reset();
 	// find polys corridor
 	findNearestPoly(startPos, &agentChars.filter, &startRef);
 	if (!startRef)
-		return CALC_PATH_ERROR_FIND_START_POLY;
+		return ERROR_FIND_START_POLY;
 	findNearestPoly(endPos, &agentChars.filter, &endRef);
 	if (!endRef)
-		return CALC_PATH_ERROR_FIND_END_POLY;
+		return ERROR_FIND_END_POLY;
 	dtStatus status = findPathWithJumps(agentIdx, startRef, endRef, startPos, endPos, &polyPathNum);
 	if (dtStatusFailed(status))
-		return CALC_PATH_ERROR_FIND_POLY_CORRIDOR;
+		return ERROR_FIND_POLY_CORRIDOR;
 
 	// 1 entry special case
 	if (polyPathNum == 1)
@@ -2736,13 +2911,13 @@ uint32_t dtJmpNavMeshQuery::calcPathWithJumps(
 		const PolyToPolyTransfer& entry = m_finPathData.polyPath[0];
 		assert(entry.transferTypeToNextPoly == NavmeshPolyTransferFlags::NO_ACTION);
 		fixEndPoint(endRef, entry.polyRefFrom, endPos, fixedEndPos);
-		m_calcedPath = CalcedPathEntry::makeEntry(
+		calcedPath = m_pathEntriesPool.allocEntry(
 			NavmeshPolyTransferFlags::WALKING,
 			startPos,
 			fixedEndPos,
 			entry.polyRefFrom
 		);
-		return CALC_PATH_OK;
+		return calcedPath ? OK : ERROR_NO_ENTRIS_IN_POOL;
 	}
 
 	// common case
@@ -2750,8 +2925,7 @@ uint32_t dtJmpNavMeshQuery::calcPathWithJumps(
 	uint32_t rawPolyPathNum = 0;
 	const float* curStartPos = startPos;
 	const float* curEndPos = nullptr;
-	std::shared_ptr<CalcedPathEntry> totalEndEntry;
-	m_calcedPath.reset();
+	CalcedPathEntry::EntryPtr totalEndEntry;
 	for (uint32_t i = 0; i < polyPathNum; ++i)
 	{
 		const PolyToPolyTransfer& arrEntry = m_finPathData.polyPath[i];
@@ -2771,21 +2945,26 @@ uint32_t dtJmpNavMeshQuery::calcPathWithJumps(
 			curStartPos, arrEntry.posFrom, m_finPathData.rawPolyPath, rawPolyPathNum, flags, &straightPathNum
 		);
 		if (dtStatusFailed(status))
-			return CALC_PATH_ERROR_FIND_STRAIGHT_PATH;
+			return ERROR_FIND_STRAIGHT_PATH;
 		assert(straightPathNum > 0);
-		std::shared_ptr<CalcedPathEntry> startIterEntry;
-		std::shared_ptr<CalcedPathEntry> endIterEntry;
-		std::tie(startIterEntry, endIterEntry) = pathEntriesArrToList(straightPathNum, arrEntry.posFrom);
-		auto jmpEntry = CalcedPathEntry::makeEntry(
+		CalcedPathEntry::EntryPtr startIterEntry;
+		CalcedPathEntry::EntryPtr endIterEntry;
+		uint32_t ret = pathEntriesArrToList(straightPathNum, arrEntry.posFrom, startIterEntry, endIterEntry);
+		auto jmpEntry = m_pathEntriesPool.allocEntry(
 			arrEntry.transferTypeToNextPoly,
 			arrEntry.posFrom,
 			arrEntry.posTo,
 			arrEntry.polyRefFrom
 		);
+		if (ret != OK || !jmpEntry)
+		{
+			calcedPath.reset();
+			return ERROR_NO_ENTRIS_IN_POOL;
+		}
 		endIterEntry->setNext(jmpEntry);
 		endIterEntry = jmpEntry;
-		if (!m_calcedPath) {
-			m_calcedPath = startIterEntry;
+		if (!calcedPath) {
+			calcedPath = startIterEntry;
 		}
 		else {
 			totalEndEntry->setNext(startIterEntry);
@@ -2803,19 +2982,24 @@ uint32_t dtJmpNavMeshQuery::calcPathWithJumps(
 		curStartPos, fixedEndPos, m_finPathData.rawPolyPath, rawPolyPathNum, flags, &straightPathNum
 	);
 	if (dtStatusFailed(status))
-		return CALC_PATH_ERROR_FIND_STRAIGHT_PATH;
+		return ERROR_FIND_STRAIGHT_PATH;
 	assert(straightPathNum > 0);
-	std::shared_ptr<CalcedPathEntry> startIterEntry;
-	std::shared_ptr<CalcedPathEntry> endIterEntry;
-	std::tie(startIterEntry, endIterEntry) = pathEntriesArrToList(straightPathNum, fixedEndPos);
-	if (!m_calcedPath) {
-		m_calcedPath = startIterEntry;
+	CalcedPathEntry::EntryPtr startIterEntry;
+	CalcedPathEntry::EntryPtr endIterEntry;
+	uint32_t ret = pathEntriesArrToList(straightPathNum, fixedEndPos, startIterEntry, endIterEntry);
+	if (ret != OK)
+	{
+		calcedPath.reset();
+		return ERROR_NO_ENTRIS_IN_POOL;
+	}
+	if (!calcedPath) {
+		calcedPath = startIterEntry;
 	}
 	else {
 		totalEndEntry->setNext(startIterEntry);
 	}
 	
-	return CALC_PATH_OK;
+	return OK;
 }
 
 void dtJmpNavMeshQuery::fixEndPoint(
@@ -2827,20 +3011,24 @@ void dtJmpNavMeshQuery::fixEndPoint(
 	}
 }
 
-std::pair<std::shared_ptr<CalcedPathEntry>, std::shared_ptr<CalcedPathEntry>>
-	dtJmpNavMeshQuery::pathEntriesArrToList(const uint32_t straightPathNum, const float* endPos) const
-{
-	std::shared_ptr<CalcedPathEntry> startIterEntry;
-	std::shared_ptr<CalcedPathEntry> endIterEntry;
+uint32_t dtJmpNavMeshQuery::pathEntriesArrToList(
+	const uint32_t straightPathNum,
+	const float* endPos,
+	CalcedPathEntry::EntryPtr& startIterEntry,
+	CalcedPathEntry::EntryPtr& endIterEntry
+) {
 	for (uint32_t j = 0; j < straightPathNum; ++j)
 	{
 		const float* pos = m_finPathData.straightPath + j * 3;
-		auto newEntry = CalcedPathEntry::makeEntry(
+		auto newEntry = m_pathEntriesPool.allocEntry(
 			NavmeshPolyTransferFlags::WALKING,
 			pos,
 			(j + 1) != straightPathNum ? pos + 3 : endPos,
 			m_finPathData.straightPathRefs[j]
 		);
+		if (!newEntry)
+			return ERROR_NO_ENTRIS_IN_POOL;
+
 		if (!endIterEntry) {
 			endIterEntry = newEntry;
 			startIterEntry = endIterEntry;
@@ -2850,7 +3038,8 @@ std::pair<std::shared_ptr<CalcedPathEntry>, std::shared_ptr<CalcedPathEntry>>
 			endIterEntry = newEntry;
 		}
 	}
-	return std::make_pair(startIterEntry, endIterEntry);
+
+	return OK;
 }
 
 // description see in 'dtNavMeshQuery::findStraightPath'
@@ -3173,16 +3362,6 @@ uint32_t dtJmpNavMeshQuery::getPolysSize() const
 const dtNavMesh* dtJmpNavMeshQuery::getAttachedNavMesh() const
 {
 	return m_nav;
-}
-
-void dtJmpNavMeshQuery::clearLastPath()
-{
-	m_calcedPath.reset();
-}
-
-const std::shared_ptr<CalcedPathEntry>& dtJmpNavMeshQuery::getLastPath() const
-{
-	return m_calcedPath;
 }
 
 #endif // ZENGINE_NAVMESH

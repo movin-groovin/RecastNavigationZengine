@@ -1138,8 +1138,8 @@ bool NavMeshTesterTool::findPathWithJumps(
         return false;
     }
 
-	uint32_t ret = m_jmpPathFinder->calcPathWithJumps(0, spos, epos, m_straightWithJumpsPathOptions);
-	if (ret != dtJmpNavMeshQuery::CALC_PATH_OK)
+	uint32_t ret = m_jmpPathFinder->calcPathWithJumps(0, spos, epos, m_straightWithJumpsPathOptions, m_lastCalcedPath);
+	if (ret != dtJmpNavMeshQuery::OK)
 	{
 		m_ctx->log(RC_LOG_PROGRESS, "Can't run findPathWithJumps, error of calcPathWithJumps, code: %u", ret);
 		return false;
@@ -1170,7 +1170,7 @@ void NavMeshTesterTool::renderPathWithJumps(
 	//duDebugDrawNavMeshPolyPrelimData(&dd, *m_navMesh, m_startRef);
 	//duDebugDrawNavMeshPolyPrelimData(&dd, *m_navMesh, m_endRef);
 
-	std::shared_ptr<CalcedPathEntry> pathEntry = m_jmpPathFinder->getLastPath();
+	CalcedPathEntry::EntryPtr pathEntry = m_lastCalcedPath;
 	while (pathEntry) {
 		uint32_t trType = pathEntry->getTransferType();
 		assert(trType != NavmeshPolyTransferFlags::MAX_ACTION);
@@ -1603,19 +1603,19 @@ void NavMeshTesterTool::renderTextPathWithJumps(double* proj, double* model, int
 {
 	char string[512];
 	const char* text;
-	auto curEntry = m_jmpPathFinder->getLastPath();
-	while (curEntry)
+	CalcedPathEntry::EntryPtr pathEntry = m_lastCalcedPath;
+	while (pathEntry)
 	{
-		uint32_t trType = curEntry->getTransferType();
+		uint32_t trType = pathEntry->getTransferType();
 		if (trType != NavmeshPolyTransferFlags::MAX_ACTION)
 		{
-			printNavmeshPolyId(proj, model, view, curEntry->getPolyFrom());
+			printNavmeshPolyId(proj, model, view, pathEntry->getPolyFrom());
 		}
 
 		if (trType > NavmeshPolyTransferFlags::WALKING && trType < NavmeshPolyTransferFlags::MAX_ACTION)
 		{
-			const float* from = curEntry->getPointFrom();
-			const float* to = curEntry->getPointTo();
+			const float* from = pathEntry->getPointFrom();
+			const float* to = pathEntry->getPointTo();
 			float center[3] = {
 				(from[0] + to[0]) * 0.5f,
 				(from[1] + to[1]) * 0.5f,
@@ -1654,7 +1654,7 @@ void NavMeshTesterTool::renderTextPathWithJumps(double* proj, double* model, int
 			);
 		}
 
-		curEntry = curEntry->getNext();
+		pathEntry = pathEntry->getNext();
 	}
 }
 

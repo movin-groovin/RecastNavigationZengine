@@ -25,16 +25,15 @@
 
 #ifdef ZENGINE_NAVMESH
 #include <cstring>
-#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cassert>
-#include <memory>
 #include <cmath>
 #include <new>
-#include <tuple>
+#include <algorithm>
 #include <type_traits>
 #include <utility>
+#include <atomic>
 #include "Geometry.h"
 #include "Common.h"
 #include "Mesh.h"
@@ -1149,50 +1148,98 @@ struct PolyToPolyTransfer
 class CalcedPathEntry: private common::NonCopyable
 {
 public:
-	~CalcedPathEntry() = default;
-
-	template <typename ... Args>
-	static std::shared_ptr<CalcedPathEntry> makeEntry(Args&&... args)
+	class IntrusivePointer
 	{
-		return std::shared_ptr<CalcedPathEntry>(new CalcedPathEntry(std::forward<Args>(args)...));
-	}
+	public:
+		IntrusivePointer();
+		explicit IntrusivePointer(CalcedPathEntry* ptr, const bool addRef = true);
+		IntrusivePointer(const IntrusivePointer& ref);
+		IntrusivePointer(IntrusivePointer&& ref);
+		IntrusivePointer& operator= (const IntrusivePointer& ref);
+		IntrusivePointer& operator= (IntrusivePointer&& ref);
+		~IntrusivePointer();
+
+		explicit operator bool() const { return m_ptr; }
+		CalcedPathEntry* get() const { return m_ptr; }
+		void reset(CalcedPathEntry* ptr = nullptr, const bool addRef = true);
+		CalcedPathEntry& operator*() const { return *m_ptr; }
+		CalcedPathEntry* operator->() const { return m_ptr; }
+
+	private:
+		CalcedPathEntry* m_ptr;
+	};
+
+	using EntryPtr = IntrusivePointer;
+
+public:
+	void init(
+		const uint32_t transferType,
+		const float* pointFrom,
+		const float* pointTo,
+		dtPolyRef polyFrom
+	);
 
 	uint32_t getTransferType() const { return m_data.transferTypeToNextPoly; }
 	const float* getPointFrom() const { return m_data.posFrom; }
 	const float* getPointTo() const { return m_data.posTo; }
 	dtPolyRef getPolyFrom() const { return m_data.polyRefFrom; }
-	const std::shared_ptr<CalcedPathEntry>& getNext() const { return m_next; }
-	void setNext(const std::shared_ptr<CalcedPathEntry>& val) { m_next = val; }
+
+	EntryPtr getNext() const { return m_next; }
+	EntryPtr releaseNext() { return std::move(m_next); }
+	void setNext(EntryPtr& p) { m_next = p; }
+
+	class WaitFreeEntryPool* getPool() const { return m_pool; }
 
 private:
-	CalcedPathEntry(
-		const uint32_t transferType,
-		const float* pointFrom,
-		const float* pointTo,
-		dtPolyRef polyFrom
-	) {
-		m_data.transferTypeToNextPoly = transferType;
-		geometry::vcopy(m_data.posFrom, pointFrom);
-		if (pointTo)
-			geometry::vcopy(m_data.posTo, pointTo);
-		m_data.polyRefFrom = polyFrom;
-	}
+	explicit CalcedPathEntry(class WaitFreeEntryPool* pool): m_refCounter(0), m_pool(pool) {}
+	~CalcedPathEntry() { m_pool = nullptr; }
 
-	CalcedPathEntry(
-		const uint32_t transferType,
-		const float* pointFrom,
-		const float* pointTo,
-		dtPolyRef polyFrom,
-		const std::shared_ptr<CalcedPathEntry>& next
-	): CalcedPathEntry(transferType, pointFrom, pointTo, polyFrom)
-	{
-		m_next = next;
-	}
+	uint32_t incRefCounter() const { return ++m_refCounter; }
+	uint32_t decRefCounter() const { assert(m_refCounter); return --m_refCounter; }
+
+	void clear();
 
 private:
+	mutable uint32_t m_refCounter;
+	class WaitFreeEntryPool* m_pool;
+	EntryPtr m_next;
 	PolyToPolyTransfer m_data;
-	std::shared_ptr<CalcedPathEntry> m_next;
-	//uint32_t n_nextEntryIdx;
+
+	friend class WaitFreeEntryPool;
+	friend IntrusivePointer;
+};
+
+class WaitFreeEntryPool: public common::NonCopyable // wait free for 1 consumer, 1 producer
+{
+public:
+	WaitFreeEntryPool() = default;
+	~WaitFreeEntryPool() { clear(); }
+
+	bool init(const uint32_t entriesSize);
+	void clear();
+
+	CalcedPathEntry::EntryPtr allocEntry();
+	CalcedPathEntry::EntryPtr allocEntry(
+		const uint32_t transferType,
+		const float* pointFrom,
+		const float* pointTo,
+		const dtPolyRef polyFrom
+	);
+
+	static uint64_t getMemSize(const uint32_t entriesSize);
+
+private:
+	bool freeEntry(CalcedPathEntry* p);
+
+private:
+	uint32_t m_entriesSize = 0;
+	std::atomic<CalcedPathEntry*>* m_freeIds = nullptr;
+	uint32_t m_consumerPos = 0;
+	uint32_t m_producerPos = 0;
+	CalcedPathEntry* m_entries = nullptr;
+	void* m_data = nullptr;
+
+	friend CalcedPathEntry;
 };
 
 class dtJmpNavMeshQuery: private common::NonCopyable
@@ -1200,11 +1247,12 @@ class dtJmpNavMeshQuery: private common::NonCopyable
 public:
 	enum: uint32_t
 	{
-		CALC_PATH_OK,
-		CALC_PATH_ERROR_FIND_START_POLY,
-		CALC_PATH_ERROR_FIND_END_POLY,
-		CALC_PATH_ERROR_FIND_POLY_CORRIDOR,
-		CALC_PATH_ERROR_FIND_STRAIGHT_PATH
+		OK,
+		ERROR_FIND_START_POLY,
+		ERROR_FIND_END_POLY,
+		ERROR_FIND_POLY_CORRIDOR,
+		ERROR_FIND_STRAIGHT_PATH,
+		ERROR_NO_ENTRIS_IN_POOL
 	};
 
 	static const int OBP_NUM_DIRS = MAX_PLANES_PER_BOUNDING_POLYHEDRON;
@@ -1268,13 +1316,18 @@ public:
 		const uint32_t casheBlocksSize,
 		const uint32_t maxNodes,
 		const float polyPickWidth,
-		const float polyPickHeight
+		const float polyPickHeight,
+		const uint32_t calcedPathEntrisNum
 	);
 	void clear();
 	bool clearState(const dtNavMesh* nav);
 
 	uint32_t calcPathWithJumps(
-		const uint32_t agentIdx, const float* startPos, const float* endPos, const uint32_t flags = 0
+		const uint32_t agentIdx,
+		const float* startPos,
+		const float* endPos,
+		const uint32_t flags,
+		CalcedPathEntry::EntryPtr& calcedPath
 	);
 	dtStatus findNearestPoly(const float* center, const dtQueryFilter* filter, dtPolyRef* foundRef) const;
 	dtStatus queryPolygons(
@@ -1345,8 +1398,12 @@ private:
 	void fixEndPoint(
 		const dtPolyRef endRef, const dtPolyRef lastRef, const float* orig, float* fixed
 	) const;
-	std::pair<std::shared_ptr<CalcedPathEntry>, std::shared_ptr<CalcedPathEntry>>
-		pathEntriesArrToList(const uint32_t straightPathNum, const float* endPos) const;
+	uint32_t pathEntriesArrToList(
+		const uint32_t straightPathNum,
+		const float* endPos,
+		CalcedPathEntry::EntryPtr & startIterEntry,
+		CalcedPathEntry::EntryPtr & endIterEntry
+	);
 	// Finds the straight path from the start to the end position within the polygon corridor
 	dtStatus findPathWithJumps(
 		const uint32_t agentIdx,
@@ -1503,7 +1560,7 @@ private:
 	class dtNodeQueueJmp* m_openList{};
 	FinalizationPathData m_finPathData;
 	float m_polyPickExt[3];
-	std::shared_ptr<CalcedPathEntry> m_calcedPath;
+	WaitFreeEntryPool m_pathEntriesPool;
 };
 #endif // ZENGINE_NAVMESH
 
