@@ -1007,9 +1007,14 @@ void Sample_TileMesh::calcPreliminaryJumpData(
 	for (int i = 0, polyCount = ctile->header->polyCount; i < polyCount; ++i)
 	{
 		const dtPoly* p = &ctile->polys[i];
-		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)	// Skip off-mesh links.
+		// Skip off-mesh links
+		if (p->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)
 			continue;
-		if (!p->isAveragePolyInited()) // Skip navmesh polys without average poly
+		// Skip navmesh polys without average poly
+		if (!p->isAveragePolyInited())
+			continue;
+		// Can't jump or climb from swimming water polygons
+		if (p->flags & common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_SWIMMING)
 			continue;
 
 		const int vertCount = p->vertCount;
@@ -1030,8 +1035,12 @@ void Sample_TileMesh::calcPreliminaryJumpData(
 			const float* v1 = baseVerts + j * 3;
 			const float* v2 = v1 + 3;
 			dtPoly::JmpAbilityInfoEdge& edge = polyData.edges[j];
-			edge.jmpDown = checkAbilityJumpDownOrForward(v1, v2, polyCenter, checkBboxFwdDst, checkBboxHeight, shrinkCoeff);
-			edge.jmpFwd = checkAbilityJumpDownOrForward(v1, v2, polyCenter, checkBboxFwdDst, checkBboxHeight, shrinkCoeff);
+			// Can't jump from fording water polygons
+			if (!(p->flags & common::SamplePolyFlags::SAMPLE_POLYFLAGS_WATER_FORDING))
+			{
+				edge.jmpDown = checkAbilityJumpDownOrForward(v1, v2, polyCenter, checkBboxFwdDst, checkBboxHeight, shrinkCoeff);
+				edge.jmpFwd = checkAbilityJumpDownOrForward(v1, v2, polyCenter, checkBboxFwdDst, checkBboxHeight, shrinkCoeff);
+			}
 			edge.climb = checkAbilityClimb(v1, v2, polyCenter, checkBboxFwdClimbDst, minClimbHeight, maxClimbHeight, &filter);
 		}
 		polyData.climbOverlapped = checkAbilityClimbOverlapped(

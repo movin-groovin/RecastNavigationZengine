@@ -674,7 +674,8 @@ void duDebugDrawNavMeshPolysWithFlags(struct duDebugDraw* dd, const dtNavMesh& m
 		for (int j = 0; j < tile->header->polyCount; ++j)
 		{
 			const dtPoly* p = &tile->polys[j];
-			if ((p->flags & polyFlags) == 0) continue;
+			if ((p->flags & polyFlags) == 0)
+				continue;
 			duDebugDrawNavMeshPoly(dd, mesh, base|(dtPolyRef)j, col);
 		}
 	}
